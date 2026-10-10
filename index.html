@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build fa91a5d14e */
+/* build 89c881fc8f */
 /* ShSim — Linux bash learning simulator. A virtual filesystem for practicing commands:
    navigation, pipes, redirection, variables, globs, text tools (grep/sed/awk/cut/sort/uniq/wc/head/tail/tr),
    find, permissions (chmod/chown read as octal/symbolic), and small shell scripts (for/if/while/args).
@@ -872,6 +872,7 @@ window.COURSE = {
   codeExample: 'print("ready")',
   passPct: 90,
   tracks: [
+    { id: 'zero', name: 'Code from Zero', short: 'ZERO', subtitle: 'Never written a line? Start here — plain-language, one tiny step at a time' },
     { id: 'linux', name: 'Linux', short: 'LNX', subtitle: 'Bash & the Linux command line — navigate, pipe, script, automate' },
     { id: 'win', name: 'Windows', short: 'WIN', subtitle: 'CMD and PowerShell for the Windows command line' },
     { id: 'sql', name: 'SQL', short: 'SQL', subtitle: 'Query real databases — SELECT to window functions' },
@@ -879,9 +880,13 @@ window.COURSE = {
     { id: 'js', name: 'JavaScript', short: 'JS', subtitle: 'The language of the web and automation' },
     { id: 'cpp', name: 'C++', short: 'C++', subtitle: 'Low-level power: memory, pointers, performance' },
     { id: 'git', name: 'Git', short: 'GIT', subtitle: 'Version control every developer lives in' },
-    { id: 'ai', name: 'AI Prompting', short: 'AI', subtitle: 'Get elite results out of AI models' }
+    { id: 'ai', name: 'AI Prompting', short: 'AI', subtitle: 'Get elite results out of AI models' },
+    { id: 'fix', name: 'Review & Fix', short: 'FIX', subtitle: 'Read flawed code, find the bug, repair it — vet anything you vibe-code' }
   ],
   tiers: [
+    { id: 'zero-1', track: 'zero', name: 'First lines', desc: 'What code is, print, and variables.' },
+    { id: 'zero-2', track: 'zero', name: 'Choices & repeats', desc: 'if/else and loops.' },
+    { id: 'zero-3', track: 'zero', name: 'Lists & functions', desc: 'Hold many values; build reusable machines.' },
     { id: 'lnx-f', track: 'linux', name: 'Foundations', desc: 'Navigate and read the filesystem.' },
     { id: 'lnx-c', track: 'linux', name: 'Text & Pipes', desc: 'The real power: grep, sed, awk, pipes.' },
     { id: 'lnx-p', track: 'linux', name: 'Scripting & Pro', desc: 'Variables, loops, scripts, permissions.' },
@@ -899,13 +904,179 @@ window.COURSE = {
     { id: 'cpp-c', track: 'cpp', name: 'Memory & Objects', desc: 'Pointers, references, vectors, classes.' },
     { id: 'git-f', track: 'git', name: 'Foundations', desc: 'init, add, commit, log, the three areas.' },
     { id: 'git-c', track: 'git', name: 'Branching & Remotes', desc: 'Branches, merges, conflicts, push/pull.' },
-    { id: 'ai-f', track: 'ai', name: 'Prompting', desc: 'Structure, context, iteration, verification.' }
+    { id: 'ai-f', track: 'ai', name: 'Prompting', desc: 'Structure, context, iteration, verification.' },
+    { id: 'fix-1', track: 'fix', name: 'Read it', desc: 'Understand unfamiliar code; read errors.' },
+    { id: 'fix-2', track: 'fix', name: 'Fix it', desc: 'The common bug patterns and how to repair them.' },
+    { id: 'fix-3', track: 'fix', name: 'Review AI code', desc: 'Vet and repair confident-looking generated code.' }
   ],
   stages: [],
   labs: {},
   gens: null,
   tools: null
 };
+
+;
+/* Code from Zero — the gentlest possible on-ramp. Assumes you have never written a line.
+   Taught in plain language with real, runnable Python. Small steps, one idea at a time. */
+(function () {
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs;
+
+  // ---------- Stage 1 ----------
+  S.push({
+    id: 'z1', track: 'zero', tier: 'zero-1', title: 'Your very first lines', code: 'ZERO-HELLO-BOX', gateN: 12,
+    goal: 'What code even is, how to make the computer say something, and how to store a value in a named box.',
+    lesson: [
+      { h: 'What is code, really?', html: '<p>Code is just a <b>list of instructions</b> you write down, and the computer does them <b>one line at a time, top to bottom</b> — like a recipe. It never guesses and never skips ahead. If you tell it to do five things, it does exactly those five, in order.</p><p>We\'ll use a language called <b>Python</b> because it reads almost like English. You type instructions in the box on the right and press <b>Run</b> to watch them happen.</p>' },
+      { h: 'Making the computer talk: print', html: '<p>The first thing everyone learns is how to make the computer <b>say something</b>. In Python that word is <code>print</code>:</p><pre>print("Hello, world!")</pre><p>Read it slowly: the word <code>print</code>, then round brackets <code>( )</code>, and inside them the words you want shown, wrapped in <b>quotes</b> <code>" "</code>. The quotes mean "this is plain text, don\'t try to understand it." When you run that line, the computer prints: <code>Hello, world!</code></p><div class="callout"><b class="k">Why the quotes matter</b><code>print("Phil")</code> prints the word <b>Phil</b>. <code>print(Phil)</code> with no quotes makes the computer go looking for something <i>named</i> Phil — and if there isn\'t one, it stops with an error. Text always gets quotes.</div>' },
+      { h: 'Storing something: a variable is a labeled box', html: '<p>Often you want to keep a value and use it later. You put it in a <b>variable</b> — think of it as a <b>box with a label</b> on it. You make one with <code>=</code>, which here means "put this into the box," not "equals" like in math:</p><pre>name = "Phil"\nprint(name)</pre><p>Line 1 puts the text <code>Phil</code> into a box labeled <code>name</code>. Line 2 prints <i>what\'s in the box</i> — so you see <code>Phil</code> (no quotes on <code>name</code> this time, because now we <i>do</i> want the computer to look inside the box).</p>' },
+      { h: 'Joining words together', html: '<p>You can glue text together. The easiest, friendliest way is an <b>f-string</b> — put the letter <code>f</code> right before the opening quote, then drop a box\'s name inside curly braces <code>{ }</code>:</p><pre>name = "Phil"\nprint(f"Hi, {name}!")</pre><p>That prints <code>Hi, Phil!</code> — Python swaps <code>{name}</code> for whatever is in the box. That\'s it. You already know how to speak, remember, and combine. Everything else builds on these.</p>' }
+    ],
+    cards: [
+      ['Code', 'A list of instructions the computer runs one line at a time, top to bottom.'],
+      ['print(...)', 'Makes the computer show something on the screen.'],
+      ['Quotes " "', 'Wrap text so the computer shows it exactly, instead of trying to understand it.'],
+      ['Variable', 'A labeled box that holds a value for later.'],
+      ['= (assignment)', 'Means "put this value into the box" — not math equals.'],
+      ['Using a box', 'Write the box\'s name with no quotes to use what\'s inside it.'],
+      ['f-string', 'f"Hi {name}" — glues text and the contents of boxes together.'],
+      ['{ } in an f-string', 'Gets replaced by whatever is in that box.'],
+      ['Error', 'The computer stops and tells you a line it couldn\'t do. Normal — read it and fix that line.'],
+      ['Run', 'Tells the computer to actually perform your instructions.']
+    ],
+    qs: [
+      Q('In what order does the computer run your lines?', 'One at a time, from top to bottom', ['All at once', 'Bottom to top', 'In a random order'], 'Like a recipe, in order.'),
+      Q('Which line makes the computer show the words Good morning?', 'print("Good morning")', ['Good morning', 'say Good morning', 'print Good morning'], 'print(...) with the text in quotes.'),
+      Q('Why do we put quotes around text in print?', 'Quotes say "this is plain text, show it exactly"', ['Quotes make it bold', 'Quotes are optional decoration', 'Quotes run the text as code'], 'Quotes = literal text.'),
+      Q('What is a variable?', 'A labeled box that stores a value for later use', ['A kind of error', 'A print command', 'A math symbol'], 'A named box.'),
+      Q('In name = "Phil", what does the = do?', 'Puts the text Phil into the box named name', ['Checks if name equals Phil', 'Prints Phil', 'Deletes name'], 'Assignment, not comparison.'),
+      P('city = "Norman"\nprint(city)', 'Norman', ['city', '"Norman"', 'Error'], 'It prints what is inside the box.', 'Python'),
+      P('print("city")', 'city', ['Norman', 'Error', 'nothing'], 'In quotes, so it prints the literal word.', 'Python'),
+      P('name = "Sam"\nprint(f"Hi, {name}!")', 'Hi, Sam!', ['Hi, {name}!', 'Hi, name!', 'Hi, Sam'], 'The f-string swaps {name} for Sam.', 'Python'),
+      Q('print(Phil) with no quotes does what (when nothing named Phil exists)?', 'Stops with an error, because it looks for a box named Phil', ['Prints Phil', 'Prints nothing', 'Creates the box'], 'No quotes = look for a box.'),
+      Q('What is an "error" when coding?', 'The computer telling you a line it could not do — read it and fix that line', ['A sign you should quit', 'A virus', 'Something only experts get'], 'Errors are normal feedback.'),
+      P('a = "cat"\nb = "dog"\nprint(f"{a} and {b}")', 'cat and dog', ['a and b', '{a} and {b}', 'cat dog'], 'Both boxes are filled in.', 'Python'),
+      T('Write the one line that prints exactly: Hello, world!', [/print\(\s*(["\'])Hello, world!\1\s*\)/], 'print("Hello, world!")', 0, 'print(...)')
+    ],
+    labs: ['z-hello', 'z-box']
+  });
+
+  // ---------- Stage 2 ----------
+  S.push({
+    id: 'z2', track: 'zero', tier: 'zero-2', title: 'Choices and repeats', code: 'ZERO-IF-AND-LOOP', gateN: 12,
+    goal: 'Make the computer decide between paths, and repeat something without copying it a hundred times.',
+    lesson: [
+      { h: 'Numbers and simple math', html: '<p>Not everything is text. Numbers have <b>no quotes</b>, and Python does math the obvious way:</p><pre>age = 20\nprint(age + 1)     # 21</pre><p><code>+ - * /</code> are add, subtract, multiply, divide. The <code>#</code> starts a <b>comment</b> — a note for humans that the computer ignores.</p>' },
+      { h: 'Asking a question: if / else', html: '<p>To make the computer <b>choose</b>, you ask a yes/no question with <code>if</code>. The lines that belong to it are <b>indented</b> (pushed in with spaces) — that indent is how Python knows which lines are "inside" the choice:</p><pre>age = 20\nif age >= 18:\n    print("adult")\nelse:\n    print("minor")</pre><p>Read it as: <i>if age is 18 or more, print adult; otherwise, print minor.</i> Note the colon <code>:</code> and the indent. Comparisons: <code>==</code> is "is equal to" (two equals signs, because one is already "put in the box"), <code>!=</code> is "not equal," and <code>&gt; &lt; &gt;= &lt;=</code> are what you\'d expect.</p>' },
+      { h: 'Doing it again: a loop', html: '<p>Imagine printing 1 through 5. You could write five <code>print</code> lines… or use a <b>loop</b> to repeat:</p><pre>for n in range(1, 6):\n    print(n)</pre><p><code>range(1, 6)</code> counts <code>1, 2, 3, 4, 5</code> — it <b>stops just before</b> the second number (a common surprise). Each time around, the box <code>n</code> holds the next value, and the indented line runs. Loops are how one short piece of code does a huge amount of work.</p>' },
+      { h: 'The indent is not optional', html: '<div class="callout trap"><b class="k">Indentation is the grammar</b>In many languages curly braces <code>{ }</code> group lines. In Python, the <b>indent</b> does. Lines indented under an <code>if</code> or <code>for</code> are "inside" it. Forget the indent and Python stops with an <code>IndentationError</code>. Four spaces is the convention — the editor\'s Tab key gives you them.</div>' }
+    ],
+    cards: [
+      ['Numbers', 'No quotes. Python does + - * / normally.'],
+      ['# comment', 'A note for humans; the computer ignores it.'],
+      ['if', 'Run the indented lines only when a question is true.'],
+      ['else', 'What to do when the if question was false.'],
+      ['Indent', 'Spaces that show which lines are "inside" an if/for. Python\'s grammar.'],
+      ['== vs =', '== asks "is it equal?"; a single = puts a value in a box.'],
+      ['!= > < >= <=', 'Not-equal, and the usual comparisons.'],
+      ['for ... in range(a, b)', 'Repeat, counting from a up to but NOT including b.'],
+      ['Loop variable', 'The box (e.g. n) that holds the current value each time around.'],
+      ['Colon :', 'Ends an if/else/for line, right before the indented block.']
+    ],
+    qs: [
+      P('x = 7\nprint(x * 2)', '14', ['7', '72', '9'], 'Numbers do math; 7 times 2.', 'Python'),
+      Q('What does the # symbol start?', 'A comment — a note the computer ignores', ['A heading that prints', 'An error', 'A loop'], 'Comments are for humans.'),
+      Q('In Python, how does the computer know which lines are "inside" an if?', 'They are indented (pushed in with spaces)', ['They are in quotes', 'They end with a semicolon', 'They are numbered'], 'Indent = grouping.'),
+      P('age = 15\nif age >= 18:\n    print("adult")\nelse:\n    print("minor")', 'minor', ['adult', 'both', 'Error'], '15 is not >= 18.', 'Python'),
+      Q('Why is "is equal to" written == and not =?', 'A single = already means "put a value in a box," so == asks the question', ['== is a typo', 'They are the same', '= only works on text'], 'One assigns, two compares.'),
+      P('for n in range(1, 4):\n    print(n)', '1\n2\n3', ['1\n2\n3\n4', '0\n1\n2\n3', '1 2 3 4'], 'range stops just before 4.', 'Python'),
+      Q('range(1, 6) produces which numbers?', '1, 2, 3, 4, 5', ['1, 2, 3, 4, 5, 6', '0, 1, 2, 3, 4, 5', '1 through 6 including 6'], 'Stops before the second number.'),
+      P('total = 0\nfor n in range(1, 4):\n    total = total + n\nprint(total)', '6', ['3', '10', '0'], '0+1+2+3 = 6.', 'Python'),
+      Q('Forgetting to indent the line under an if causes:', 'An IndentationError — the indent is required', ['Nothing, it still works', 'A faster program', 'A comment'], 'Indent is grammar in Python.'),
+      P('n = 4\nif n % 2 == 0:\n    print("even")\nelse:\n    print("odd")', 'even', ['odd', 'Error', '0'], '4 has no remainder when divided by 2.', 'Python'),
+      Q('What does else do?', 'Runs when the if question was false', ['Always runs', 'Repeats the if', 'Prints an error'], 'The "otherwise" path.'),
+      T('Write the first line of a loop that counts n from 1 up to and including 5 (use range).', [/for\s+n\s+in\s+range\(\s*1\s*,\s*6\s*\)\s*:/], 'for n in range(1, 6):', 0, 'for n in range(...)')
+    ],
+    labs: ['z-choose', 'z-count']
+  });
+
+  // ---------- Stage 3 ----------
+  S.push({
+    id: 'z3', track: 'zero', tier: 'zero-3', title: 'Lists and little machines', code: 'ZERO-LIST-AND-FUNCTION', gateN: 12,
+    goal: 'Hold many values in a list, walk through them, and build your own reusable machine — a function.',
+    lesson: [
+      { h: 'A list holds many things', html: '<p>A <b>list</b> is a row of boxes in order, written with square brackets <code>[ ]</code>:</p><pre>nums = [2, 4, 6]\nprint(nums[0])    # 2  — counting starts at 0!\nprint(len(nums))  # 3  — how many items</pre><p>You reach an item by its <b>position number</b> in square brackets, and positions start at <b>0</b>, so the first item is <code>nums[0]</code>. <code>len(...)</code> tells you how many there are.</p>' },
+      { h: 'Walking through a list', html: '<p>A <code>for</code> loop can walk a list directly — each time around, the box holds the next item:</p><pre>nums = [2, 4, 6]\ntotal = 0\nfor n in nums:\n    total = total + n\nprint(total)   # 12</pre><p>No counting, no positions — just "for each n in nums." This is the everyday shape of real programs: go through a collection and do something with each item.</p>' },
+      { h: 'A function: a machine you build once', html: '<p>When you want to reuse a piece of logic, wrap it in a <b>function</b> — a little machine you <b>feed inputs</b> and that <b>gives back</b> a result. You define it with <code>def</code>, and hand the answer back with <code>return</code>:</p><pre>def greet(name):\n    return f"Hi {name}"\n\nprint(greet("Phil"))   # Hi Phil\nprint(greet("Sam"))    # Hi Sam</pre><p><code>name</code> is the input (the <b>parameter</b>). <code>return</code> sends a value back to whoever called the machine. Build it once, use it forever — that\'s the whole point.</p>' },
+      { h: 'You now have the core', html: '<div class="callout pro"><b class="k">This really is the foundation</b>Say things (<code>print</code>), remember things (variables), decide (<code>if</code>), repeat (<code>for</code>), hold many (lists), and package logic (functions). Every program — in any language — is built from exactly these. From here, the other tracks just add new words for ideas you already understand. Nicely done.</div>' }
+    ],
+    cards: [
+      ['List [ ]', 'An ordered row of values: [2, 4, 6].'],
+      ['Position (index)', 'nums[0] is the first item — counting starts at 0.'],
+      ['len(x)', 'How many items are in a list (or characters in text).'],
+      ['for n in nums', 'Walk a list; n becomes each item in turn.'],
+      ['Building a total', 'Start at 0, add each item as you loop.'],
+      ['def', 'Defines a function — a reusable machine.'],
+      ['Parameter', 'The named input a function receives (e.g. name).'],
+      ['return', 'Hands a value back from the function to the caller.'],
+      ['Calling', 'greet("Phil") runs the machine with that input.'],
+      ['Reuse', 'Write a function once; use it as many times as you like.']
+    ],
+    qs: [
+      P('nums = [5, 10, 15]\nprint(nums[0])', '5', ['10', '15', '1'], 'The first item is at position 0.', 'Python'),
+      Q('In a list, the first item is at position:', '0', ['1', '-1', 'depends'], 'Counting starts at 0.'),
+      P('nums = [5, 10, 15]\nprint(len(nums))', '3', ['2', '15', '0'], 'len is the count of items.', 'Python'),
+      P('nums = [1, 2, 3, 4]\ntotal = 0\nfor n in nums:\n    total = total + n\nprint(total)', '10', ['4', '24', '1234'], '1+2+3+4.', 'Python'),
+      Q('What does def do?', 'Defines a function — a reusable piece of logic', ['Deletes a variable', 'Prints text', 'Starts a loop'], 'def = define a function.'),
+      Q('What does return do inside a function?', 'Hands a value back to whoever called the function', ['Prints to the screen', 'Ends the whole program', 'Starts a loop'], 'return gives the answer back.'),
+      P('def double(x):\n    return x * 2\nprint(double(6))', '12', ['6', '66', 'x * 2'], 'The machine doubles its input.', 'Python'),
+      P('def greet(name):\n    return f"Hi {name}"\nprint(greet("Sam"))', 'Hi Sam', ['Hi name', 'Hi {name}', 'greet(Sam)'], 'name is filled in with Sam.', 'Python'),
+      Q('A function\'s "parameter" is:', 'The named input it receives', ['Its output', 'An error', 'A comment'], 'The input placeholder.'),
+      P('fruits = ["apple", "pear"]\nfor f in fruits:\n    print(f)', 'apple\npear', ['apple pear', 'f\nf', '0\n1'], 'Each item in turn.', 'Python'),
+      Q('Why write a function instead of copying the lines?', 'Write it once and reuse it anywhere, with different inputs', ['Functions run faster always', 'It is required by Python', 'To use more memory'], 'Reuse without repeating.'),
+      T('Write the first line that defines a function named add taking two inputs a and b.', [/def\s+add\s*\(\s*a\s*,\s*b\s*\)\s*:/], 'def add(a, b):', 0, 'def add(...):')
+    ],
+    labs: ['z-sum', 'z-greet']
+  });
+
+  // ---------- labs ----------
+  function zlab(o) { o.kind = 'code'; o.lang = 'py'; L[o.id] = o; }
+  zlab({ id: 'z-hello', title: 'Say hello', brief: 'Make the program print exactly:<br><code>Hello, world!</code><br>Type it in the box and press Check.',
+    starter: '# type your one line below\n',
+    tests: [{ name: 'Prints Hello, world!', expect: 'Hello, world!' }],
+    hints: ['Use the print word.', 'The text goes inside round brackets and quotes.', 'print("Hello, world!")'],
+    solution: 'print("Hello, world!")',
+    why: 'print(...) shows text; the quotes make it literal.', debrief: 'That\'s a complete program. You just made a computer talk.' });
+  zlab({ id: 'z-box', title: 'A box called name', brief: 'Put your name in a box called <code>name</code>, then print a greeting using an f-string. For the tests, use the name <code>Phil</code> so the program prints:<br><code>Hi, Phil!</code>',
+    starter: 'name = "Phil"\n# now print:  Hi, Phil!   using an f-string\n',
+    tests: [{ name: 'Prints Hi, Phil!', expect: 'Hi, Phil!' }],
+    hints: ['The box is already filled: name = "Phil".', 'An f-string starts with f before the quote: f"..."', 'print(f"Hi, {name}!")'],
+    solution: 'name = "Phil"\nprint(f"Hi, {name}!")',
+    why: 'The f-string swaps {name} for the box\'s contents.', debrief: 'Store, then use. This pattern is everywhere.' });
+  zlab({ id: 'z-choose', title: 'Adult or minor', brief: 'A box <code>age</code> holds <code>20</code>. Print <code>adult</code> if age is 18 or more, otherwise print <code>minor</code>. (With age 20 it should print <code>adult</code>.)',
+    starter: 'age = 20\n# if age is 18 or more, print adult; otherwise print minor\n',
+    tests: [{ name: 'age 20 prints adult', expect: 'adult' }],
+    hints: ['Start with: if age >= 18:', 'The print line under it must be indented (4 spaces).', 'Add an else: with its own indented print("minor").'],
+    solution: 'age = 20\nif age >= 18:\n    print("adult")\nelse:\n    print("minor")',
+    why: 'if/else chooses a path based on a yes/no question.', debrief: 'You made the computer decide. Change age and watch it flip.' });
+  zlab({ id: 'z-count', title: 'Count to five', brief: 'Print the numbers <code>1</code> through <code>5</code>, one per line, using a loop (not five print lines).',
+    starter: '# loop from 1 to 5 and print each number\n',
+    tests: [{ name: 'Prints 1 2 3 4 5 on separate lines', expect: '1\n2\n3\n4\n5' }],
+    hints: ['Use: for n in range(1, 6):', 'range(1, 6) stops before 6, so it gives 1..5.', 'Indent the print under the for: print(n)'],
+    solution: 'for n in range(1, 6):\n    print(n)',
+    why: 'range(1, 6) counts 1..5; the loop prints each.', debrief: 'One loop did the work of five lines. That\'s the power of repeating.' });
+  zlab({ id: 'z-sum', title: 'Add up a list', brief: 'A list <code>nums = [2, 4, 6, 8]</code> is given. Add all the numbers and print the total (<code>20</code>). Walk the list with a loop.',
+    starter: 'nums = [2, 4, 6, 8]\ntotal = 0\n# add each number in nums to total, then print total\n',
+    tests: [{ name: 'Prints 20', expect: '20' }],
+    hints: ['Start total at 0 (done for you).', 'for n in nums:', 'Inside the loop: total = total + n. Then print(total) after the loop.'],
+    solution: 'nums = [2, 4, 6, 8]\ntotal = 0\nfor n in nums:\n    total = total + n\nprint(total)',
+    why: 'Start at 0 and add each item — the standard way to total a list.', debrief: 'Walk a collection, do something with each item. You\'ll use this constantly.' });
+  zlab({ id: 'z-greet', title: 'Build a greet machine', brief: 'Write a function <code>greet(name)</code> that returns <code>Hi &lt;name&gt;</code>. Then print <code>greet("Phil")</code> — it should show <code>Hi Phil</code>.',
+    starter: 'def greet(name):\n    return ""   # change this to return the greeting using an f-string\n\nprint(greet("Phil"))\n',
+    tests: [{ name: 'greet("Phil") prints Hi Phil', expect: 'Hi Phil' }, { name: 'greet is a real function that returns', check: "assert greet('Sam') == 'Hi Sam', 'greet should return \"Hi <name>\"'" }],
+    hints: ['Inside the function, use return (not print).', 'return f"Hi {name}"', 'The last line, print(greet("Phil")), is already there.'],
+    solution: 'def greet(name):\n    return f"Hi {name}"\n\nprint(greet("Phil"))',
+    why: 'A function packages logic you can reuse with any input.', debrief: 'You built your first reusable machine. Feed it any name.' });
+})();
 
 ;
 /* Linux / Bash track */
@@ -1821,6 +1992,189 @@ window.COURSE = {
     solution: 'You are an experienced debugging partner.\n\nMy Python function should return the average of a list of numbers, but it returns 0 for a non-empty list.\n\nCode:\n[paste the function and an example call]\n\nPlease: identify the root cause, explain why it happens in one or two sentences, and give the corrected code. \n\nIf anything is unclear or you need more context (the inputs, Python version, or the full traceback), ask me before assuming.',
     why: 'Intended vs actual behavior, the code, "explain the cause", and an invitation to ask — this is how you get a fix you actually understand instead of a lucky guess.',
     debrief: 'Run "fix my code" and your version on the same bug in a real AI. The gap in quality is the whole point of this skill.' });
+})();
+
+;
+/* Review & Fix — the skill of taking working-but-flawed code (the kind an AI hands you),
+   finding what's wrong, and repairing it to green without breaking anything else. */
+(function () {
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs;
+
+  // ---------- Stage 1 ----------
+  S.push({
+    id: 'fx1', track: 'fix', tier: 'fix-1', title: 'Read code you didn\'t write', code: 'FIX-READ-TRACE-REPRODUCE', gateN: 12,
+    goal: 'A calm, repeatable way to understand unfamiliar code and read an error instead of fearing it.',
+    lesson: [
+      { h: 'The mindset', html: '<p>Reading someone else\'s code — including code an AI generated for you — is a <b>separate skill</b> from writing your own, and it\'s the one that lets you trust (or not trust) a "vibe-coded" draft. The goal isn\'t to admire it; it\'s to <b>build an accurate mental model of what it actually does</b>, which is often not what it claims to do.</p>' },
+      { h: 'Narrate and trace', html: '<ul><li><b>Read top to bottom and say each line out loud in plain English.</b> "Start total at 0. Loop i from 1 to 99. Add i to total." The moment your narration doesn\'t match the intent, you\'ve found the bug.</li><li><b>Trace one input by hand.</b> Pick a small example, and on paper track every variable as the lines run. Computers don\'t guess; if you follow the exact steps, you get the exact (wrong) answer it gets.</li></ul>' },
+      { h: 'Reproduce, then read the error', html: '<p><b>Reproduce first.</b> Run it and see the real output next to the expected output — you can\'t fix what you can\'t trigger. If it crashes, the <b>error / traceback</b> is a gift, not an insult:</p><pre>Traceback (most recent call last):\n  File "&lt;your code&gt;", line 6, in &lt;module&gt;\n    print("average:", avgg)\nNameError: name \'avgg\' is not defined</pre><p>Read it <b>bottom-up</b>: the last line is the <b>kind</b> of error and the message; just above is the <b>exact line</b>. That\'s your first suspect, every time. (<code>NameError</code> = a name/typo it can\'t find; <code>TypeError</code> = wrong kind of value; <code>IndexError</code> = position past the end.)</p>' },
+      { h: 'Isolate — don\'t guess-edit', html: '<div class="callout pro"><b class="k">Find WHERE before you change WHAT</b><ul><li><b>Print/log intermediate values</b> to see where reality first diverges from what you expected.</li><li><b>Shrink the input</b> to the smallest case that still fails.</li><li><b>Comment out</b> parts to cut the problem in half (bisect).</li><li>Only change a line <b>once you understand why it\'s wrong</b>. Random edits create two bugs where there was one.</li></ul></div>' }
+    ],
+    cards: [
+      ['Reading ≠ writing', 'Understanding unfamiliar code is its own skill — the one that lets you vet AI output.'],
+      ['Narrate', 'Say each line in plain English; mismatch with intent = the bug.'],
+      ['Trace by hand', 'Track every variable for one small input, step by step.'],
+      ['Reproduce first', 'Run it; compare real output to expected. Can\'t fix what you can\'t trigger.'],
+      ['Read traceback bottom-up', 'Last line = error type + message; line above = the exact spot.'],
+      ['NameError', 'A name/typo the program can\'t find.'],
+      ['TypeError', 'An operation on the wrong kind of value (e.g. text + number).'],
+      ['IndexError', 'Asked for a position past the end of a list/string.'],
+      ['Isolate', 'Log values, shrink the input, comment out parts to find WHERE.'],
+      ['Understand before editing', 'Never change a line you can\'t explain.']
+    ],
+    qs: [
+      Q('The first thing to do with a bug report is:', 'Reproduce it — run the code and see the real vs expected output', ['Rewrite the whole file', 'Guess a fix and ship it', 'Assume it\'s fine'], 'You can\'t fix what you can\'t trigger.'),
+      Q('How do you read a traceback / error?', 'Bottom-up: the last line names the error, the line above shows where', ['Top-down only', 'Ignore it', 'Only the first word'], 'The bottom is the point of failure.'),
+      Q('A NameError usually means:', 'A name or typo the program can\'t find', ['The file is too big', 'The internet is down', 'A number is negative'], 'Undefined name — often a typo.'),
+      Q('"Tracing" code by hand means:', 'Following one input step by step, tracking each variable\'s value', ['Deleting lines at random', 'Reading only comments', 'Running it 100 times'], 'Hand-simulate the steps.'),
+      Q('You narrate a line and it doesn\'t match what the program is supposed to do. That means:', 'You\'ve likely found the bug — investigate that line', ['The narration is wrong', 'Nothing — keep going', 'Restart the computer'], 'Intent vs behavior mismatch.'),
+      P('nums = [10, 20, 30]\ntotal = 0\nfor n in nums:\n    total += n\nprint("avg:", total / len(nums))', 'avg: 20.0', ['avg: 60', 'avg: 30.0', 'Error'], '60 / 3 = 20.0.', 'Python'),
+      Q('A TypeError in Python most likely comes from:', 'Using a value of the wrong kind (e.g. "x" + 5)', ['A missing comment', 'Too many blank lines', 'A long variable name'], 'Wrong type for the operation.'),
+      Q('Best way to find WHERE a wrong value comes from:', 'Print/log intermediate values until reality diverges from expectation', ['Change random lines', 'Add more features', 'Delete the function'], 'Observe, then localize.'),
+      Q('"Bisecting" a bug means:', 'Commenting out / disabling halves of the code to narrow the location', ['Cutting the file in two files', 'Running it twice', 'Halving the input size only'], 'Divide and conquer the location.'),
+      Q('Why not just guess-edit until it works?', 'Random edits add new bugs and hide the real cause you still don\'t understand', ['Guessing is always fastest', 'It never causes problems', 'Editors forbid it'], 'Understand before you change.'),
+      P('s = "code"\nprint(s[0], s[-1], len(s))', 'c e 4', ['c d 4', 'c e 5', 'o e 4'], 'First char, last char, length.', 'Python'),
+      T('What kind of error (one word, ends in "Error") is raised by asking for s[99] on a short string?', [/IndexError/i], 'IndexError', 0, 'e.g. ...Error')
+    ],
+    labs: ['fx-read', 'fx-trace']
+  });
+
+  // ---------- Stage 2 ----------
+  S.push({
+    id: 'fx2', track: 'fix', tier: 'fix-2', title: 'The usual suspects', code: 'FIX-OFF-BY-ONE-AND-EDGES', gateN: 12,
+    goal: 'The handful of bug patterns behind most failures — and fixing them without regressing anything.',
+    lesson: [
+      { h: 'The short list of common bugs', html: '<ul><li><b>Off-by-one</b>: <code>&lt;</code> vs <code>&lt;=</code>, a range that stops one short or goes one too far, starting a count at 1 instead of 0.</li><li><b>Wrong operator</b>: <code>=</code> (assign) where you meant <code>==</code> (compare); <code>+</code> where you meant <code>*</code>; <code>and</code> where you meant <code>or</code>.</li><li><b>Forgotten / wrong return</b>: the function computes the answer but returns the wrong variable — or nothing.</li><li><b>Bad initial value</b>: starting a "max" at <code>0</code> (breaks on all-negative data) or a sum at something other than 0.</li></ul>' },
+      { h: 'Edges are where code dies', html: '<p>Most bugs hide at the <b>edges</b>, not the middle. Always test: an <b>empty</b> input, a <b>single</b> item, <b>zero</b>, <b>negatives</b>, <b>duplicates</b>, the <b>largest</b> case, and odd text (<b>case</b>, <b>spaces</b>, <b>punctuation</b>). Code that works on <code>[3, 7, 1]</code> can still be wrong on <code>[]</code> or <code>[-5, -2]</code>.</p>' },
+      { h: 'Fix without regressing', html: '<div class="callout pro"><b class="k">The disciplined repair loop</b><ol><li>Find the <b>smallest input</b> that fails and understand exactly why.</li><li>Make the <b>smallest change</b> that fixes that case.</li><li><b>Re-run every test</b>, not just the one you fixed — a fix that breaks another case isn\'t a fix.</li><li>If you can, add a test for the bug so it can never silently return.</li></ol></div>' }
+    ],
+    cards: [
+      ['Off-by-one', '< vs <=, a bound one short or one too far, counting from 1 vs 0.'],
+      ['= vs ==', 'Assignment vs comparison — a classic silent bug.'],
+      ['Wrong operator', '+ for *, and for or, > for >=.'],
+      ['Wrong/missing return', 'Returns the wrong variable, or forgets to return at all.'],
+      ['Bad initial value', 'max starting at 0 breaks on all-negative input.'],
+      ['Edge cases', 'empty, single, zero, negative, duplicate, largest, odd text.'],
+      ['Smallest failing input', 'Shrink to the minimal case that still breaks.'],
+      ['Smallest fix', 'Change as little as possible to fix the real cause.'],
+      ['Re-run all tests', 'A fix that breaks another case is not a fix (a regression).'],
+      ['Add a test', 'Lock the bug out so it can\'t silently come back.']
+    ],
+    qs: [
+      P('total = 0\nfor i in range(1, 5):\n    total += i\nprint(total)', '10', ['15', '6', '1'], 'range(1,5) is 1,2,3,4 → 10. (If you expected 1..5, that\'s an off-by-one.)', 'Python'),
+      Q('An "off-by-one" bug is typically caused by:', 'A boundary like < vs <= or a range that stops one short/long', ['A slow computer', 'A missing comment', 'Too many functions'], 'Boundary error.'),
+      Q('Starting a "largest value so far" at 0 is wrong when:', 'All the numbers are negative — 0 would be returned incorrectly', ['The list is sorted', 'The list has one item', 'Numbers are large'], 'Init with the first element instead.'),
+      Q('In an if, writing = instead of == does what?', 'Assigns instead of compares — a classic bug (an error in Python, silent in some languages)', ['Nothing', 'Always compares anyway', 'Speeds it up'], '= assigns, == compares.'),
+      Q('Which edge cases should you always try?', 'Empty, single item, zero, negative, duplicates, largest, odd text', ['Only the example input', 'Only large inputs', 'None — trust the happy path'], 'Edges hide bugs.'),
+      P('def avg(nums):\n    return sum(nums) / len(nums)\nprint(avg([]))', 'Error', ['0', '0.0', 'None'], 'Dividing by len 0 raises ZeroDivisionError — the empty edge.', 'Python'),
+      Q('After fixing the failing case you should:', 'Re-run ALL tests to make sure you didn\'t break another case', ['Ship immediately', 'Delete the other tests', 'Only re-run the one you fixed'], 'Avoid regressions.'),
+      Q('A function returns the wrong answer but never crashes. This is:', 'A silent logic bug — the most dangerous kind', ['Fine, since it runs', 'A syntax error', 'An import error'], 'Runs ≠ correct.'),
+      P('def biggest(nums):\n    m = nums[0]\n    for n in nums:\n        if n > m: m = n\n    return m\nprint(biggest([-5, -2, -9]))', '-2', ['0', '-9', '-5'], 'Initialised from the first element, so negatives work.', 'Python'),
+      Q('The safest-sized change when fixing a bug is:', 'The smallest change that fixes the real cause', ['A full rewrite', 'Changing several unrelated lines', 'Adding new features'], 'Minimal, targeted fix.'),
+      Q('Why add a test after fixing a bug?', 'So the same bug can\'t silently come back later', ['To make the file longer', 'Tests are required by law', 'To slow the program'], 'Lock the fix in.'),
+      T('Which comparison operator fixes a loop that stops one short of including n? (the one meaning "less than or equal")', [/^<=$/, /less than or equal/i], '<=', 0, 'operator')
+    ],
+    labs: ['fx-average', 'fx-max']
+  });
+
+  // ---------- Stage 3 ----------
+  S.push({
+    id: 'fx3', track: 'fix', tier: 'fix-3', title: 'Review the vibe-coded draft', code: 'FIX-VIBE-CODE-EDGES', gateN: 12,
+    goal: 'Vet confident-looking AI output against the full spec and the edges, then repair it — the real workflow.',
+    lesson: [
+      { h: 'Why AI code needs a review pass', html: '<p>Generated code is fluent and usually works on the <b>example you gave</b>. That\'s exactly the trap: it looks finished and reads cleanly, so it\'s easy to accept. But it was pattern-matched to the happy path, and the bugs sit in the parts you <b>didn\'t</b> mention — the edges, the full spec, the error handling. Your job is to be the reviewer it doesn\'t have.</p>' },
+      { h: 'The review checklist', html: '<ul><li><b>Full spec, not the example:</b> re-read every requirement. Does the code do <i>all</i> of them, or just the one case it was shown?</li><li><b>Edges:</b> empty, one item, zero, negatives, duplicates, unicode/case/spaces/punctuation, very large input.</li><li><b>Silent wrong answers:</b> the scariest bugs don\'t crash. Check values, not just "it ran."</li><li><b>Trusting input:</b> does it assume input is clean/valid? Real input never is.</li><li><b>Explainability:</b> if you can\'t explain a line, you can\'t trust it — ask, or rewrite it until you can.</li></ul>' },
+      { h: 'The workflow that keeps you in control', html: '<div class="callout pro"><b class="k">Prove it before you trust it</b><ol><li><b>Write a failing test</b> for the edge you suspect — make the bug real and visible.</li><li><b>Fix the smallest cause.</b></li><li><b>Re-run everything</b> so you didn\'t regress the happy path.</li><li>Keep the tests. Now the AI can regenerate all it likes — your tests are the contract.</li></ol>This is how you "vibe code" something and still ship it with confidence: generate freely, then verify ruthlessly.</div>' }
+    ],
+    cards: [
+      ['Happy-path trap', 'AI code works on the example you gave; bugs hide in cases you didn\'t mention.'],
+      ['Full spec', 'Re-read every requirement; the draft often does only the shown case.'],
+      ['Edge review', 'empty, one, zero, negative, duplicates, case/space/punctuation, huge.'],
+      ['Silent wrong answer', 'Doesn\'t crash but returns the wrong value — the most dangerous bug.'],
+      ['Trusting input', 'Real input is messy; drafts often assume it\'s clean.'],
+      ['Explainability', 'If you can\'t explain a line, you can\'t trust it.'],
+      ['Failing test first', 'Make the suspected bug visible before fixing.'],
+      ['Smallest fix', 'Repair the cause, not the symptom.'],
+      ['Re-run all', 'Confirm the happy path still passes (no regression).'],
+      ['Tests are the contract', 'Keep them; regenerated code must still pass them.']
+    ],
+    qs: [
+      Q('Why is confident-looking AI code risky?', 'It usually handles the shown example but misses edges and parts of the spec', ['It is always wrong', 'It never runs', 'It is too slow'], 'Happy-path trap.'),
+      Q('The most dangerous kind of bug in generated code is:', 'A silent wrong answer that doesn\'t crash', ['A syntax error', 'A slow function', 'A long variable name'], 'Runs but returns wrong.'),
+      Q('Reviewing against "the full spec" means:', 'Checking every requirement, not just the one example you gave', ['Reading only the function name', 'Trusting the comments', 'Running it once'], 'All requirements.'),
+      Q('Before fixing a suspected edge bug, you should:', 'Write a failing test that makes the bug visible', ['Rewrite everything', 'Delete the function', 'Ship it and wait'], 'Prove it first.'),
+      P('def is_pal(s):\n    return s == s[::-1]\nprint(is_pal("RaceCar"))', 'False', ['True', 'Error', 'None'], 'Case-sensitive: "RaceCar" != "raceCaR". A spec that ignores case would need normalizing.', 'Python'),
+      Q('An AI palindrome checker passes "racecar" but the spec says ignore case and spaces. The fix:', 'Normalize (lowercase, strip non-letters) before comparing', ['Nothing — it is correct', 'Make it slower', 'Only test "racecar"'], 'Meet the full spec.'),
+      Q('"It ran without errors" proves:', 'Only that it didn\'t crash — not that the answer is correct', ['The code is correct', 'All edges pass', 'The spec is met'], 'Running ≠ correct.'),
+      Q('A pricing function from an AI doesn\'t guard against a 150% discount. This is:', 'A missing validation / edge-case bug', ['A syntax error', 'A performance bug', 'Not a bug'], 'Unvalidated input.'),
+      Q('After repairing generated code, keeping your tests means:', 'Any future regeneration must still pass them — they\'re the contract', ['The file is prettier', 'Nothing useful', 'The AI is disabled'], 'Tests pin behavior.'),
+      Q('If you cannot explain a line of generated code, you should:', 'Not trust it — ask for an explanation or rewrite it until you can', ['Ship it anyway', 'Delete all comments', 'Assume it is fine'], 'Understand before trust.'),
+      P('def clip(x):\n    if x < 0: return 0\n    if x > 100: return 100\n    return x\nprint(clip(150), clip(-4), clip(50))', '100 0 50', ['150 -4 50', '100 0 0', 'Error'], 'Clamped to the 0..100 range.', 'Python'),
+      T('In the disciplined fix loop, what do you write FIRST to make a suspected bug visible? (two words)', [/failing test/i, /test/i], 'failing test', 0, 'a ___ ___')
+    ],
+    labs: ['fx-vibe-pal', 'fx-vibe-price']
+  });
+
+  // ---------- labs ----------
+  function jlab(o) { o.kind = 'code'; o.lang = 'js'; L[o.id] = o; }
+  function plab(o) { o.kind = 'code'; o.lang = 'py'; L[o.id] = o; }
+
+  jlab({ id: 'fx-read', title: 'Fix the off-by-one', brief: 'This should print the sum of <b>1 through 100</b> (which is <code>5050</code>), but it prints <code>4950</code>. Read the loop, find the boundary bug, and fix it.',
+    starter: 'let total = 0;\nfor (let i = 1; i < 100; i++) {\n  total += i;\n}\nconsole.log(total);\n',
+    tests: [{ name: 'Prints 5050 (sums 1..100 inclusive)', expect: '5050' }],
+    hints: ['Trace the loop: what is the last value of i that runs? With i < 100 it stops at 99.', 'You need i to reach 100 as well.', 'Change i < 100 to i <= 100.'],
+    solution: 'let total = 0;\nfor (let i = 1; i <= 100; i++) {\n  total += i;\n}\nconsole.log(total);',
+    why: 'i < 100 never includes 100 — a classic off-by-one. i <= 100 includes it.',
+    debrief: 'One character (< → <=) was the whole bug. Boundaries are the first place to look.' });
+
+  plab({ id: 'fx-trace', title: 'Read the traceback', brief: 'This should print <code>average: 20.0</code> for the list, but it crashes. Run it, read the traceback bottom-up to find the exact line, and fix it.',
+    starter: 'nums = [10, 20, 30]\ntotal = 0\nfor n in nums:\n    total += n\navg = total / len(nums)\nprint("average:", avgg)\n',
+    tests: [{ name: 'Prints average: 20.0', expect: 'average: 20.0' }],
+    hints: ['Run it. The traceback\'s last line is a NameError naming what it couldn\'t find.', 'It says name "avgg" is not defined — look at the print line.', 'It\'s a typo: avgg should be avg.'],
+    solution: 'nums = [10, 20, 30]\ntotal = 0\nfor n in nums:\n    total += n\navg = total / len(nums)\nprint("average:", avg)',
+    why: 'The traceback named the exact line and a NameError — a one-letter typo (avgg vs avg).',
+    debrief: 'The error wasn\'t the enemy; it pointed straight at the line. Read tracebacks bottom-up.' });
+
+  jlab({ id: 'fx-average', title: 'The average that forgot to divide', brief: 'This <code>average</code> function returns the <b>sum</b>, not the average. <code>average([2,4,6])</code> should be <code>4</code>, not <code>12</code>. Fix the function.',
+    starter: 'function average(nums) {\n  let sum = 0;\n  for (const n of nums) sum += n;\n  return sum; // returns the total, not the average\n}\nconsole.log(average([2, 4, 6]));\n',
+    tests: [{ name: 'average([2,4,6]) is 4', check: 'return average([2,4,6]) === 4;' }, { name: 'average([10,20]) is 15', check: 'return average([10,20]) === 15;' }],
+    hints: ['The sum is right; it just isn\'t divided.', 'Divide by how many numbers there are: nums.length.', 'return sum / nums.length;'],
+    solution: 'function average(nums) {\n  let sum = 0;\n  for (const n of nums) sum += n;\n  return sum / nums.length;\n}\nconsole.log(average([2, 4, 6]));',
+    why: 'The average is the sum divided by the count. The code computed the sum and returned it unchanged.',
+    debrief: 'A "wrong/missing final step" bug — the computation was fine, the return wasn\'t.' });
+
+  jlab({ id: 'fx-max', title: 'The max that breaks on negatives', brief: 'This <code>maxOf</code> returns the largest number — but it starts the running max at <code>0</code>, so for all-negative input it wrongly returns <code>0</code>. <code>maxOf([-5,-2,-9])</code> should be <code>-2</code>. Fix it.',
+    starter: 'function maxOf(nums) {\n  let max = 0; // assumes a positive value exists\n  for (const n of nums) {\n    if (n > max) max = n;\n  }\n  return max;\n}\nconsole.log(maxOf([-5, -2, -9]));\n',
+    tests: [{ name: 'maxOf([-5,-2,-9]) is -2', check: 'return maxOf([-5,-2,-9]) === -2;' }, { name: 'maxOf([3,7,1]) is 7', check: 'return maxOf([3,7,1]) === 7;' }],
+    hints: ['The bad assumption is the starting value 0. What if every number is below 0?', 'Start from the first actual element instead of 0.', 'let max = nums[0]; then loop as before.'],
+    solution: 'function maxOf(nums) {\n  let max = nums[0];\n  for (const n of nums) {\n    if (n > max) max = n;\n  }\n  return max;\n}\nconsole.log(maxOf([-5, -2, -9]));',
+    why: 'Initialising from the data (nums[0]) instead of a guessed 0 makes it correct for any numbers.',
+    debrief: 'A "bad initial value" bug — works on the happy (positive) path, fails at the edge.' });
+
+  jlab({ id: 'fx-vibe-pal', title: 'Review: the AI palindrome', brief: 'An AI wrote this <code>isPalindrome</code>. It passes <code>"racecar"</code>, but the spec says <b>ignore case, spaces, and punctuation</b>. So <code>"A man, a plan, a canal: Panama"</code> should be <code>true</code> and <code>"RaceCar"</code> should be <code>true</code>, while <code>"hello"</code> is <code>false</code>. Make it meet the full spec.',
+    starter: '// An AI generated this. Spec: ignore case, spaces, and punctuation.\nfunction isPalindrome(s) {\n  const r = s.split("").reverse().join("");\n  return s === r;\n}\n',
+    tests: [
+      { name: '"A man, a plan, a canal: Panama" is true', check: 'return isPalindrome("A man, a plan, a canal: Panama") === true;' },
+      { name: '"RaceCar" is true (case-insensitive)', check: 'return isPalindrome("RaceCar") === true;' },
+      { name: '"hello" is false', check: 'return isPalindrome("hello") === false;' }
+    ],
+    hints: ['The logic is right for exact strings — it just compares the raw text. It needs to normalize first.', 'Lowercase it and strip anything that isn\'t a letter or digit: s.toLowerCase().replace(/[^a-z0-9]/g, "").', 'Compare the cleaned string to its reverse.'],
+    solution: 'function isPalindrome(s) {\n  const clean = s.toLowerCase().replace(/[^a-z0-9]/g, "");\n  const r = clean.split("").reverse().join("");\n  return clean === r;\n}',
+    why: 'The draft matched the example ("racecar") but ignored the real spec. Normalizing case and stripping non-alphanumerics meets it.',
+    debrief: 'Classic generated-code review: fluent, passes the demo, fails the spec at the edges. Your tests caught it.' });
+
+  plab({ id: 'fx-vibe-price', title: 'Review: the AI discounter', brief: 'An AI wrote <code>final_price(price, percent)</code>. Spec: apply the percent off, <b>round to 2 decimals</b>, and if the percent is <b>below 0 or above 100</b> it\'s invalid — return the price unchanged. The draft misses the rounding and the guard. Fix it to pass all tests.',
+    starter: '# AI-generated. Spec:\n#  - apply percent off (20 means 20% off)\n#  - round the result to 2 decimals\n#  - if percent < 0 or percent > 100: invalid, return price unchanged\ndef final_price(price, percent):\n    return price - price * percent / 100\n\nprint(final_price(50, 20))\n',
+    tests: [
+      { name: '20% off 50 is 40.0', check: 'assert final_price(50, 20) == 40.0' },
+      { name: '10% off 19.99 rounds to 17.99', check: 'assert final_price(19.99, 10) == 17.99' },
+      { name: '150% is invalid -> returns 50', check: 'assert final_price(50, 150) == 50' },
+      { name: 'negative percent is invalid -> returns 50', check: 'assert final_price(50, -5) == 50' }
+    ],
+    hints: ['Two gaps: no rounding, and no check for invalid percents.', 'Guard first: if percent < 0 or percent > 100: return price.', 'Then round: return round(price - price * percent / 100, 2).'],
+    solution: 'def final_price(price, percent):\n    if percent < 0 or percent > 100:\n        return price\n    return round(price - price * percent / 100, 2)\n\nprint(final_price(50, 20))',
+    why: 'The happy-path math was fine, but the spec also required rounding and input validation — exactly the parts generated code tends to skip.',
+    debrief: 'You reviewed AI output against the full spec, wrote the edge cases as tests, and repaired it without breaking the main case. That\'s the workflow.' });
 })();
 
 ;
