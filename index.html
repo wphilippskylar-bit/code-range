@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build f513576a78 */
+/* build fdc3d03db2 */
 /* ShSim — Linux bash learning simulator. A virtual filesystem for practicing commands:
    navigation, pipes, redirection, variables, globs, text tools (grep/sed/awk/cut/sort/uniq/wc/head/tail/tr),
    find, permissions (chmod/chown read as octal/symbolic), and small shell scripts (for/if/while/args).
@@ -890,6 +890,7 @@ window.COURSE = {
     { id: 'lnx-f', track: 'linux', name: 'Foundations', desc: 'Navigate and read the filesystem.' },
     { id: 'lnx-c', track: 'linux', name: 'Text & Pipes', desc: 'The real power: grep, sed, awk, pipes.' },
     { id: 'lnx-p', track: 'linux', name: 'Scripting & Pro', desc: 'Variables, loops, scripts, permissions.' },
+    { id: 'lnx-x', track: 'linux', name: 'Expert', desc: 'awk, sed and find mastery for real admin work.' },
     { id: 'win-f', track: 'win', name: 'CMD Basics', desc: 'The classic Windows command prompt.' },
     { id: 'win-c', track: 'win', name: 'PowerShell', desc: 'Objects, cmdlets, the pipeline.' },
     { id: 'sql-f', track: 'sql', name: 'Querying', desc: 'SELECT, WHERE, ORDER, LIMIT.' },
@@ -1243,6 +1244,92 @@ window.COURSE = {
     hints: ['<code>mkdir ~/backup</code>', 'Globs work with cp: <code>cp projects/*.log ~/backup/</code>', 'Then <code>rm projects/*.log</code>'],
     solution: ['mkdir ~/backup', 'cp projects/*.log ~/backup/', 'ls ~/backup', 'rm projects/*.log', 'ls projects'],
     debrief: 'The glob *.log expands to every matching file before cp/rm run. This is the essence of a backup-and-rotate script — real ops automate exactly this.'
+  };
+})();
+
+;
+/* Linux — Expert tier: awk/sed/find mastery + practical admin. */
+(function () {
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, L = COURSE.labs;
+  var F = window.ShSim.F, D = window.ShSim.D;
+
+  S.push({
+    id: 'lnx4', track: 'linux', tier: 'lnx-x', title: 'awk, sed & find mastery', code: "awk -F, '{s+=$4} END{print s}'", gateN: 12,
+    goal: 'Turn raw text into answers: awk for columns and totals, sed for edits, find for locating files.',
+    lesson: [
+      { h: 'awk — columns and totals', html: '<p><code>awk</code> splits each line into fields (<code>$1</code>, <code>$2</code>…) and runs a program per line.</p><pre>awk -F, \'{print $3}\' sales.csv              # column 3 of a CSV\nawk -F, \'$2 == "West" {print $3}\' sales.csv  # filter then print\nawk -F, \'{s+=$4} END {print s}\' sales.csv    # sum column 4</pre><p><code>-F,</code> sets the field separator. <code>END { }</code> runs once after the last line — perfect for totals.</p>' },
+      { h: 'sed — stream edits', html: '<pre>sed \'s/old/new/\' file       # first match per line\nsed \'s/old/new/g\' file      # every match\nsed \'/^#/d\' file            # delete comment lines\nsed -n \'2,4p\' file          # print lines 2-4\nsed \'s/x/y/g\' in > out      # save the result</pre><p>sed prints the edited stream; redirect with <code>&gt;</code> to save it.</p>' },
+      { h: 'find — locate files', html: '<pre>find . -name "*.log"         # by name pattern\nfind ~/projects -type f      # only files\nfind / -type d -name conf    # only directories</pre>' },
+      { h: 'Put them together', html: '<div class="callout pro"><b class="k">The admin toolkit</b>find to locate, grep to filter, awk to compute, sed to transform, sort/uniq to rank, &gt; to save. Every real admin script is a combination of these.</div>' }
+    ],
+    cards: [
+      ['awk $N', 'Field N of the current line.'],
+      ['awk -F,', 'Set the field separator (comma for CSV).'],
+      ['awk END { }', 'Runs once after all lines — for totals.'],
+      ["awk '{s+=$4}'", 'Accumulate a column into a variable.'],
+      ['awk condition {action}', 'Only act on lines matching the condition.'],
+      ['sed s/a/b/g', 'Replace every match on each line.'],
+      ['sed /re/d', 'Delete lines matching a pattern.'],
+      ['sed -n N,Mp', 'Print only lines N through M.'],
+      ['find -name', 'Find files by name pattern.'],
+      ['find -type f|d', 'Restrict to files or directories.'],
+      ['> file', 'Save command output to a file.']
+    ],
+    qs: [
+      Q('Which prints the 3rd column of a comma-separated file?', "awk -F, '{print $3}' file", ["awk '{print 3}' file", 'cut -f3 file only', 'sed 3p file'], '-F, sets comma; $3 is field 3.', 0),
+      Q('In awk, the END block runs:', 'Once, after the last line is processed', ['Before the first line', 'On every line', 'Never'], 'END = after input.', 0),
+      Q('Sum column 4 of a CSV with awk:', "awk -F, '{s+=$4} END {print s}' file", ["awk '{print sum}' file", "awk -F, 'sum $4' file", 'awk END file'], 'Accumulate then print in END.', 0),
+      Q('sed s/cat/dog/g replaces:', 'Every occurrence of cat on each line', ['Only the first line', 'Only the first occurrence in the file', 'Nothing without -i'], 'g = global per line.', 0),
+      Q('Delete all lines starting with # using sed:', "sed '/^#/d' file", ["sed 's/#//' file", "sed -n '#p' file", "sed '#d'"], '/re/d deletes matches.', 0),
+      Q('Print only lines 2 through 4 with sed:', "sed -n '2,4p' file", ["sed '2,4d' file", "sed 's/2,4//' file", 'sed 2-4 file'], '-n plus N,Mp.', 0),
+      Q('Find every .log file under the current directory:', 'find . -name "*.log"', ['grep .log', 'ls *.log -r', 'locate log only'], 'find -name pattern.', 0),
+      Q('Restrict find to directories only:', 'find . -type d', ['find . -dir', 'find . -name d', 'find -d .'], '-type d.', 0),
+      Q("awk -F, '$2 == \"West\" {print $3}' does what?", 'Prints column 3 only for rows whose column 2 is West', ['Prints every row', 'Deletes West rows', 'Counts columns'], 'Condition + action.', 0),
+      Q('To save sed output to a new file:', "sed 's/a/b/' in > out", ["sed 's/a/b/' in out", 'sed save in', "sed 's/a/b/' >> in only"], 'Redirect with >.', 0),
+      Q('Which tool is best for summing a numeric column?', 'awk', ['sed', 'find', 'tr'], 'awk computes.', 0),
+      T("Type the awk block keyword that runs after all input (one word).", [/^end$/i], 'END', 0, 'keyword')
+    ],
+    labs: ['lx-awk', 'lx-sed', 'lx-find']
+  });
+
+  L['lx-awk'] = {
+    kind: 'sh', title: 'Total the units with awk',
+    brief: '<code>sales.csv</code> has columns date,region,product,units,price.<br>(1) Sum the <b>units</b> column (column 4) with awk and save the total to <code>~/total.txt</code>. (2) Print just the products sold in the <b>West</b> region.',
+    tasks: [
+      { t: 'Used awk with an END block to sum column 4', c: function (e) { return e.history.some(function (h) { return /awk/.test(h) && /\+=\s*\$4/.test(h) && /END/.test(h); }); } },
+      { t: '~/total.txt holds the correct units total', c: function (e) { var n = e.node('/home/phil/total.txt'), s = e.node('/home/phil/sales.csv'); if (!n || !s) return false; var tot = s.d.split('\n').filter(Boolean).slice(1).reduce(function (a, l) { return a + (parseFloat(l.split(',')[3]) || 0); }, 0); return parseFloat(n.d) === tot; } },
+      { t: 'Printed the West products with an awk condition', c: function (e) { return e.history.some(function (h) { return /awk/.test(h) && /West/.test(h) && /\$3/.test(h); }); } }
+    ],
+    hints: ["Sum: <code>awk -F, '{s+=$4} END {print s}' sales.csv</code>", 'Save it with <code>&gt; ~/total.txt</code>.', "West products: <code>awk -F, '$2 == \"West\" {print $3}' sales.csv</code>"],
+    solution: ["awk -F, '{s+=$4} END {print s}' sales.csv > ~/total.txt", 'cat ~/total.txt', "awk -F, '$2 == \"West\" {print $3}' sales.csv"],
+    debrief: 'Summing a column and filtering by a field are the two awk moves you will use constantly in reports and ops.'
+  };
+
+  L['lx-sed'] = {
+    kind: 'sh', title: 'Rewrite a config with sed',
+    brief: '<code>app.conf</code> points at a staging server and has comment lines.<br>(1) Create <code>~/app.prod.conf</code> where every <code>staging</code> is replaced by <code>prod</code>. (2) Create <code>~/app.clean.conf</code> with all comment lines (starting with <code>#</code>) removed.',
+    setup: { extraHome: { 'app.conf': F('# app settings\nhost=staging.example.com\n# backup host\nbackup=staging-bk.example.com\nport=8080\n') } },
+    tasks: [
+      { t: 'app.prod.conf has no "staging" and does have "prod"', c: function (e) { var n = e.node('/home/phil/app.prod.conf'); return n && n.d.indexOf('staging') < 0 && /prod/.test(n.d) && /port=8080/.test(n.d); } },
+      { t: 'app.clean.conf has no comment lines but keeps settings', c: function (e) { var n = e.node('/home/phil/app.clean.conf'); return n && !n.d.split('\n').some(function (l) { return /^#/.test(l); }) && /port=8080/.test(n.d); } }
+    ],
+    hints: ["Replace every match: <code>sed 's/staging/prod/g' app.conf &gt; ~/app.prod.conf</code>", "Delete comments: <code>sed '/^#/d' app.conf &gt; ~/app.clean.conf</code>"],
+    solution: ["sed 's/staging/prod/g' app.conf > ~/app.prod.conf", "sed '/^#/d' app.conf > ~/app.clean.conf", 'cat ~/app.prod.conf', 'cat ~/app.clean.conf'],
+    debrief: 'Templating configs per environment with sed is everyday deployment work.'
+  };
+
+  L['lx-find'] = {
+    kind: 'sh', title: 'Find and collect files',
+    brief: 'Notes are scattered under <code>~/work</code>.<br>(1) List every <code>.md</code> file under ~/work with find and save the list to <code>~/notes.txt</code>. (2) Count how many there are.',
+    setup: { extraHome: { work: D({ 'plan.md': F('# plan\n'), 'todo.txt': F('x\n'), a: D({ 'ideas.md': F('i\n'), 'data.csv': F('1\n') }), b: D({ 'meeting.md': F('m\n') }) }) } },
+    tasks: [
+      { t: 'Used find with -name "*.md"', c: function (e) { return e.history.some(function (h) { return /find/.test(h) && /\.md/.test(h) && /-name/.test(h); }); } },
+      { t: '~/notes.txt lists exactly the 3 .md files', c: function (e) { var n = e.node('/home/phil/notes.txt'); if (!n) return false; var ls = n.d.split('\n').filter(Boolean); return ls.length === 3 && ls.every(function (l) { return /\.md$/.test(l); }); } },
+      { t: 'Counted them (wc -l)', c: function (e) { return e.history.some(function (h) { return /wc\s+-l/.test(h); }); } }
+    ],
+    hints: ['<code>find ~/work -name "*.md"</code>', 'Save: add <code>&gt; ~/notes.txt</code>', 'Count: <code>wc -l ~/notes.txt</code>'],
+    solution: ['find ~/work -name "*.md" > ~/notes.txt', 'cat ~/notes.txt', 'wc -l ~/notes.txt'],
+    debrief: 'find + redirect + wc is how you inventory files across a tree.'
   };
 })();
 
