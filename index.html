@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build f16a8b6b29 */
+/* build 8efb52163e */
 /* ShSim — Linux bash learning simulator. A virtual filesystem for practicing commands:
    navigation, pipes, redirection, variables, globs, text tools (grep/sed/awk/cut/sort/uniq/wc/head/tail/tr),
    find, permissions (chmod/chown read as octal/symbolic), and small shell scripts (for/if/while/args).
@@ -902,6 +902,8 @@ window.COURSE = {
     { id: 'py-exp', track: 'py', name: 'Expert', desc: 'Concurrency (threads/processes/async) and a real capstone tool.' },
     { id: 'js-f', track: 'js', name: 'Foundations', desc: 'Values, functions, control flow.' },
     { id: 'js-c', track: 'js', name: 'Arrays, Objects & Async', desc: 'map/filter/reduce, objects, promises.' },
+    { id: 'js-adv', track: 'js', name: 'Advanced', desc: 'Closures, this, prototypes/classes, modules, promises & async/await in depth.' },
+    { id: 'js-exp', track: 'js', name: 'Expert', desc: 'Functional patterns, immutability, performance, and a capstone module.' },
     { id: 'cpp-f', track: 'cpp', name: 'Foundations', desc: 'Types, I/O, control flow, functions.' },
     { id: 'cpp-c', track: 'cpp', name: 'Memory & Objects', desc: 'Pointers, references, vectors, classes.' },
     { id: 'git-f', track: 'git', name: 'Foundations', desc: 'init, add, commit, log, the three areas.' },
@@ -1735,6 +1737,234 @@ window.COURSE = {
     solution: 'const votes = ["Alice", "bob ", "ALICE", " alice", "Bob", "carol"];\nconst counts = {};\nfor (const v of votes) {\n  const name = v.trim().toLowerCase();\n  counts[name] = (counts[name] || 0) + 1;\n}\nObject.entries(counts)\n  .sort((a, b) => b[1] - a[1])\n  .forEach(([name, count]) => console.log(`${name}: ${count}`));',
     debrief: 'Normalize, count with an object, sort entries, format output — a complete real-world aggregation in JavaScript.'
   };
+})();
+
+;
+/* JavaScript — Advanced + Expert tiers. */
+(function () {
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs;
+
+  // ---------------- Advanced ----------------
+  S.push({
+    id: 'js3', track: 'js', tier: 'js-adv', title: 'Closures, this, prototypes & classes', code: 'function make(){ let n=0; return ()=>++n }', gateN: 12,
+    goal: 'The mechanics interviewers probe: closures, how this is bound, the prototype chain, classes and modules.',
+    lesson: [
+      { h: 'Closures', html: '<p>A <b>closure</b> is a function that remembers variables from the scope where it was created, even after that scope returns. It is how you make private state and factories:</p><pre>function makeCounter() {\n  let n = 0;\n  return function () { n += 1; return n; };\n}\nconst c = makeCounter();\nc(); // 1\nc(); // 2  — n lives on inside the returned function</pre>' },
+      { h: 'this — bound at call time', html: '<ul><li>In a <b>regular function</b>, <code>this</code> depends on <b>how it is called</b> (the object before the dot, or undefined/global). In an <b>arrow function</b>, <code>this</code> is taken from the <b>surrounding scope</b> (lexical) — arrows don\'t get their own.</li><li><code>call</code>/<code>apply</code>/<code>bind</code> set <code>this</code> explicitly. Losing <code>this</code> when passing a method as a callback is a classic bug — arrow functions or <code>bind</code> fix it.</li></ul>' },
+      { h: 'Prototypes & classes', html: '<p>Objects delegate to a <b>prototype</b> for properties they don\'t have — that\'s JS inheritance. <code>class</code> is syntax over prototypes:</p><pre>class Animal {\n  constructor(name) { this.name = name; }\n  speak() { return `${this.name} makes a sound`; }\n}\nclass Dog extends Animal {\n  speak() { return `${this.name} barks`; }   // override\n}</pre><p><code>extends</code> sets up the prototype chain; <code>super</code> calls the parent.</p>' },
+      { h: 'Modules', html: '<pre>// math.js\nexport function add(a, b) { return a + b; }\nexport default class Calc { ... }\n// app.js\nimport Calc, { add } from "./math.js";</pre><p>ES modules give each file its own scope; you explicitly <code>export</code>/<code>import</code>. No more leaking globals.</p>' }
+    ],
+    cards: [
+      ['Closure', 'A function that remembers variables from where it was defined.'],
+      ['Factory via closure', 'Return a function that keeps private state (e.g., a counter).'],
+      ['this (regular fn)', 'Determined by how the function is called.'],
+      ['this (arrow fn)', 'Lexical — taken from the surrounding scope; arrows have no own this.'],
+      ['call/apply/bind', 'Set this explicitly; bind returns a bound copy.'],
+      ['Prototype', 'Object delegates missing properties to its prototype — JS inheritance.'],
+      ['class', 'Syntax sugar over prototypes; constructor + methods.'],
+      ['extends / super', 'Subclass and call the parent class.'],
+      ['ES modules', 'Per-file scope with explicit export/import.'],
+      ['export default', 'The single main export of a module.'],
+      ['Lexical scope', 'Inner functions see variables of enclosing functions.'],
+      ['Lost this bug', 'Passing a method as a callback loses this; fix with arrow/bind.']
+    ],
+    qs: [
+      P('function make(){ let n=0; return ()=>++n }\nconst c = make();\nconsole.log(c(), c(), c());', '1 2 3', ['0 1 2', '3 3 3', 'NaN'], 'Closure keeps n across calls.', 'JavaScript'),
+      Q('A closure is:', 'A function that retains access to variables from the scope where it was defined', ['A loop that never ends', 'A type of object', 'A CSS rule'], 'Captured scope.', 0),
+      Q('In an arrow function, this is:', 'Lexical — inherited from the surrounding scope', ['The object before the dot', 'Always the global object', 'Always undefined'], 'Arrows have no own this.', 0),
+      Q('Passing obj.method as a callback often breaks because:', 'this is set by how it is called, so it loses obj', ['Methods cannot be callbacks', 'Arrow functions are illegal', 'Objects are immutable'], 'Lost this.', 0),
+      Q('To fix a lost this, you can:', 'Use an arrow function or .bind(obj)', ['Use var instead of let', 'Add a semicolon', 'Rename the method'], 'bind/arrow.', 0),
+      P('class A { who(){ return "A" } }\nclass B extends A { who(){ return "B" + super.who() } }\nconsole.log(new B().who());', 'BA', ['B', 'A', 'AB'], 'super.who() returns "A".', 'JavaScript'),
+      Q('JavaScript inheritance works via:', 'The prototype chain (class is sugar over it)', ['Copying all methods into each object', 'Global variables', 'CSS cascade'], 'Prototypes.', 0),
+      Q('extends and super are used to:', 'Create a subclass and call the parent class', ['Export a module', 'Bind this', 'Create a closure'], 'Subclassing.', 0),
+      Q('ES modules give each file:', 'Its own scope with explicit export/import', ['A shared global scope', 'Automatic imports of everything', 'No scope at all'], 'Module scope.', 0),
+      Q('const g = obj.method; g(); often misbehaves because:', 'method loses its this binding when detached from obj', ['methods cannot be stored in variables', 'const is not allowed', 'objects are frozen'], 'Detached method loses this.', 0),
+      Q('.bind(obj) returns:', 'A new function with this permanently set to obj', ['The result of calling the function', 'The object obj', 'undefined'], 'Bound copy.', 0),
+      T('Complete: an arrow function takes its `this` from the ___ scope (one word).', [/lexical|surrounding|enclosing|outer/i], 'lexical', 0, 'one word')
+    ],
+    labs: ['js-closure', 'js-class']
+  });
+
+  S.push({
+    id: 'js4', track: 'js', tier: 'js-adv', title: 'Async in depth: promises & async/await', code: 'await Promise.all([a, b])', gateN: 12,
+    goal: 'Master asynchronous JavaScript — promises, async/await, parallel vs sequential, and error handling that actually catches.',
+    lesson: [
+      { h: 'Promises', html: '<p>A <b>Promise</b> represents a future value: it is <b>pending</b>, then <b>fulfilled</b> (resolve) or <b>rejected</b> (error). Consume with <code>.then()</code>/<code>.catch()</code> or, better, <code>async/await</code>.</p><pre>fetch(url)\n  .then(r => r.json())\n  .then(data => use(data))\n  .catch(err => handle(err));</pre>' },
+      { h: 'async/await', html: '<pre>async function load() {\n  try {\n    const r = await fetch(url);   // pauses without blocking\n    const data = await r.json();\n    return data;\n  } catch (err) {\n    // await-ed rejections land here\n    return null;\n  }\n}</pre><p>An <code>async</code> function always returns a Promise. <code>await</code> unwraps a promise\'s value (or throws its rejection, which <code>try/catch</code> catches).</p>' },
+      { h: 'Parallel vs sequential', html: '<p>Awaiting in a loop runs tasks <b>one after another</b>. To run them <b>concurrently</b>, start them all and <code>Promise.all</code>:</p><pre>// slow: sequential\nfor (const u of urls) results.push(await fetch(u));\n\n// fast: parallel\nconst results = await Promise.all(urls.map(u => fetch(u)));</pre><p><code>Promise.all</code> rejects if any reject; <code>Promise.allSettled</code> waits for all regardless; <code>Promise.race</code> settles on the first.</p>' },
+      { h: 'Common async bugs', html: '<div class="callout trap"><b class="k">Watch for</b><ul><li>Forgetting <code>await</code> → you handle a Promise object instead of its value.</li><li>Adding/ summing Promises instead of their resolved values.</li><li><code>try/catch</code> only catches a rejection if you <code>await</code> inside the try.</li><li>Sequential awaits in a loop when the work could be parallel.</li></ul></div>' }
+    ],
+    cards: [
+      ['Promise states', 'pending → fulfilled (resolve) or rejected (error).'],
+      ['.then/.catch', 'Consume a promise\'s value or handle its error.'],
+      ['async function', 'Always returns a Promise.'],
+      ['await', 'Unwraps a promise value; throws its rejection.'],
+      ['try/catch with await', 'Catches awaited rejections.'],
+      ['Promise.all', 'Run in parallel; rejects if any reject.'],
+      ['Promise.allSettled', 'Waits for all; reports each result/error.'],
+      ['Promise.race', 'Settles with the first to finish.'],
+      ['Sequential vs parallel', 'await-in-loop is serial; map + Promise.all is concurrent.'],
+      ['Missing await bug', 'Forgetting await leaves you holding a Promise, not the value.'],
+      ['Microtask', 'Promise callbacks run after the current task, before timers.']
+    ],
+    qs: [
+      Q('An async function always returns:', 'A Promise', ['The value directly', 'undefined', 'A callback'], 'Wrapped in a Promise.', 0),
+      Q('await does what to a promise?', 'Pauses until it settles, then returns its value (or throws on rejection)', ['Blocks the whole engine', 'Cancels it', 'Logs it'], 'Unwrap/throw.', 0),
+      Q('To run many async tasks concurrently and get all results:', 'await Promise.all(tasks)', ['await them one by one in a loop', 'Promise.race', 'call them without await'], 'Promise.all parallel.', 0),
+      Q('await-ing tasks inside a for loop makes them run:', 'Sequentially (one after another)', ['In parallel', 'Instantly', 'On separate threads'], 'Serial.', 0),
+      P('async function f(){ return 5 }\nf().then(v => console.log(v));', '5', ['Promise', 'undefined', '[5]'], 'Resolves to 5.', 'JavaScript'),
+      Q('try/catch around await catches:', 'The awaited promise\'s rejection', ['Only synchronous errors', 'Nothing async', 'Syntax errors only'], 'Awaited rejections.', 0),
+      Q('Promise.all rejects when:', 'Any one of its promises rejects', ['All of them reject', 'None reject', 'The first resolves'], 'Fails fast.', 0),
+      Q('Which waits for every promise regardless of failures?', 'Promise.allSettled', ['Promise.all', 'Promise.race', 'Promise.any only'], 'allSettled.', 0),
+      Q('A classic async bug is:', 'Forgetting await, so you use a Promise object instead of its value', ['Using too many semicolons', 'Naming a variable twice', 'Using const'], 'Missing await.', 0),
+      P('async function a(){ return 1 }\nasync function b(){ return 2 }\nasync function go(){ const [x,y]=await Promise.all([a(),b()]); console.log(x+y); }\ngo();', '3', ['12', '[1,2]', 'NaN'], 'Gathered then summed.', 'JavaScript'),
+      Q('Promise.race settles:', 'With the first promise to settle', ['Only after all settle', 'Never', 'With the slowest'], 'First to finish.', 0),
+      Q('.then() callbacks are scheduled as:', 'Microtasks (after the current task, before timers)', ['Synchronous calls', 'OS threads', 'setTimeout tasks'], 'Microtask queue.', 0)
+    ],
+    labs: ['js-promise', 'js-trycatch']
+  });
+
+  // ---------------- Expert ----------------
+  S.push({
+    id: 'js5', track: 'js', tier: 'js-exp', title: 'Functional patterns, immutability & performance', code: 'arr.filter(f).map(g).reduce(h)', gateN: 12,
+    goal: 'Write clean, predictable JavaScript: pure functions, immutable updates, composition, and an eye on Big-O.',
+    lesson: [
+      { h: 'Pure functions & immutability', html: '<ul><li>A <b>pure function</b> returns the same output for the same input and has <b>no side effects</b> — easy to test and reason about.</li><li>Prefer <b>immutable updates</b>: don\'t mutate inputs; return new values with the <b>spread</b> operator.</li></ul><pre>// mutating (avoid)\nfunction add(arr, x){ arr.push(x); return arr; }\n// immutable (prefer)\nconst add = (arr, x) => [...arr, x];\nconst update = (obj, patch) => ({ ...obj, ...patch });</pre>' },
+      { h: 'map / filter / reduce composition', html: '<pre>const revenue = orders\n  .filter(o => o.paid)\n  .map(o => o.total)\n  .reduce((sum, t) => sum + t, 0);</pre><p><b>map</b> transforms, <b>filter</b> selects, <b>reduce</b> folds to a single value. Chaining them replaces most manual loops and reads top-to-bottom.</p>' },
+      { h: 'Higher-order functions', html: '<p>Functions that take or return functions: callbacks, <b>currying</b> (<code>f(a)(b)</code>), and <b>memoization</b> (cache results by input). They enable reuse and composition.</p><pre>const memoize = fn => {\n  const cache = new Map();\n  return x => cache.has(x) ? cache.get(x) : (cache.set(x, fn(x)), cache.get(x));\n};</pre>' },
+      { h: 'Performance & Big-O (aware, not obsessed)', html: '<ul><li>Know the cost: array scan/includes is <b>O(n)</b>; a <b>Set</b>/<b>Map</b> lookup is ~<b>O(1)</b>. Replacing an inner <code>array.includes</code> in a loop (O(n²)) with a <code>Set</code> (O(n)) is the most common real speedup.</li><li>Avoid needless re-work in loops; build a lookup once. Don\'t micro-optimize what isn\'t hot — measure first.</li></ul>' }
+    ],
+    cards: [
+      ['Pure function', 'Same input → same output, no side effects.'],
+      ['Immutability', 'Don\'t mutate inputs; return new values.'],
+      ['Spread for new values', '[...arr, x] and { ...obj, patch }.'],
+      ['map', 'Transform each element to a new array.'],
+      ['filter', 'Keep elements that pass a test.'],
+      ['reduce', 'Fold a list into a single accumulated value.'],
+      ['Higher-order function', 'Takes or returns a function.'],
+      ['Currying', 'f(a)(b) — partial application one arg at a time.'],
+      ['Memoization', 'Cache a function\'s result by its input.'],
+      ['Set/Map O(1) lookup', 'Membership/lookup is ~constant vs O(n) array scan.'],
+      ['O(n²) trap', 'array.includes inside a loop; fix with a Set.'],
+      ['Measure first', 'Optimize the hot path, not everything.']
+    ],
+    qs: [
+      P('const a = [1,2,3];\nconst b = a.map(x => x*2);\nconsole.log(b.join(","), a.join(","));', '2,4,6 1,2,3', ['2,4,6 2,4,6', '1,2,3 1,2,3', '6 6'], 'map returns a new array; a unchanged.', 'JavaScript'),
+      Q('A pure function:', 'Returns the same output for the same input with no side effects', ['Always logs to the console', 'Mutates its arguments', 'Reads global state'], 'Deterministic, no effects.', 0),
+      Q('An immutable way to add to an array is:', '[...arr, x]', ['arr.push(x)', 'arr[arr.length] = x', 'arr.length++'], 'Spread → new array.', 0),
+      P('const r = [1,2,3,4].filter(n=>n%2===0).reduce((a,b)=>a+b,0);\nconsole.log(r);', '6', ['10', '2', '24'], 'Evens 2+4.', 'JavaScript'),
+      Q('map, filter, reduce respectively:', 'Transform, select, fold to one value', ['Delete, add, sort', 'Sort, reverse, join', 'Print, read, write'], 'Core trio.', 0),
+      Q('An immutable object update uses:', '{ ...obj, changed: value }', ['obj.changed = value', 'delete obj.x', 'Object.freeze only'], 'Spread merge.', 0),
+      Q('Memoization improves performance by:', 'Caching results so repeated inputs skip recomputation', ['Deleting the cache', 'Running twice', 'Using more loops'], 'Cache by input.', 0),
+      Q('Replacing array.includes inside a loop with a Set changes complexity from:', 'O(n²) to roughly O(n)', ['O(n) to O(n²)', 'O(1) to O(n)', 'No change'], 'Set lookups are ~O(1).', 0),
+      Q('A higher-order function is one that:', 'Takes a function as an argument or returns a function', ['Runs faster', 'Has many lines', 'Uses var'], 'Functions as values.', 0),
+      P('const add = a => b => a + b;\nconsole.log(add(2)(3));', '5', ['23', 'NaN', '[2,3]'], 'Currying.', 'JavaScript'),
+      Q('Why prefer immutable updates in apps?', 'Predictable state and easy change detection; avoids spooky mutation bugs', ['They use less memory always', 'They are required by JS', 'They run on the GPU'], 'Predictability.', 0),
+      Q('The right time to micro-optimize is:', 'After measuring and finding the actual hot path', ['Always, everywhere, first', 'Never', 'Only in comments'], 'Measure first.', 0)
+    ],
+    labs: ['js-reduce', 'js-immutable']
+  });
+
+  S.push({
+    id: 'js6', track: 'js', tier: 'js-exp', title: 'Capstone: build a store module', code: 'export function createStore(){ ... }', gateN: 12,
+    goal: 'Assemble it: a small, well-structured state module with a clean API — the shape of real front-end and Node code.',
+    lesson: [
+      { h: 'Encapsulate state behind an API', html: '<p>Instead of loose globals, expose a small object of methods that own the state (a closure or class). Callers use the API; they can\'t corrupt the internals.</p><pre>function createStore() {\n  const items = [];\n  return {\n    add(text) { items.push({ id: items.length + 1, text, done: false }); },\n    toggle(id) { const it = items.find(i => i.id === id); if (it) it.done = !it.done; },\n    stats() { return { total: items.length, done: items.filter(i => i.done).length }; },\n  };\n}</pre>' },
+      { h: 'Design a clean API', html: '<ul><li>Small, focused methods with clear names; return data, don\'t print.</li><li>Validate inputs; handle the empty case.</li><li>Keep methods <b>pure where possible</b> and side effects contained.</li></ul>' },
+      { h: 'Test it', html: '<p>Because the API is small, you can verify it with a few assertions: add two, toggle one, check <code>stats()</code>. Tests let you refactor the internals freely as long as the API holds.</p>' },
+      { h: 'The capstone', html: '<div class="callout pro"><b class="k">Your task</b>The lab gives you a half-built <code>createStore()</code>. Implement <code>toggle(id)</code> and fix <code>stats()</code> so the module tracks completed items correctly. This closure-based module pattern underlies state stores, caches, and service objects across JavaScript.</div>' }
+    ],
+    cards: [
+      ['Encapsulation', 'Hide state; expose a small method API.'],
+      ['Factory function', 'createX() returns an object of methods over private state.'],
+      ['Closure state', 'The returned methods share private variables.'],
+      ['Clean API', 'Few focused methods, clear names, return data.'],
+      ['find', 'arr.find(pred) returns the first match (or undefined).'],
+      ['Derived stats', 'Compute totals from state with filter/length.'],
+      ['Validate inputs', 'Guard bad arguments and empty cases.'],
+      ['Testable module', 'Small API → verify with a few assertions.'],
+      ['Refactor safely', 'Tests on the API let you change internals freely.'],
+      ['Pattern reuse', 'Same shape powers stores, caches, services.']
+    ],
+    qs: [
+      Q('Exposing state only through a few methods is called:', 'Encapsulation', ['Globalization', 'Mutation', 'Recursion'], 'Hide internals.', 0),
+      Q('A factory function (createStore) typically:', 'Returns an object of methods that share private state via a closure', ['Prints to the console', 'Mutates globals', 'Returns a number'], 'Closure-backed module.', 0),
+      P('const s = (()=>{let n=0;return{inc(){n++},get(){return n}}})();\ns.inc(); s.inc();\nconsole.log(s.get());', '2', ['0', 'undefined', 'NaN'], 'Shared private n.', 'JavaScript'),
+      Q('arr.find(i => i.id === id) returns:', 'The first matching element, or undefined', ['All matches', 'A boolean', 'The index'], 'First match.', 0),
+      Q('stats() counting done items is best written as:', 'items.filter(i => i.done).length', ['a global counter you increment everywhere', 'items.length', 'Math.random()'], 'Derive from state.', 0),
+      Q('A clean API method should generally:', 'Return data and keep side effects contained', ['console.log the result instead of returning', 'Mutate the caller\'s variables', 'Throw on every call'], 'Return, don\'t print.', 0),
+      Q('Why keep the store\'s items private?', 'So callers can\'t corrupt internal state; they must use the API', ['To save memory', 'Because JS requires it', 'To run faster'], 'Integrity via encapsulation.', 0),
+      Q('A benefit of a small, tested API is:', 'You can refactor internals freely as long as tests pass', ['You never need tests', 'It cannot have bugs', 'It runs on the GPU'], 'Safe refactor.', 0),
+      P('const items=[{done:true},{done:false},{done:true}];\nconsole.log(items.filter(i=>i.done).length);', '2', ['1', '3', '0'], 'Two done.', 'JavaScript'),
+      Q('Toggling a boolean field is:', 'it.done = !it.done', ['it.done = it.done', 'delete it.done', 'it.done = "toggle"'], 'Flip with !.', 0),
+      Q('Where should input validation live in the store?', 'Inside the methods, before changing state', ['In the caller only', 'Nowhere', 'In a comment'], 'Guard in the API.', 0),
+      Q('The createStore pattern is the basis of:', 'State stores, caches and service objects', ['CSS frameworks', 'Database drivers only', 'Nothing reusable'], 'Broad reuse.', 0)
+    ],
+    labs: ['js-store']
+  });
+
+  // ---------------- labs ----------------
+  function jlab(o) { o.kind = 'code'; o.lang = 'js'; L[o.id] = o; }
+
+  jlab({ id: 'js-closure', title: 'Fix the counter factory', brief: 'Make <code>makeCounter()</code> return a <b>function</b> that increments a private count each call: first call → 1, then 2, then 3. It currently returns the number 0.',
+    starter: 'function makeCounter() {\n  let n = 0;\n  return n;   // bug: returns the number, not a counting function\n}\n',
+    tests: [{ name: 'returns a function that counts 1,2,3', check: 'const f = makeCounter(); return typeof f === "function" && f() === 1 && f() === 2 && f() === 3;' }, { name: 'each counter is independent', check: 'const a = makeCounter(), b = makeCounter(); a(); a(); return a() === 3 && b() === 1;' }],
+    hints: ['Return a function, not n.', 'The returned function should do n += 1; return n;', 'return function(){ n += 1; return n; };'],
+    solution: 'function makeCounter() {\n  let n = 0;\n  return function () {\n    n += 1;\n    return n;\n  };\n}',
+    why: 'The returned function closes over n, giving each counter its own private, persistent state.',
+    debrief: 'That is a closure — the foundation of factories, modules and private state in JS.' });
+
+  jlab({ id: 'js-class', title: 'Fix the class method', brief: 'A <code>Rect</code> class should compute <b>area</b> (width × height). <code>new Rect(3,4).area()</code> must be <code>12</code>. It returns the wrong value — fix <code>area()</code>.',
+    starter: 'class Rect {\n  constructor(w, h) { this.w = w; this.h = h; }\n  area() { return this.w + this.h; }   // bug\n}\n',
+    tests: [{ name: 'Rect(3,4).area() is 12', check: 'return new Rect(3,4).area() === 12;' }, { name: 'Rect(5,5).area() is 25', check: 'return new Rect(5,5).area() === 25;' }],
+    hints: ['Area is width times height, not plus.', 'return this.w * this.h;'],
+    solution: 'class Rect {\n  constructor(w, h) { this.w = w; this.h = h; }\n  area() { return this.w * this.h; }\n}',
+    why: 'Methods use this to read the instance\'s own fields; the bug was the operator.',
+    debrief: 'Classes are prototype sugar — this.w/this.h are the instance\'s data.' });
+
+  jlab({ id: 'js-promise', title: 'Gather promises in parallel', brief: 'Fix <code>total()</code> so it runs both async functions and returns the <b>sum</b> of their results (1 + 2 = <code>3</code>). Right now it tries to add the Promises themselves.',
+    starter: 'async function one() { return 1; }\nasync function two() { return 2; }\n\nasync function total() {\n  return one() + two();   // bug: adds two Promise objects\n}\n',
+    tests: [{ name: 'total() resolves to 3', check: 'return (await total()) === 3;' }],
+    hints: ['one() and two() return Promises; you must await their values.', 'Run them in parallel with Promise.all.', 'const [a, b] = await Promise.all([one(), two()]); return a + b;'],
+    solution: 'async function one() { return 1; }\nasync function two() { return 2; }\n\nasync function total() {\n  const [a, b] = await Promise.all([one(), two()]);\n  return a + b;\n}',
+    why: 'You must await promises to get their values; Promise.all runs them concurrently and returns an array of results.',
+    debrief: 'Promise.all is the standard way to run async work in parallel and collect results.' });
+
+  jlab({ id: 'js-trycatch', title: 'Handle a rejected promise', brief: 'Make <code>safe()</code> return the string <code>"fallback"</code> when the data fetch fails, instead of letting the rejection escape. <code>fetchData()</code> always rejects here.',
+    starter: 'function fetchData() { return Promise.reject(new Error("network down")); }\n\nasync function safe() {\n  const data = await fetchData();   // rejects — nothing catches it\n  return data;\n}\n',
+    tests: [{ name: 'safe() returns "fallback" on error', check: 'return (await safe()) === "fallback";' }],
+    hints: ['Wrap the await in try/catch.', 'In the catch block, return "fallback".', 'try { return await fetchData(); } catch (e) { return "fallback"; }'],
+    solution: 'function fetchData() { return Promise.reject(new Error("network down")); }\n\nasync function safe() {\n  try {\n    return await fetchData();\n  } catch (e) {\n    return "fallback";\n  }\n}',
+    why: 'An awaited rejection throws, so try/catch around the await turns a failed async call into a graceful fallback.',
+    debrief: 'Robust async code always has a plan for rejection.' });
+
+  jlab({ id: 'js-reduce', title: 'Fix the revenue pipeline', brief: 'Compute total revenue from orders over $20 only, using <code>filter</code> then <code>map</code>/<code>reduce</code>. Expected: <code>150</code> (120 + 30). The pipeline forgot to filter.',
+    starter: 'function totalSpend(orders) {\n  return orders.map(o => o.total).reduce((a, b) => a + b, 0);   // bug: no filter\n}\nconsole.log(totalSpend([{total:5},{total:120},{total:30},{total:2}]));\n',
+    tests: [{ name: 'sums only totals > 20 (150)', check: 'return totalSpend([{total:5},{total:120},{total:30},{total:2}]) === 150;' }, { name: 'empty array is 0', check: 'return totalSpend([]) === 0;' }],
+    hints: ['Add a filter for o.total > 20 before the map.', 'orders.filter(o => o.total > 20).map(o => o.total).reduce((a,b)=>a+b,0)'],
+    solution: 'function totalSpend(orders) {\n  return orders\n    .filter(o => o.total > 20)\n    .map(o => o.total)\n    .reduce((a, b) => a + b, 0);\n}\nconsole.log(totalSpend([{total:5},{total:120},{total:30},{total:2}]));',
+    why: 'filter → map → reduce composes cleanly; the missing filter was the whole bug.',
+    debrief: 'That chain replaces most manual loops and reads like a sentence.' });
+
+  jlab({ id: 'js-immutable', title: 'Stop mutating the input', brief: 'Make <code>addTag(tags, tag)</code> return a <b>new</b> array with the tag appended, <b>without changing</b> the original array. Right now it mutates the caller\'s array.',
+    starter: 'function addTag(tags, tag) {\n  tags.push(tag);   // bug: mutates the input\n  return tags;\n}\n',
+    tests: [{ name: 'returns a new array with the tag', check: 'return addTag(["a"], "b").join(",") === "a,b";' }, { name: 'does NOT mutate the original', check: 'const orig = ["a"]; addTag(orig, "b"); return orig.length === 1;' }],
+    hints: ['Don\'t push onto the input. Build a new array.', 'Use the spread operator.', 'return [...tags, tag];'],
+    solution: 'function addTag(tags, tag) {\n  return [...tags, tag];\n}',
+    why: 'Returning a new array with spread keeps the function pure and the caller\'s data safe — the core of immutable state.',
+    debrief: 'Immutable updates prevent a whole class of spooky shared-state bugs.' });
+
+  jlab({ id: 'js-store', title: 'Capstone: finish the store module', project: true, brief: 'Complete <code>createStore()</code>: implement <code>toggle(id)</code> (flip an item\'s <code>done</code>) and fix <code>stats()</code> so <code>done</code> reflects how many items are completed. After adding two items and toggling one, <code>stats()</code> must be <code>{ total: 2, done: 1 }</code>.',
+    starter: 'function createStore() {\n  const items = [];\n  return {\n    add(text) { items.push({ id: items.length + 1, text, done: false }); },\n    toggle(id) { /* TODO: flip the matching item\'s done */ },\n    stats() { return { total: items.length, done: 0 }; },   // bug: done always 0\n  };\n}\n',
+    tests: [
+      { name: 'add + toggle + stats works', check: 'const s = createStore(); s.add("a"); s.add("b"); s.toggle(1); const st = s.stats(); return st.total === 2 && st.done === 1;' },
+      { name: 'toggling twice returns to 0 done', check: 'const s = createStore(); s.add("x"); s.toggle(1); s.toggle(1); return s.stats().done === 0;' },
+      { name: 'empty store is total 0, done 0', check: 'const st = createStore().stats(); return st.total === 0 && st.done === 0;' }
+    ],
+    hints: ['toggle: find the item by id, then set it.done = !it.done.', 'const it = items.find(i => i.id === id); if (it) it.done = !it.done;', 'stats done: items.filter(i => i.done).length.'],
+    solution: 'function createStore() {\n  const items = [];\n  return {\n    add(text) { items.push({ id: items.length + 1, text, done: false }); },\n    toggle(id) { const it = items.find(i => i.id === id); if (it) it.done = !it.done; },\n    stats() { return { total: items.length, done: items.filter(i => i.done).length }; },\n  };\n}',
+    why: 'A closure holds the private items array; the methods are the only way to change or read it — a clean, testable module.',
+    debrief: 'You built the factory/closure module pattern that underlies real state stores and services.' });
 })();
 
 ;
