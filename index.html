@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build 89c881fc8f */
+/* build f16a8b6b29 */
 /* ShSim — Linux bash learning simulator. A virtual filesystem for practicing commands:
    navigation, pipes, redirection, variables, globs, text tools (grep/sed/awk/cut/sort/uniq/wc/head/tail/tr),
    find, permissions (chmod/chown read as octal/symbolic), and small shell scripts (for/if/while/args).
@@ -898,6 +898,8 @@ window.COURSE = {
     { id: 'py-f', track: 'py', name: 'Foundations', desc: 'Values, variables, control flow.' },
     { id: 'py-c', track: 'py', name: 'Data & Functions', desc: 'Lists, dicts, functions, files.' },
     { id: 'py-p', track: 'py', name: 'Pro', desc: 'Classes, comprehensions, errors, real programs.' },
+    { id: 'py-adv', track: 'py', name: 'Advanced', desc: 'Generators, decorators, context managers, typing, testing, the standard library.' },
+    { id: 'py-exp', track: 'py', name: 'Expert', desc: 'Concurrency (threads/processes/async) and a real capstone tool.' },
     { id: 'js-f', track: 'js', name: 'Foundations', desc: 'Values, functions, control flow.' },
     { id: 'js-c', track: 'js', name: 'Arrays, Objects & Async', desc: 'map/filter/reduce, objects, promises.' },
     { id: 'cpp-f', track: 'cpp', name: 'Foundations', desc: 'Types, I/O, control flow, functions.' },
@@ -1402,6 +1404,227 @@ window.COURSE = {
     solution: 'import sys\n\ntotals = {}\norder = []\nfor line in sys.stdin:\n    line = line.strip()\n    if not line:\n        continue\n    name, qty, price = line.split(",")\n    value = int(qty) * float(price)\n    if name not in totals:\n        order.append(name)\n        totals[name] = 0\n    totals[name] += value\n\ngrand = 0\nfor name in order:\n    print(f"{name}: total={totals[name]:.2f}")\n    grand += totals[name]\nprint(f"TOTAL: {grand:.2f}")',
     debrief: 'Parsing input, grouping with a dict, preserving order with a list, formatting money — this is a real data-processing program. You are no longer a newbie.'
   };
+})();
+
+;
+/* Python — Advanced + Expert tiers (extends the Novice→Pro path toward expert). */
+(function () {
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs;
+
+  // ---------------- Advanced ----------------
+  S.push({
+    id: 'py4', track: 'py', tier: 'py-adv', title: 'Generators, decorators & context managers', code: 'yield from range(n)', gateN: 12,
+    goal: 'The tools that separate intermediate from advanced Python: lazy iteration, wrapping behavior, and clean resource handling.',
+    lesson: [
+      { h: 'Generators — lazy sequences', html: '<p>A function with <code>yield</code> is a <b>generator</b>: it produces values <b>one at a time, on demand</b>, instead of building a whole list in memory. Great for large/streaming data.</p><pre>def countup(n):\n    i = 1\n    while i <= n:\n        yield i      # pauses here, resumes on next()\n        i += 1\n\nlist(countup(3))     # [1, 2, 3]\nsum(countup(1000000))  # no million-item list in memory</pre><p>Generator <b>expressions</b> mirror comprehensions with parens: <code>sum(x*x for x in range(10))</code>.</p>' },
+      { h: 'Decorators — wrap a function', html: '<p>A <b>decorator</b> takes a function and returns a new function that adds behavior. <code>@name</code> above a def applies it.</p><pre>import functools\ndef logged(fn):\n    @functools.wraps(fn)\n    def wrapper(*args, **kwargs):\n        print("calling", fn.__name__)\n        return fn(*args, **kwargs)\n    return wrapper\n\n@logged\ndef add(a, b): return a + b</pre><p><code>*args</code>/<code>**kwargs</code> pass through any arguments. Use <code>functools.wraps</code> to keep the original name/docstring.</p>' },
+      { h: 'Context managers — with', html: '<p><code>with</code> guarantees setup/teardown even on error — the standard way to handle files, locks, connections.</p><pre>with open("data.txt") as f:   # file closes automatically\n    data = f.read()</pre><p>Make your own with <code>contextlib.contextmanager</code> and a <code>yield</code>, or a class with <code>__enter__</code>/<code>__exit__</code>.</p>' },
+      { h: 'Why these matter', html: '<div class="callout pro"><b class="k">Pythonic power tools</b>Generators keep memory flat on big data; decorators add cross-cutting behavior (logging, timing, caching with <code>functools.lru_cache</code>) without touching the wrapped code; context managers make resource leaks almost impossible. Fluency here is a clear step toward expert.</div>' }
+    ],
+    cards: [
+      ['Generator', 'A function with yield that produces values lazily, one at a time.'],
+      ['yield', 'Emits a value and pauses the generator until the next request.'],
+      ['Generator expression', '(x for x in it) — lazy comprehension in parentheses.'],
+      ['Decorator', 'Takes a function, returns a wrapped function adding behavior.'],
+      ['@name', 'Applies a decorator to the function below it.'],
+      ['*args / **kwargs', 'Capture/pass arbitrary positional and keyword arguments.'],
+      ['functools.wraps', 'Preserves the wrapped function\'s name/docstring.'],
+      ['lru_cache', 'Decorator that memoizes (caches) results.'],
+      ['with (context manager)', 'Guarantees setup/teardown even on exceptions.'],
+      ['__enter__/__exit__', 'The methods a class implements to be a context manager.'],
+      ['Lazy vs eager', 'Produce on demand vs build it all up front.'],
+      ['contextlib.contextmanager', 'Build a context manager from a generator.']
+    ],
+    qs: [
+      P('def g():\n    yield 1\n    yield 2\nprint(list(g()))', '[1, 2]', ['(1, 2)', '[1]', '1\n2'], 'Generator yields 1 then 2.', 'Python'),
+      Q('A key advantage of a generator over returning a list is:', 'It produces values lazily, keeping memory flat on large/streaming data', ['It is always faster to write', 'It sorts automatically', 'It needs no function'], 'Lazy iteration.', 0),
+      P('print(sum(x for x in range(4)))', '6', ['10', '[0,1,2,3]', '3'], '0+1+2+3.', 'Python'),
+      Q('What does a decorator do?', 'Takes a function and returns a new function that adds behavior around it', ['Deletes a function', 'Renames a variable', 'Imports a module'], 'Wrap behavior.', 0),
+      Q('Why use functools.wraps inside a decorator?', 'To preserve the wrapped function\'s name and docstring', ['To make it faster', 'To cache results', 'It is required syntax'], 'Keep identity.', 0),
+      Q('*args and **kwargs in a wrapper let it:', 'Accept and forward any positional and keyword arguments', ['Only accept two arguments', 'Block arguments', 'Return early'], 'Pass-through args.', 0),
+      Q('Which decorator memoizes a function\'s results?', 'functools.lru_cache', ['functools.wraps', 'contextlib.suppress', 'itertools.chain'], 'lru_cache caches.', 0),
+      Q('The main benefit of a with-statement (context manager) is:', 'Guaranteed cleanup (e.g., closing a file) even if an error occurs', ['Faster loops', 'Automatic typing', 'Shorter variable names'], 'Deterministic teardown.', 0),
+      Q('Which two methods make a class a context manager?', '__enter__ and __exit__', ['__init__ and __del__', '__str__ and __repr__', '__next__ and __iter__'], 'Enter/exit.', 0),
+      P('def squares(n):\n    for i in range(n):\n        yield i*i\nprint(list(squares(4)))', '[0, 1, 4, 9]', ['[1, 4, 9, 16]', '[0, 1, 2, 3]', '16'], 'i*i for 0..3.', 'Python'),
+      Q('A generator expression differs from a list comprehension in that it:', 'Is lazy (parentheses) and does not build the whole list in memory', ['Uses square brackets', 'Always returns a tuple', 'Cannot be iterated'], 'Lazy, parens.', 0),
+      T('Write the keyword that turns a function into a generator.', [/^yield$/i, /yield/i], 'yield', 0, 'keyword')
+    ],
+    labs: ['py-gen', 'py-deco']
+  });
+
+  S.push({
+    id: 'py5', track: 'py', tier: 'py-adv', title: 'Typing, errors, testing & the standard library', code: 'from dataclasses import dataclass', gateN: 12,
+    goal: 'Write code that scales: type hints, solid error handling, tests, and the batteries-included standard library.',
+    lesson: [
+      { h: 'Type hints', html: '<p>Hints document intent and let tools catch bugs before runtime (they don\'t change execution):</p><pre>def greet(name: str, times: int = 1) -> str:\n    return (f"Hi {name} " * times).strip()\n\nfrom typing import Optional\ndef find(users: list[dict], id: int) -> Optional[dict]: ...</pre><p>Run a checker like <b>mypy</b>/<b>pyright</b>. <code>list[int]</code>, <code>dict[str, int]</code>, <code>Optional[X]</code>, <code>X | None</code> are common.</p>' },
+      { h: 'Dataclasses', html: '<pre>from dataclasses import dataclass\n@dataclass\nclass Point:\n    x: int\n    y: int\n    def dist2(self) -> int:\n        return self.x*self.x + self.y*self.y</pre><p><code>@dataclass</code> auto-generates <code>__init__</code>, <code>__repr__</code>, <code>__eq__</code> — far less boilerplate than a hand-written class.</p>' },
+      { h: 'Errors — ask forgiveness', html: '<p>Python prefers <b>try/except</b> (EAFP) over pre-checking. Catch <b>specific</b> exceptions, not bare <code>except:</code>.</p><pre>try:\n    value = data[key]\nexcept KeyError:\n    value = default\nelse:\n    use(value)        # ran only if no error\nfinally:\n    cleanup()         # always runs</pre><p>Raise your own with <code>raise ValueError("msg")</code>; define custom exception classes for your domain.</p>' },
+      { h: 'Testing & the standard library', html: '<ul><li>Test with <b>pytest</b>: a function <code>test_x()</code> with <code>assert</code>s. Tests are how you refactor fearlessly.</li><li>The <b>standard library</b> is huge: <code>collections</code> (Counter, defaultdict, deque), <code>itertools</code>, <code>pathlib</code> (paths), <code>json</code>, <code>datetime</code>, <code>re</code>, <code>statistics</code>. Reach for it before writing your own.</li></ul>' }
+    ],
+    cards: [
+      ['Type hint', 'name: str, -> int — documents types; tools check them, runtime ignores.'],
+      ['Optional[X] / X | None', 'A value that may be X or None.'],
+      ['mypy / pyright', 'Static type checkers that catch bugs before runtime.'],
+      ['@dataclass', 'Auto-generates __init__/__repr__/__eq__ from fields.'],
+      ['EAFP', 'Easier to ask forgiveness: try/except over pre-checking.'],
+      ['except SpecificError', 'Catch specific exceptions, never a bare except.'],
+      ['else / finally', 'else runs if no error; finally always runs.'],
+      ['raise', 'Throw an exception: raise ValueError("msg").'],
+      ['pytest', 'Test runner: test_* functions with assert.'],
+      ['collections.Counter', 'Counts hashable items; .most_common(n).'],
+      ['defaultdict', 'Dict with a default factory for missing keys.'],
+      ['pathlib.Path', 'Object-oriented filesystem paths.']
+    ],
+    qs: [
+      Q('Python type hints at runtime:', 'Are not enforced — they document intent and help tools/IDEs', ['Convert types automatically', 'Slow the program', 'Are required'], 'Hints are advisory; checkers enforce.', 0),
+      Q('@dataclass saves you from writing:', '__init__, __repr__ and __eq__ by hand', ['Any methods at all', 'Import statements', 'The class keyword'], 'Boilerplate.', 0),
+      Q('Best practice for exceptions is to:', 'Catch specific exceptions (e.g., KeyError), not a bare except', ['Catch everything with except:', 'Never use try', 'Ignore all errors'], 'Specific excepts.', 0),
+      P('try:\n    x = int("nope")\nexcept ValueError:\n    x = -1\nprint(x)', '-1', ['0', 'ValueError', 'nope'], 'int("nope") raises ValueError.', 'Python'),
+      Q('The finally block:', 'Always runs, whether or not an exception occurred', ['Runs only on success', 'Runs only on error', 'Never runs'], 'Always.', 0),
+      Q('Which standard-library tool counts occurrences of items?', 'collections.Counter', ['itertools.count', 'math.prod', 'json.loads'], 'Counter.', 0),
+      P('from collections import Counter\nprint(Counter("aabbbc").most_common(1))', "[('b', 3)]", ["[('a', 2)]", "{'b': 3}", "('b', 3)"], 'b appears 3 times.', 'Python'),
+      Q('Optional[int] means a value that is:', 'Either an int or None', ['Always an int', 'A list of ints', 'Never set'], 'int | None.', 0),
+      Q('pytest tests are typically:', 'Functions named test_* using assert', ['Classes named Main', 'Printed to the console manually', 'Comments'], 'test_* + assert.', 0),
+      Q('EAFP (the Pythonic style) means:', 'Try the operation and handle exceptions, rather than pre-checking everything', ['Check every condition first', 'Avoid functions', 'Never raise'], 'Ask forgiveness.', 0),
+      P('from dataclasses import dataclass\n@dataclass\nclass P:\n    x: int\n    y: int\nprint(P(1, 2) == P(1, 2))', 'True', ['False', 'Error', 'None'], 'dataclass gives __eq__.', 'Python'),
+      Q('For filesystem paths, the modern OO tool is:', 'pathlib.Path', ['os.system', 'sys.argv', 'random.choice'], 'pathlib.', 0)
+    ],
+    labs: ['py-dataclass', 'py-counter']
+  });
+
+  // ---------------- Expert ----------------
+  S.push({
+    id: 'py6', track: 'py', tier: 'py-exp', title: 'Concurrency: threads, processes & async', code: 'await asyncio.gather(*tasks)', gateN: 12,
+    goal: 'Make Python do many things at once — and know which model to reach for.',
+    lesson: [
+      { h: 'The three models (and the GIL)', html: '<p>CPython has a <b>Global Interpreter Lock (GIL)</b>: only one thread runs Python bytecode at a time. So:</p><table><tr><th>Model</th><th>Best for</th><th>Why</th></tr><tr><td><b>threading</b></td><td>I/O-bound (network, disk)</td><td>Threads wait on I/O, releasing the GIL</td></tr><tr><td><b>multiprocessing</b></td><td>CPU-bound (number crunching)</td><td>Separate processes = real parallel cores, no shared GIL</td></tr><tr><td><b>asyncio</b></td><td>Many concurrent I/O tasks</td><td>Single thread, cooperative <code>await</code> — huge scale, low overhead</td></tr></table>' },
+      { h: 'async/await', html: '<pre>import asyncio\nasync def fetch(n):\n    await asyncio.sleep(0.1)   # non-blocking wait\n    return n * 2\n\nasync def main():\n    results = await asyncio.gather(fetch(1), fetch(2), fetch(3))\n    print(results)            # [2, 4, 6]\n\nasyncio.run(main())</pre><p>An <code>async def</code> is a <b>coroutine</b>; calling it returns a coroutine object you must <code>await</code> (or schedule). <code>asyncio.gather</code> runs many concurrently.</p>' },
+      { h: 'Rules of thumb', html: '<div class="callout pro"><b class="k">Pick by workload</b><ul><li><b>CPU-bound</b> (hashing, image processing) → <b>multiprocessing</b> (or a C/NumPy library). Threads won\'t help because of the GIL.</li><li><b>I/O-bound</b> (APIs, files, DB) → <b>asyncio</b> for high concurrency, or <b>threads</b> for simpler cases.</li><li>Share data carefully: use queues/locks; avoid mutating shared state from many threads.</li></ul></div>' }
+    ],
+    cards: [
+      ['GIL', 'Global Interpreter Lock: one thread runs Python bytecode at a time.'],
+      ['threading', 'Good for I/O-bound work; threads release the GIL while waiting.'],
+      ['multiprocessing', 'Separate processes for CPU-bound work — true parallelism.'],
+      ['asyncio', 'Single-thread cooperative concurrency for many I/O tasks.'],
+      ['coroutine', 'An async def function; returns a coroutine you must await.'],
+      ['await', 'Pause a coroutine until an awaitable completes (non-blocking).'],
+      ['asyncio.gather', 'Run many coroutines concurrently and collect results.'],
+      ['asyncio.run', 'Entry point that runs the event loop for a coroutine.'],
+      ['CPU-bound → processes', 'Number crunching needs multiprocessing, not threads.'],
+      ['I/O-bound → async/threads', 'Network/disk waits scale well with asyncio or threads.'],
+      ['Race condition', 'Unsynchronized shared state mutated by concurrent workers.'],
+      ['Queue/Lock', 'Coordinate safely between threads/processes.']
+    ],
+    qs: [
+      Q('Because of the GIL, CPU-bound Python work is best parallelized with:', 'multiprocessing (separate processes)', ['threading', 'asyncio', 'more comments'], 'Processes bypass the GIL.', 0),
+      Q('Thousands of concurrent network requests are best handled with:', 'asyncio (single-thread cooperative concurrency)', ['multiprocessing with thousands of processes', 'one blocking loop', 'recursion'], 'async for I/O scale.', 0),
+      Q('An async def function returns:', 'A coroutine you must await (or schedule)', ['The result immediately', 'A thread', 'None always'], 'Coroutine object.', 0),
+      P('import asyncio\nasync def f(n):\n    return n + 1\nasync def main():\n    print(await asyncio.gather(f(1), f(2)))\nasyncio.run(main())', '[2, 3]', ['[1, 2]', '3', '(2, 3)'], 'gather collects both results.', 'Python'),
+      Q('The GIL means:', 'Only one thread executes Python bytecode at a time', ['Python cannot use threads', 'Python has no memory limit', 'Async is impossible'], 'One bytecode thread.', 0),
+      Q('Threads DO help in Python when the work is:', 'I/O-bound (waiting on network/disk)', ['CPU-bound math', 'Pure computation', 'Sorting in memory'], 'Threads wait on I/O.', 0),
+      Q('await does what?', 'Pauses the coroutine without blocking the thread until the awaitable is done', ['Blocks the whole program', 'Starts a new process', 'Returns immediately'], 'Non-blocking pause.', 0),
+      Q('Mutating shared state from many threads without coordination causes:', 'Race conditions', ['Faster code always', 'A syntax error', 'Type errors'], 'Races.', 0),
+      Q('asyncio.run(main()) is used to:', 'Start the event loop and run the top-level coroutine', ['Create a thread pool', 'Spawn processes', 'Compile the code'], 'Event loop entry.', 0),
+      Q('For hashing millions of files fast, choose:', 'multiprocessing (or a native library)', ['asyncio', 'a single thread', 'more print statements'], 'CPU-bound → processes.', 0),
+      Q('To run three coroutines concurrently and get all results:', 'await asyncio.gather(a(), b(), c())', ['call them normally', 'use a for loop with time.sleep', 'use multiprocessing.Pool'], 'gather.', 0),
+      Q('asyncio achieves concurrency by:', 'Cooperatively switching tasks at await points on one thread', ['Running many OS threads', 'Using many CPU cores', 'Disabling the GIL'], 'Cooperative scheduling.', 0)
+    ],
+    labs: ['py-async']
+  });
+
+  S.push({
+    id: 'py7', track: 'py', tier: 'py-exp', title: 'Capstone: build a log analyzer', code: 'if __name__ == "__main__": main()', gateN: 12,
+    goal: 'Put it together: read input, process it with the tools you now know, and produce a real report — like a working script.',
+    lesson: [
+      { h: 'Think in small functions', html: '<p>Real programs are a few focused functions wired together, plus an entry point:</p><pre>def parse(lines): ...      # turn raw lines into structured data\ndef summarize(records): ... # compute the numbers\ndef main():\n    import sys\n    lines = sys.stdin.read().splitlines()\n    print(summarize(parse(lines)))\n\nif __name__ == "__main__":\n    main()</pre>' },
+      { h: 'Reading input', html: '<p>For a CLI tool, read <b>stdin</b> (<code>sys.stdin.read()</code>) or take a filename argument (<code>sys.argv</code>). Split into lines, then process. Handle the empty/no-match case gracefully.</p>' },
+      { h: 'Use the standard library', html: '<p>Lean on what you learned: <code>collections.Counter</code> for tallies, comprehensions/generators for filtering, f-strings for output, and clear names. Don\'t reinvent what the stdlib already does.</p>' },
+      { h: 'The capstone', html: '<div class="callout pro"><b class="k">Your task</b>The lab gives you server log lines like <code>ERROR disk full</code>. Count how many are <code>ERROR</code> level and report it, then show the first error\'s message. This is the shape of countless real tools — log triage, data cleaning, report generation — built from the pieces you now know.</div>' }
+    ],
+    cards: [
+      ['Small functions', 'Compose a program from focused, testable functions.'],
+      ['main() + __main__ guard', 'Entry point that runs only when the file is executed.'],
+      ['sys.stdin', 'Read piped input for a CLI tool.'],
+      ['sys.argv', 'Command-line arguments (argv[0] is the program).'],
+      ['splitlines()', 'Split text into a list of lines.'],
+      ['str.startswith', 'Test a line\'s prefix (e.g., level).'],
+      ['Counter for tallies', 'Count categories without manual dict bookkeeping.'],
+      ['Handle empty input', 'Report gracefully when there are no matches.'],
+      ['f-string output', 'Format the report clearly: f"ERROR count: {n}".'],
+      ['Compose, then test', 'Wire functions together and verify with examples.']
+    ],
+    qs: [
+      Q('The if __name__ == "__main__": guard ensures main() runs:', 'Only when the file is executed directly, not when imported', ['Always, even on import', 'Never', 'Only in a notebook'], 'Script vs import.', 0),
+      Q('To read all piped input in a CLI tool:', 'sys.stdin.read()', ['input() once', 'sys.argv[0]', 'open("stdin")'], 'Read stdin.', 0),
+      P('line = "ERROR disk full"\nprint(line.startswith("ERROR"))', 'True', ['False', 'ERROR', 'None'], 'Prefix match.', 'Python'),
+      Q('To split a block of text into individual lines:', 'text.splitlines()', ['text.split(",")', 'list(text)', 'text.strip()'], 'splitlines.', 0),
+      Q('Counting how many lines are each log level is cleanest with:', 'collections.Counter', ['a manual nested loop', 'recursion', 'the re module only'], 'Counter.', 0),
+      Q('Command-line arguments are available in:', 'sys.argv', ['sys.stdin', 'os.environ only', 'argparse is required'], 'argv.', 0),
+      P('errs = [l for l in ["INFO a","ERROR b","ERROR c"] if l.startswith("ERROR")]\nprint(len(errs))', '2', ['3', '1', '0'], 'Two ERROR lines.', 'Python'),
+      Q('A good program structure is:', 'A few focused functions plus a main() entry point', ['One giant function', 'All code at module top level', 'Only classes'], 'Compose functions.', 0),
+      Q('When there are no matching lines, a robust tool should:', 'Report zero / a clear message instead of crashing', ['Raise an uncaught error', 'Print nothing silently and exit 1', 'Loop forever'], 'Handle empties.', 0),
+      Q('f"ERROR count: {n}" is an example of:', 'An f-string formatting output', ['A comment', 'A decorator', 'A generator'], 'f-string.', 0),
+      P('d = {}\nfor w in ["a","b","a"]:\n    d[w] = d.get(w, 0) + 1\nprint(d["a"])', '2', ['1', '3', '0'], 'a counted twice.', 'Python'),
+      Q('Breaking parse/summarize/output into separate functions mainly helps:', 'Testing and reuse — each piece can be verified alone', ['Execution speed only', 'Memory only', 'Nothing'], 'Testable units.', 0)
+    ],
+    labs: ['py-capstone']
+  });
+
+  // ---------------- labs ----------------
+  function plab(o) { o.kind = 'code'; o.lang = 'py'; L[o.id] = o; }
+
+  plab({ id: 'py-gen', title: 'Fix the countdown generator', brief: 'This generator is supposed to count <b>down</b>: <code>countdown(3)</code> should yield <code>3, 2, 1</code>. It counts up instead. Fix it.',
+    starter: 'def countdown(n):\n    for i in range(n):\n        yield i      # bug: yields 0,1,2 ascending\n\nprint(list(countdown(3)))\n',
+    tests: [{ name: 'countdown(3) is [3, 2, 1]', expect: '[3, 2, 1]' }, { name: 'countdown(5) is [5,4,3,2,1]', check: 'assert list(countdown(5)) == [5,4,3,2,1]' }],
+    hints: ['range(n) gives 0..n-1 ascending. You need n down to 1.', 'Either yield n - i, or loop with while n > 0.', 'yield n - i inside the for loop works.'],
+    solution: 'def countdown(n):\n    for i in range(n):\n        yield n - i\n\nprint(list(countdown(3)))',
+    why: 'A generator yields on demand; the fix just reverses the value yielded each step.',
+    debrief: 'You debugged a generator — the lazy-iteration workhorse of advanced Python.' });
+
+  plab({ id: 'py-deco', title: 'Write a doubling decorator', brief: 'Finish the <code>double</code> decorator so it <b>doubles</b> whatever the wrapped function returns. <code>add(2, 3)</code> should print <code>10</code>.',
+    starter: 'import functools\ndef double(fn):\n    @functools.wraps(fn)\n    def wrapper(*args, **kwargs):\n        return fn(*args, **kwargs)   # bug: not doubled\n    return wrapper\n\n@double\ndef add(a, b):\n    return a + b\n\nprint(add(2, 3))\n',
+    tests: [{ name: 'add(2,3) prints 10', expect: '10' }, { name: 'add(10,5) is 30', check: 'assert add(10,5) == 30' }],
+    hints: ['The wrapper returns the original result unchanged. Multiply it by 2.', 'return 2 * fn(*args, **kwargs)'],
+    solution: 'import functools\ndef double(fn):\n    @functools.wraps(fn)\n    def wrapper(*args, **kwargs):\n        return 2 * fn(*args, **kwargs)\n    return wrapper\n\n@double\ndef add(a, b):\n    return a + b\n\nprint(add(2, 3))',
+    why: 'A decorator wraps the call; here it transforms the return value while passing args through with *args/**kwargs.',
+    debrief: 'That is the decorator pattern — add behavior around a function without editing it.' });
+
+  plab({ id: 'py-dataclass', title: 'Fix the dataclass method', brief: 'This <code>Point</code> dataclass should return the <b>squared distance</b> from the origin: <code>Point(3,4).dist2()</code> = <code>25</code>. It returns the wrong value. Fix <code>dist2</code>.',
+    starter: 'from dataclasses import dataclass\n\n@dataclass\nclass Point:\n    x: int\n    y: int\n    def dist2(self) -> int:\n        return self.x + self.y   # bug\n\nprint(Point(3, 4).dist2())\n',
+    tests: [{ name: 'Point(3,4).dist2() is 25', expect: '25' }, { name: 'Point(0,5).dist2() is 25', check: 'assert Point(0,5).dist2() == 25' }],
+    hints: ['Squared distance from origin is x² + y².', 'return self.x*self.x + self.y*self.y'],
+    solution: 'from dataclasses import dataclass\n\n@dataclass\nclass Point:\n    x: int\n    y: int\n    def dist2(self) -> int:\n        return self.x*self.x + self.y*self.y\n\nprint(Point(3, 4).dist2())',
+    why: '@dataclass gave you the constructor and repr for free; you only wrote the behavior.',
+    debrief: 'Dataclasses cut boilerplate so you focus on logic.' });
+
+  plab({ id: 'py-counter', title: 'Most common word', brief: 'Use <code>collections.Counter</code> to print the single most common word and its count as <code>word: count</code>. For the given list that is <code>a: 3</code>.',
+    starter: 'from collections import Counter\nwords = ["a", "b", "a", "c", "a", "b"]\nc = Counter(words)\nprint(c.most_common(1))   # prints a list of a tuple — not what we want\n',
+    tests: [{ name: 'prints "a: 3"', expect: 'a: 3' }, { name: 'uses Counter', check: 'assert isinstance(c, Counter)' }],
+    hints: ['most_common(1) returns [(word, count)] — unpack the first item.', 'word, count = c.most_common(1)[0]', 'print(f"{word}: {count}")'],
+    solution: 'from collections import Counter\nwords = ["a", "b", "a", "c", "a", "b"]\nc = Counter(words)\nword, count = c.most_common(1)[0]\nprint(f"{word}: {count}")',
+    why: 'Counter does the tallying; you just format the top result.',
+    debrief: 'Reaching for the standard library (Counter) beats hand-rolled counting.' });
+
+  plab({ id: 'py-async', title: 'Gather two coroutines', brief: 'Fix <code>main</code> so it runs both coroutines <b>concurrently</b> and prints their sum. <code>one()</code> returns 1 and <code>two()</code> returns 2, so it should print <code>3</code>.',
+    starter: 'import asyncio\n\nasync def one():\n    await asyncio.sleep(0)\n    return 1\n\nasync def two():\n    await asyncio.sleep(0)\n    return 2\n\nasync def main():\n    a = one()\n    b = two()\n    print(a + b)   # bug: adding coroutine objects, not results\n\nasyncio.run(main())\n',
+    tests: [{ name: 'prints 3', expect: '3' }],
+    hints: ['Calling one() returns a coroutine, not a number — you must await it.', 'Use asyncio.gather to run both and collect results.', 'results = await asyncio.gather(one(), two()); print(sum(results))'],
+    solution: 'import asyncio\n\nasync def one():\n    await asyncio.sleep(0)\n    return 1\n\nasync def two():\n    await asyncio.sleep(0)\n    return 2\n\nasync def main():\n    results = await asyncio.gather(one(), two())\n    print(sum(results))\n\nasyncio.run(main())',
+    why: 'Coroutines don\'t run until awaited; asyncio.gather schedules them concurrently and returns their results.',
+    debrief: 'You drove the asyncio event loop — the model behind high-concurrency Python I/O.' });
+
+  plab({ id: 'py-capstone', title: 'Capstone: log analyzer', project: true, brief: 'Read server log lines from <b>stdin</b> (one per line, like <code>ERROR disk full</code>). Print <code>ERROR count: N</code> for how many lines are ERROR level, then on the next line print <code>first: &lt;message&gt;</code> for the first ERROR\'s message (the text after <code>ERROR </code>). The starter counts the wrong thing — build it correctly.',
+    stdin: 'INFO started\nERROR disk full\nWARN low mem\nERROR out of memory',
+    starter: 'import sys\nlines = sys.stdin.read().splitlines()\n# TODO: count only ERROR lines, and capture the first error message\nprint(f"ERROR count: {len(lines)}")   # bug: counts all lines\n',
+    tests: [
+      { name: 'counts only ERROR lines', stdin: 'INFO ok\nERROR disk full\nWARN low\nERROR oom', expect: 'ERROR count: 2' },
+      { name: 'reports the first error message', stdin: 'INFO a\nERROR boom\nERROR again', expect: 'first: boom' },
+      { name: 'handles zero errors', stdin: 'INFO a\nWARN b', expect: 'ERROR count: 0' }
+    ],
+    hints: ['Filter: errs = [l for l in lines if l.startswith("ERROR")].', 'Count is len(errs). Print f"ERROR count: {len(errs)}".', 'If errs is non-empty, print "first:", errs[0][len("ERROR "):] (the text after "ERROR ").'],
+    solution: 'import sys\nlines = sys.stdin.read().splitlines()\nerrs = [l for l in lines if l.startswith("ERROR")]\nprint(f"ERROR count: {len(errs)}")\nif errs:\n    print(f"first: {errs[0][len(\'ERROR \'):]}")\n',
+    why: 'Read input, filter with a comprehension, tally with len, and format output — the anatomy of a real CLI tool.',
+    debrief: 'You built a working log analyzer from the pieces across the Python path. That is the job.' });
 })();
 
 ;
