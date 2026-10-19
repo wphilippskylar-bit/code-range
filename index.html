@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build fdc3d03db2 */
+/* build a043e1cec3 */
 /* ShSim — Linux bash learning simulator. A virtual filesystem for practicing commands:
    navigation, pipes, redirection, variables, globs, text tools (grep/sed/awk/cut/sort/uniq/wc/head/tail/tr),
    find, permissions (chmod/chown read as octal/symbolic), and small shell scripts (for/if/while/args).
@@ -911,6 +911,7 @@ window.COURSE = {
     { id: 'cpp-c', track: 'cpp', name: 'Memory & Objects', desc: 'Pointers, references, vectors, classes.' },
     { id: 'git-f', track: 'git', name: 'Foundations', desc: 'init, add, commit, log, the three areas.' },
     { id: 'git-c', track: 'git', name: 'Branching & Remotes', desc: 'Branches, merges, conflicts, push/pull.' },
+    { id: 'git-x', track: 'git', name: 'Expert', desc: 'Undo/reset/stash, amend, remotes, tags and the PR workflow.' },
     { id: 'ai-f', track: 'ai', name: 'Prompting', desc: 'Structure, context, iteration, verification.' },
     { id: 'fix-1', track: 'fix', name: 'Read it', desc: 'Understand unfamiliar code; read errors.' },
     { id: 'fix-2', track: 'fix', name: 'Fix it', desc: 'The common bug patterns and how to repair them.' },
@@ -2432,6 +2433,129 @@ window.COURSE = {
   };
   // the first task in gt-conflict is cosmetic; replace with a real check
   L['gt-conflict'].tasks[0] = { t: 'config.txt no longer has conflict markers', c: function (r) { return !/[<>=]{7}/.test(r.work['config.txt'] || ''); } };
+})();
+
+;
+/* Git — Expert tier: undo/reset/stash + collaboration (remotes, tags, workflow). */
+(function () {
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, L = COURSE.labs;
+
+  S.push({
+    id: 'git3', track: 'git', tier: 'git-x', title: 'Undo, reset & stash', code: 'git reset --soft HEAD~1', gateN: 12,
+    goal: 'Fix mistakes safely: unstage, move the branch pointer, rescue in-progress work, and know reset vs revert.',
+    lesson: [
+      { h: 'The three resets', html: '<pre>git reset --soft HEAD~1    # undo the commit, keep changes STAGED\ngit reset --mixed HEAD~1   # (default) undo commit, keep changes UNSTAGED\ngit reset --hard HEAD~1    # undo commit AND discard the changes</pre><p>All three move the current branch pointer back; they differ in what happens to your files. <b>--hard throws work away</b> — use with care.</p>' },
+      { h: 'Unstage & restore', html: '<ul><li><code>git restore --staged file</code> (or <code>git reset file</code>) — unstage without losing edits.</li><li><code>git restore file</code> — discard working-tree changes to that file (back to the last commit).</li></ul>' },
+      { h: 'Stash — park work-in-progress', html: '<pre>git stash           # save tracked changes, clean the tree\ngit stash list      # see what you parked\ngit stash pop       # bring the latest back and remove it from the stash</pre><p>Use it when you must switch context (hotfix on another branch) but aren\'t ready to commit.</p>' },
+      { h: 'reset vs revert (know the difference)', html: '<div class="callout trap"><b class="k">Shared history</b><code>git reset</code> <b>rewrites</b> history — fine on your <i>local, unpushed</i> work, dangerous on branches others have. For history that\'s already pushed/shared, use <code>git revert &lt;commit&gt;</code>, which makes a <b>new commit that undoes</b> the old one, leaving history intact. Also useful: <code>git commit --amend</code> to fix the <i>most recent</i> (unpushed) commit.</div>' }
+    ],
+    cards: [
+      ['reset --soft', 'Undo commit; keep changes staged.'],
+      ['reset --mixed', 'Default: undo commit; keep changes unstaged.'],
+      ['reset --hard', 'Undo commit and discard the changes (careful).'],
+      ['restore --staged', 'Unstage a file without losing edits.'],
+      ['restore file', 'Discard working changes to a file.'],
+      ['stash', 'Park tracked changes and clean the tree.'],
+      ['stash pop', 'Reapply the latest stash and drop it.'],
+      ['stash list', 'See parked stashes.'],
+      ['commit --amend', 'Fix the most recent (unpushed) commit.'],
+      ['reset vs revert', 'reset rewrites history (local only); revert adds an undo commit (safe for shared).'],
+      ['HEAD~1', 'One commit before the current HEAD.']
+    ],
+    qs: [
+      Q('git reset --soft HEAD~1 does what to your changes?', 'Undoes the commit but keeps the changes staged', ['Discards them entirely', 'Pushes them', 'Creates a new branch'], 'Soft keeps them staged.', 0),
+      Q('Which reset DISCARDS your changes?', '--hard', ['--soft', '--mixed', '--keep'], 'Hard throws work away.', 0),
+      Q('To undo a commit that is already pushed and shared, prefer:', 'git revert <commit> (adds an undo commit)', ['git reset --hard (rewrite history)', 'delete the repo', 'git stash'], 'Revert keeps shared history intact.', 0),
+      Q('To unstage a file without losing your edits:', 'git restore --staged file (or git reset file)', ['git rm file', 'git reset --hard', 'git stash drop'], 'Unstage, keep edits.', 0),
+      Q('You must switch branches for a hotfix but have messy uncommitted work. Use:', 'git stash, then git stash pop afterward', ['git reset --hard', 'commit the mess', 'delete the files'], 'Park with stash.', 0),
+      Q('git stash pop:', 'Reapplies the most recent stash and removes it from the stash list', ['Deletes all stashes', 'Creates a branch', 'Pushes to origin'], 'Pop = apply + drop.', 0),
+      Q('git commit --amend is for:', 'Fixing the most recent (unpushed) commit', ['Merging branches', 'Deleting history', 'Tagging a release'], 'Amend the last commit.', 0),
+      Q('The danger of git reset --hard is:', 'It permanently discards uncommitted work', ['It uploads secrets', 'It renames branches', 'Nothing — it is safe'], 'Destroys changes.', 0),
+      Q('git restore file (no --staged) does:', 'Discards working-tree changes to that file back to the last commit', ['Unstages it only', 'Deletes the repo', 'Amends a commit'], 'Discard working changes.', 0),
+      Q('Rewriting history with reset is acceptable:', 'On your local, unpushed commits', ['On shared/pushed branches', 'Never', 'Only on main'], 'Local only.', 0),
+      Q('HEAD~1 refers to:', 'The commit one before the current one', ['The first commit ever', 'The remote HEAD', 'A tag'], 'Parent of HEAD.', 0),
+      T('Which reset flag keeps changes STAGED after undoing the commit? (just the word after --)', [/^soft$/i], 'soft', 0, 'word')
+    ],
+    labs: ['gt-undo', 'gt-amend']
+  });
+
+  S.push({
+    id: 'git4', track: 'git', tier: 'git-x', title: 'Collaboration: remotes, tags & workflow', code: 'git push -u origin main', gateN: 12,
+    goal: 'Work with others: remotes, push/pull/clone, tags/releases, .gitignore, and the branch-and-PR workflow.',
+    lesson: [
+      { h: 'Remotes', html: '<pre>git remote add origin <url>   # name the remote "origin"\ngit push -u origin main       # push and set upstream (track it)\ngit push                      # thereafter just this\ngit clone <url>               # copy an existing remote repo</pre><p><b>origin</b> is the conventional name for your main remote.</p>' },
+      { h: 'fetch vs pull', html: '<ul><li><code>git fetch</code> downloads remote changes but does <b>not</b> merge them — you inspect first.</li><li><code>git pull</code> = fetch + merge into your current branch. Pull before you push to avoid rejects.</li></ul>' },
+      { h: 'Tags & releases', html: '<pre>git tag v1.0          # mark this commit as a release\ngit tag               # list tags</pre><p>Tags are stable names for specific commits — used for versioned releases (<code>v1.0</code>, <code>v2.1.3</code>).</p>' },
+      { h: 'The team workflow', html: '<div class="callout pro"><b class="k">Branch → push → PR → merge</b><ol><li>Branch off main for your feature.</li><li>Commit, then <code>push -u</code> the branch to origin.</li><li>Open a <b>pull request</b> for review.</li><li>After approval, merge to main; delete the branch.</li></ol>Keep secrets and build junk out of the repo with a <b>.gitignore</b> file. Prefer small, reviewable PRs.</div>' }
+    ],
+    cards: [
+      ['origin', 'Conventional name for your main remote.'],
+      ['remote add', 'Register a remote URL under a name.'],
+      ['push -u', 'Push and set the upstream tracking branch.'],
+      ['clone', 'Copy an existing remote repository locally.'],
+      ['fetch', 'Download remote changes without merging.'],
+      ['pull', 'fetch + merge into the current branch.'],
+      ['tag v1.0', 'Mark a commit as a named release.'],
+      ['.gitignore', 'Patterns of files Git should never track (secrets, build output).'],
+      ['Pull request', 'Propose changes for review before merge.'],
+      ['Small PRs', 'Easier, faster, safer reviews.'],
+      ['Pull before push', 'Integrate remote changes to avoid rejected pushes.']
+    ],
+    qs: [
+      Q('The conventional name for your primary remote is:', 'origin', ['source', 'master', 'cloud'], 'origin.', 0),
+      Q('git push -u origin main does what the plain push later avoids?', 'Sets the upstream so later you can just run git push', ['Deletes the branch', 'Forces a rebase', 'Tags the commit'], '-u sets tracking.', 0),
+      Q('Difference between fetch and pull:', 'fetch downloads without merging; pull = fetch + merge', ['They are identical', 'pull only downloads', 'fetch merges automatically'], 'pull merges.', 0),
+      Q('To copy an existing remote repository to your machine:', 'git clone <url>', ['git init <url>', 'git pull <url> only', 'git fork'], 'clone.', 0),
+      Q('A git tag is used to:', 'Mark a specific commit as a named release (e.g., v1.0)', ['Create a branch', 'Delete history', 'Stash work'], 'Release marker.', 0),
+      Q('Secrets and build output should be kept out of the repo using:', 'A .gitignore file', ['git stash', 'git reset', 'a tag'], '.gitignore.', 0),
+      Q('The standard team flow is:', 'Branch → commit → push → pull request → review → merge', ['Commit straight to main always', 'Email zip files', 'One giant branch forever'], 'Branch + PR.', 0),
+      Q('Before pushing, it is wise to:', 'Pull (integrate remote changes) to avoid a rejected push', ['Delete origin', 'Reset --hard', 'Force push always'], 'Pull first.', 0),
+      Q('Why prefer small pull requests?', 'They are faster and safer to review', ['They use less disk', 'Git requires it', 'They skip CI'], 'Reviewability.', 0),
+      Q('git fetch is safer than pull when you:', 'Want to inspect remote changes before merging', ['Never want remote changes', 'Are offline', 'Want to delete tags'], 'Inspect first.', 0),
+      Q('A tag like v2.1.3 communicates:', 'A specific released version at a commit', ['A branch name', 'A remote URL', 'A stash entry'], 'Versioned release.', 0),
+      T('Flag on git push that sets the upstream tracking branch (include the dash).', [/^-u$/, /--set-upstream/], '-u', 0, 'e.g. -x')
+    ],
+    labs: ['gt-remote']
+  });
+
+  // ---------- labs ----------
+  L['gt-undo'] = {
+    kind: 'git', title: 'Undo a premature commit', brief: 'Two commits exist. The second, <code>"WIP junk"</code>, was committed too early. Move <code>main</code> back by one commit with <code>git reset</code> so only the <b>init</b> commit remains in history (a soft reset to <code>HEAD~1</code> is fine).',
+    pre: ['git init', 'git config user.name "Phil"', 'git config user.email "p@x.com"', 'echo "# Proj" > README.md', 'git add README.md', 'git commit -m "init"', 'echo "junk" > junk.txt', 'git add junk.txt', 'git commit -m "WIP junk"'],
+    tasks: [
+      { t: 'History now reaches exactly one commit (init)', c: function (r) { var id = r.head(), n = 0; while (id) { n++; id = r.commits[id].parent; } return n === 1 && r.commits[r.head()].msg === 'init'; } },
+      { t: 'The premature junk.txt is no longer in the committed tree', c: function (r) { return r.tree(r.head())['junk.txt'] === undefined; } }
+    ],
+    hints: ['<code>git reset --soft HEAD~1</code> moves main back one commit, keeping the files.', 'Check with <code>git log --oneline</code> — only "init" should remain.'],
+    solution: ['git reset --soft HEAD~1', 'git log --oneline'],
+    debrief: 'reset moves the branch pointer. Soft keeps your work staged so you can recommit cleanly — a safe local undo.'
+  };
+
+  L['gt-amend'] = {
+    kind: 'git', title: 'Fix the last commit message', brief: 'The most recent commit message has a typo: <code>"Add REEADME"</code>. Fix just that message (without adding a new commit) using <code>git commit --amend -m "Add README"</code>. End with one commit whose message is exactly <b>Add README</b>.',
+    pre: ['git init', 'git config user.name "Phil"', 'git config user.email "p@x.com"', 'echo "# Proj" > README.md', 'git add README.md', 'git commit -m "Add REEADME"'],
+    tasks: [
+      { t: 'The latest commit message is exactly "Add README"', c: function (r) { return r.commits[r.head()] && r.commits[r.head()].msg === 'Add README'; } },
+      { t: 'Still exactly one commit (amended, not added)', c: function (r) { var id = r.head(), n = 0; while (id) { n++; id = r.commits[id].parent; } return n === 1; } }
+    ],
+    hints: ['Amend rewrites the most recent commit: <code>git commit --amend -m "Add README"</code>.', 'It replaces the last commit in place — it does not create a second one.', 'Check with <code>git log --oneline</code>.'],
+    solution: ['git commit --amend -m "Add README"', 'git log --oneline'],
+    debrief: 'amend rewrites the latest (unpushed) commit — perfect for a typo in the message or a forgotten file.'
+  };
+
+  L['gt-remote'] = {
+    kind: 'git', title: 'Publish and tag a release', brief: 'Set up and publish a project. (1) Commit a README. (2) Add a remote named <code>origin</code> (any URL). (3) Push <code>main</code> with upstream (<code>git push -u origin main</code>). (4) Tag the release <code>v1.0</code>.',
+    pre: ['git init', 'git config user.name "Phil"', 'git config user.email "p@x.com"'],
+    tasks: [
+      { t: 'A commit exists on main', c: function (r) { return !!r.head(); } },
+      { t: 'A remote named origin is configured', c: function (r) { return !!r.remote && r.remoteName === 'origin'; } },
+      { t: 'main was pushed to origin', c: function (r) { return r.remote && r.remote.branches && r.remote.branches.main; } },
+      { t: 'Tagged v1.0', c: function (r) { return r.tags && r.tags['v1.0'] !== undefined; } }
+    ],
+    hints: ['<code>echo "# Proj" > README.md</code>, add, commit.', '<code>git remote add origin https://github.com/phil/proj.git</code>', '<code>git push -u origin main</code> then <code>git tag v1.0</code>.'],
+    solution: ['echo "# Proj" > README.md', 'git add README.md', 'git commit -m "init"', 'git remote add origin https://github.com/phil/proj.git', 'git push -u origin main', 'git tag v1.0', 'git tag'],
+    debrief: 'remote add → push -u → tag is the publish-and-release loop. origin is the shared copy everyone pulls from.'
+  };
 })();
 
 ;
