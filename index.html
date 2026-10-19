@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build 8efb52163e */
+/* build f513576a78 */
 /* ShSim — Linux bash learning simulator. A virtual filesystem for practicing commands:
    navigation, pipes, redirection, variables, globs, text tools (grep/sed/awk/cut/sort/uniq/wc/head/tail/tr),
    find, permissions (chmod/chown read as octal/symbolic), and small shell scripts (for/if/while/args).
@@ -895,6 +895,8 @@ window.COURSE = {
     { id: 'sql-f', track: 'sql', name: 'Querying', desc: 'SELECT, WHERE, ORDER, LIMIT.' },
     { id: 'sql-c', track: 'sql', name: 'Aggregation & Joins', desc: 'GROUP BY, JOIN, subqueries.' },
     { id: 'sql-p', track: 'sql', name: 'Pro', desc: 'Window functions, CTEs, indexes, data modeling.' },
+    { id: 'sql-adv', track: 'sql', name: 'Advanced analytics', desc: 'Window functions in depth: partitions, ranking, running totals, LAG/LEAD.' },
+    { id: 'sql-exp', track: 'sql', name: 'Performance & modeling', desc: 'Indexes & query plans, transactions/ACID, normalization, CASE.' },
     { id: 'py-f', track: 'py', name: 'Foundations', desc: 'Values, variables, control flow.' },
     { id: 'py-c', track: 'py', name: 'Data & Functions', desc: 'Lists, dicts, functions, files.' },
     { id: 'py-p', track: 'py', name: 'Pro', desc: 'Classes, comprehensions, errors, real programs.' },
@@ -2102,6 +2104,135 @@ window.COURSE = {
     mustUse: ['OVER\\s*\\('],
     hints: ['ROW_NUMBER() OVER (ORDER BY price DESC) AS rank.', 'Keep all order rows — no GROUP BY.', 'ORDER BY rank to present them in order.'],
     debrief: 'Window functions rank and total without collapsing rows. "Top N", running totals and "vs average" all come from here.' });
+})();
+
+;
+/* SQL — Advanced analytics + Performance/modeling tiers (real SQLite via sql.js). */
+(function () {
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, L = COURSE.labs;
+  var SEED = [
+    "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, city TEXT, joined TEXT);",
+    "INSERT INTO customers VALUES (1,'Ava','Norman','2025-01-10'),(2,'Ben','Tulsa','2025-02-02'),(3,'Cy','Norman','2025-02-20'),(4,'Dee','Edmond','2025-03-05'),(5,'Eli','Tulsa','2025-03-18');",
+    "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, product TEXT, qty INTEGER, price REAL, ordered TEXT);",
+    "INSERT INTO orders VALUES (1,1,'Keyboard',2,29.99,'2025-03-01'),(2,1,'Mouse',1,14.50,'2025-03-02'),(3,2,'Monitor',1,199.00,'2025-03-03'),(4,3,'Keyboard',1,29.99,'2025-03-05'),(5,3,'Cable',4,4.25,'2025-03-06'),(6,2,'Mouse',3,14.50,'2025-03-08'),(7,4,'Monitor',2,199.00,'2025-03-10'),(8,1,'Cable',10,4.25,'2025-03-11'),(9,5,'Keyboard',1,29.99,'2025-03-12');"
+  ].join('\n');
+  var NOTE = "customers(id, name, city, joined)\norders(id, customer_id, product, qty, price, ordered)";
+
+  // ---------------- Advanced analytics ----------------
+  S.push({
+    id: 'sql4', track: 'sql', tier: 'sql-adv', title: 'Window functions in depth', code: 'SUM(x) OVER (PARTITION BY g ORDER BY t)', gateN: 12,
+    goal: 'The analytics powerhouse: partitions, the ranking family, running totals, and period-over-period with LAG/LEAD.',
+    lesson: [
+      { h: 'Windows keep every row', html: '<p>Unlike <code>GROUP BY</code> (which collapses groups into one row each), a <b>window function</b> computes across a set of rows <b>while keeping every row</b>. The window is defined by <code>OVER (...)</code>:</p><pre>&lt;fn&gt;() OVER (\n  PARTITION BY city        -- reset the calc per group (optional)\n  ORDER BY joined          -- order within the partition\n)</pre>' },
+      { h: 'The ranking family', html: '<ul><li><b>ROW_NUMBER()</b> — 1,2,3… always unique.</li><li><b>RANK()</b> — ties share a rank, then it skips (1,1,3).</li><li><b>DENSE_RANK()</b> — ties share, no gap (1,1,2).</li><li><b>NTILE(n)</b> — split rows into n buckets (quartiles, etc.).</li></ul><pre>ROW_NUMBER() OVER (PARTITION BY city ORDER BY joined) AS seq_in_city</pre>' },
+      { h: 'Running totals & moving windows', html: '<pre>SUM(amount) OVER (ORDER BY d) AS running_total        -- cumulative\nAVG(amount) OVER (ORDER BY d\n    ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS moving_avg_3</pre><p>Add <code>ORDER BY</code> inside the window and you get a <b>running/cumulative</b> calculation; a <b>frame</b> (<code>ROWS BETWEEN …</code>) gives moving windows.</p>' },
+      { h: 'Period-over-period: LAG / LEAD', html: '<pre>price - LAG(price) OVER (ORDER BY ordered) AS change_vs_prev\nLEAD(price) OVER (ORDER BY ordered) AS next_price</pre><p><b>LAG</b> peeks at the previous row, <b>LEAD</b> at the next — the standard way to compute deltas, growth and "vs previous" without a self-join. The first LAG (no previous row) is NULL.</p>' }
+    ],
+    cards: [
+      ['Window function', 'Computes across rows via OVER(...) while keeping every row.'],
+      ['OVER (PARTITION BY ... ORDER BY ...)', 'Defines the window: grouping + ordering.'],
+      ['ROW_NUMBER', '1,2,3… unique per row.'],
+      ['RANK', 'Ties share a rank, then skip (1,1,3).'],
+      ['DENSE_RANK', 'Ties share a rank, no gap (1,1,2).'],
+      ['NTILE(n)', 'Split rows into n equal buckets.'],
+      ['Running total', 'SUM(x) OVER (ORDER BY t) — cumulative.'],
+      ['Frame (ROWS BETWEEN)', 'Moving window, e.g., 3-row moving average.'],
+      ['LAG / LEAD', 'Previous / next row value for deltas.'],
+      ['Window vs GROUP BY', 'Windows keep all rows; GROUP BY collapses them.'],
+      ['First LAG is NULL', 'No previous row for the first row.']
+    ],
+    qs: [
+      Q('A window function differs from GROUP BY because it:', 'Computes across rows while keeping every row', ['Deletes duplicate rows', 'Collapses each group to one row', 'Only works on one table'], 'Windows keep rows.', 0),
+      Q('Which ranking function gives 1,1,3 for a tie at the top?', 'RANK()', ['ROW_NUMBER()', 'DENSE_RANK()', 'NTILE()'], 'RANK skips after ties.', 0),
+      Q('Which gives 1,1,2 (no gap) for a tie?', 'DENSE_RANK()', ['RANK()', 'ROW_NUMBER()', 'COUNT()'], 'Dense = no gap.', 0),
+      Q('To restart numbering per city, add:', 'PARTITION BY city inside OVER(...)', ['GROUP BY city', 'WHERE city', 'HAVING city'], 'Partition resets the window.', 0),
+      Q('A cumulative running total uses:', 'SUM(x) OVER (ORDER BY t)', ['SUM(x) GROUP BY t', 'COUNT(*)', 'SUM(x) with no OVER'], 'ORDER BY inside OVER = running.', 0),
+      Q('To compare each row to the previous row\'s value, use:', 'LAG()', ['LEAD()', 'RANK()', 'NTILE()'], 'LAG = previous.', 0),
+      Q('LEAD() returns:', 'The value from the next row in the window order', ['The previous row', 'The max', 'A running total'], 'LEAD = next.', 0),
+      Q('The first row\'s LAG(price) value is:', 'NULL (there is no previous row)', ['0', 'The same price', 'An error'], 'No previous row.', 0),
+      Q('NTILE(4) is used to:', 'Split rows into 4 buckets (quartiles)', ['Return the top 4 rows', 'Average 4 columns', 'Join 4 tables'], 'Buckets.', 0),
+      Q('A 3-row moving average needs a:', 'Frame clause: ROWS BETWEEN 2 PRECEDING AND CURRENT ROW', ['GROUP BY', 'HAVING', 'DISTINCT'], 'Frame defines the moving window.', 0),
+      Q('ROW_NUMBER() OVER (ORDER BY price DESC) numbers rows:', 'Uniquely from the highest price down', ['With ties sharing numbers', 'Randomly', 'Only the top row'], 'Unique sequential.', 0),
+      T('Name the keyword clause that starts every window spec after the function (one word).', [/^over$/i, /over/i], 'OVER', 0, 'keyword')
+    ],
+    labs: ['sq-partition', 'sq-running']
+  });
+
+  // ---------------- Performance & modeling ----------------
+  S.push({
+    id: 'sql5', track: 'sql', tier: 'sql-exp', title: 'Performance, modeling & advanced queries', code: 'CREATE INDEX idx ON orders(customer_id)', gateN: 12,
+    goal: 'Make queries fast and schemas sound: indexes and query plans, transactions, normalization — plus LAG and CASE in practice.',
+    lesson: [
+      { h: 'Indexes & query plans', html: '<ul><li>An <b>index</b> (usually a B-tree) lets the DB find rows without scanning the whole table — like a book\'s index. Index the columns you <b>filter, join, or sort</b> on.</li><li>Check what the DB does with <code>EXPLAIN QUERY PLAN</code> — a <b>SEARCH using index</b> beats a <b>SCAN</b> of the whole table.</li><li>Keep predicates <b>sargable</b>: <code>WHERE price > 50</code> can use an index; <code>WHERE ABS(price) > 50</code> (a function on the column) usually can\'t.</li><li>Indexes speed reads but cost space and slow writes — index deliberately, not everything.</li></ul>' },
+      { h: 'Transactions & ACID', html: '<p>Wrap multiple writes so they all succeed or all undo:</p><pre>BEGIN;\n  UPDATE accounts SET bal = bal - 100 WHERE id = 1;\n  UPDATE accounts SET bal = bal + 100 WHERE id = 2;\nCOMMIT;   -- or ROLLBACK to undo</pre><p><b>ACID</b>: <b>Atomicity</b> (all-or-nothing), <b>Consistency</b>, <b>Isolation</b> (concurrent txns don\'t corrupt each other), <b>Durability</b> (committed data survives a crash).</p>' },
+      { h: 'Data modeling & normalization', html: '<ul><li><b>Primary key</b> uniquely identifies a row; a <b>foreign key</b> references another table\'s PK (referential integrity). Constraints: <b>NOT NULL</b>, <b>UNIQUE</b>, <b>CHECK</b>.</li><li><b>Normalization</b> removes redundancy: <b>1NF</b> atomic values, <b>2NF</b> no partial-key dependencies, <b>3NF</b> no non-key-on-non-key dependencies. Rule of thumb: "each fact in one place."</li><li><b>Denormalize</b> deliberately for read-heavy reporting (trading some redundancy for speed).</li></ul>' },
+      { h: 'CASE & conditional aggregation', html: '<pre>SELECT\n  CASE WHEN qty*price >= 100 THEN \'big\' ELSE \'small\' END AS bucket,\n  COUNT(*) AS n\nFROM orders GROUP BY bucket;</pre><p><code>CASE</code> adds if/else logic to a query; combined with aggregates it does pivots and conditional counts.</p>' }
+    ],
+    cards: [
+      ['Index', 'B-tree lookup structure; index columns you filter/join/sort on.'],
+      ['EXPLAIN QUERY PLAN', 'Shows SCAN vs SEARCH-using-index for a query.'],
+      ['Sargable predicate', 'WHERE can use an index; a function on the column defeats it.'],
+      ['Index trade-off', 'Faster reads, more space, slower writes — index deliberately.'],
+      ['Transaction', 'BEGIN…COMMIT/ROLLBACK: all writes succeed or all undo.'],
+      ['ACID', 'Atomicity, Consistency, Isolation, Durability.'],
+      ['Primary key', 'Uniquely identifies each row.'],
+      ['Foreign key', 'References another table\'s PK; enforces integrity.'],
+      ['Constraints', 'NOT NULL, UNIQUE, CHECK guard data quality.'],
+      ['Normalization 1NF/2NF/3NF', 'Remove redundancy; each fact in one place.'],
+      ['Denormalize', 'Add redundancy deliberately for read speed.'],
+      ['CASE', 'if/else logic inside a query; enables conditional aggregation.']
+    ],
+    qs: [
+      Q('An index most helps a query that:', 'Filters/joins/sorts on the indexed column', ['Selects every row of a tiny table', 'Has no WHERE at all', 'Only inserts rows'], 'Index the access columns.', 0),
+      Q('Which predicate can typically USE an index on price?', 'WHERE price > 50', ['WHERE ABS(price) > 50', 'WHERE price*1 > 50', 'WHERE ROUND(price) > 50'], 'Sargable: no function on the column.', 0),
+      Q('To see whether a query scans or uses an index, run:', 'EXPLAIN QUERY PLAN', ['DESCRIBE', 'ANALYZE TABLE only', 'SHOW INDEX'], 'EXPLAIN QUERY PLAN (SQLite).', 0),
+      Q('A downside of adding many indexes is:', 'More storage and slower writes', ['Slower reads', 'Data loss', 'Broken joins'], 'Indexes cost on writes.', 0),
+      Q('Atomicity in ACID means:', 'All statements in a transaction succeed or none do', ['Data is encrypted', 'Reads are fast', 'Columns are unique'], 'All-or-nothing.', 0),
+      Q('To undo the changes in an open transaction:', 'ROLLBACK', ['COMMIT', 'DROP', 'VACUUM'], 'ROLLBACK undoes.', 0),
+      Q('A foreign key:', 'References another table\'s primary key to enforce integrity', ['Is always the first column', 'Speeds up all queries', 'Replaces an index'], 'FK = referential integrity.', 0),
+      Q('Storing a customer\'s city in every order row (repeated) violates:', 'Normalization (redundancy; city belongs with the customer)', ['ACID', 'Indexing', 'Sargability'], 'Each fact in one place.', 0),
+      Q('3NF roughly requires:', 'No non-key column depends on another non-key column', ['All columns are indexed', 'No foreign keys', 'Everything in one table'], '3NF.', 0),
+      Q('You deliberately add redundancy to speed up a reporting query. This is:', 'Denormalization', ['Normalization', 'Indexing', 'A transaction'], 'Trade redundancy for read speed.', 0),
+      Q('CASE WHEN ... THEN ... ELSE ... END is used to:', 'Add conditional (if/else) logic to a query', ['Create a table', 'Begin a transaction', 'Define an index'], 'CASE = conditional expression.', 0),
+      Q('Isolation (ACID) protects against:', 'Concurrent transactions corrupting each other', ['Disk failure', 'Slow indexes', 'Syntax errors'], 'Concurrency safety.', 0)
+    ],
+    labs: ['sq-lag', 'sq-case']
+  });
+
+  // ---------------- labs ----------------
+  function slab(o) { o.kind = 'code'; o.lang = 'sql'; o.seed = SEED; o.seedNote = NOTE; o.ordered = true; L[o.id] = o; }
+
+  slab({ id: 'sq-partition', title: 'Number customers within each city', brief: 'For each <b>city</b>, number the customers from earliest to latest <code>joined</code> date (1 = earliest in that city) using <code>ROW_NUMBER()</code> with <code>PARTITION BY</code>. Return <b>name</b>, <b>city</b>, and the number as <b>seq</b>. Sort by city, then seq.',
+    starter: 'SELECT name, city,\n       -- ROW_NUMBER() OVER (...) AS seq\nFROM customers\nORDER BY city, seq;',
+    solution: "SELECT name, city, ROW_NUMBER() OVER (PARTITION BY city ORDER BY joined) AS seq FROM customers ORDER BY city, seq;",
+    mustUse: ['PARTITION\\s+BY'],
+    hints: ['The window is OVER (PARTITION BY city ORDER BY joined).', 'Wrap it: ROW_NUMBER() OVER (PARTITION BY city ORDER BY joined) AS seq.', 'Keep ORDER BY city, seq on the outer query.'],
+    why: 'PARTITION BY restarts the row numbering for each city, so you get a per-group sequence without collapsing rows.',
+    debrief: 'Per-group numbering is the bread and butter of analytics — "first order per customer", "latest login per user", etc.' });
+
+  slab({ id: 'sq-running', title: 'Running total of order value', brief: 'For the <code>orders</code> table, return each order\'s <b>id</b>, its line total (<code>qty*price</code>) as <b>line_total</b>, and a <b>running_total</b> that accumulates line_total ordered by id, using <code>SUM() OVER (ORDER BY id)</code>. Sort by id.',
+    starter: 'SELECT id, qty*price AS line_total,\n       -- SUM(...) OVER (ORDER BY id) AS running_total\nFROM orders\nORDER BY id;',
+    solution: "SELECT id, qty*price AS line_total, SUM(qty*price) OVER (ORDER BY id) AS running_total FROM orders ORDER BY id;",
+    mustUse: ['OVER\\s*\\('],
+    hints: ['A running total is SUM(qty*price) OVER (ORDER BY id).', 'The ORDER BY inside OVER makes it cumulative.', 'Select id, the line_total, and the running_total.'],
+    why: 'Adding ORDER BY inside the window turns SUM into a cumulative running total while keeping every order row.',
+    debrief: 'Running totals, YTD figures and cumulative counts all come from SUM() OVER (ORDER BY ...).' });
+
+  slab({ id: 'sq-lag', title: 'Compare each order to the previous', brief: 'For each order sorted by <b>id</b>, return <b>id</b>, <b>price</b>, and the <b>previous</b> order\'s price as <b>prev_price</b> using <code>LAG()</code>. The first row\'s prev_price is NULL. Sort by id.',
+    starter: 'SELECT id, price,\n       -- LAG(...) OVER (ORDER BY id) AS prev_price\nFROM orders\nORDER BY id;',
+    solution: "SELECT id, price, LAG(price) OVER (ORDER BY id) AS prev_price FROM orders ORDER BY id;",
+    mustUse: ['LAG\\s*\\('],
+    hints: ['LAG(price) OVER (ORDER BY id) gives the previous row\'s price.', 'The first row has no previous row, so it returns NULL.', 'Select id, price, and that LAG expression AS prev_price.'],
+    why: 'LAG peeks at the previous row in the window order — the standard way to compute "vs previous" without a self-join.',
+    debrief: 'LAG/LEAD power period-over-period analysis: growth, deltas, and change detection.' });
+
+  slab({ id: 'sq-case', title: 'Bucket orders with CASE', brief: 'Categorize each order by line total (<code>qty*price</code>): <b>big</b> if 100 or more, else <b>small</b>. Return the <b>category</b> and the <b>count</b> of orders as <b>cnt</b> in each, with <b>big</b> listed first. Use <code>CASE</code> and <code>GROUP BY</code>.',
+    starter: 'SELECT\n  -- CASE WHEN ... THEN \'big\' ELSE \'small\' END AS category,\n  COUNT(*) AS cnt\nFROM orders\n-- GROUP BY category\nORDER BY category;',
+    solution: "SELECT CASE WHEN qty*price >= 100 THEN 'big' ELSE 'small' END AS category, COUNT(*) AS cnt FROM orders GROUP BY category ORDER BY category;",
+    mustUse: ['CASE', 'GROUP\\s+BY'],
+    hints: ['Build the label: CASE WHEN qty*price >= 100 THEN \'big\' ELSE \'small\' END AS category.', 'GROUP BY category, COUNT(*) AS cnt.', 'ORDER BY category puts \'big\' before \'small\'.'],
+    why: 'CASE adds if/else logic; grouping on the CASE result is conditional aggregation — the basis of pivots and bucketed reports.',
+    debrief: 'CASE + GROUP BY turns raw rows into labeled summaries — a reporting staple.' });
 })();
 
 ;
