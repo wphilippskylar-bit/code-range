@@ -234,6 +234,9 @@ body.pc .editor{min-height:300px}
 .keys.show{display:flex}
 .term .out .cmd{color:var(--acc)}
 .rb{font-family:var(--mono)}
+.edov{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.6);display:flex;align-items:stretch;justify-content:center;padding:max(10px,env(safe-area-inset-top)) 10px 10px}
+.edbox{background:var(--panel,#0e151d);border:1px solid var(--line,#223);border-radius:12px;padding:10px;width:100%;max-width:820px;display:flex;flex-direction:column;gap:8px}
+.edbox textarea{flex:1;min-height:45vh;width:100%;box-sizing:border-box;background:#070b10;color:#d7e3ee;border:1px solid var(--line,#223);border-radius:8px;font:14px/1.5 var(--mono,monospace);padding:10px;white-space:pre;overflow:auto;tab-size:2;outline:none}
 
 :root{--acc:#a78bfa;--acc2:#8b5cf6;--accInk:#1a0b3a}
 
@@ -242,7 +245,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build a6be2ef96d */
+/* build 55943f9a72 */
 /* AwkCore — a small but real awk interpreter for the bash sandbox.
    Supports: BEGIN/END, pattern-only rules, /regex/ patterns, expressions with
    fields ($0, $n, $NF), NR, NF, FS/OFS, variables, associative arrays,
@@ -791,8 +794,8 @@ body.pc .editor{min-height:300px}
   };
   Shell.prototype.tokenize = function (seg) {
     // Each token is {s: text, q: true if it contained quotes (suppresses globbing), sq: true if single-quoted anywhere (suppresses $-expansion)}
-    var toks = [], cur = '', q = null, had = false, quoted = false, singleQ = false, self = this, redir = { out: null, append: false, in: null };
-    function push() { if (cur || had) { toks.push({ s: cur, q: quoted, sq: singleQ }); cur = ''; had = false; quoted = false; singleQ = false; } }
+    var toks = [], cur = '', q = null, had = false, quoted = false, singleQ = false, ug = false, self = this, redir = { out: null, append: false, in: null };
+    function push() { if (cur || had) { toks.push({ s: cur, q: quoted, sq: singleQ, ug: ug }); cur = ''; had = false; quoted = false; singleQ = false; ug = false; } }
     for (var i = 0; i < seg.length; i++) {
       var ch = seg[i];
       if (q) { if (ch === q) { q = null; } else cur += ch; had = true; continue; }
@@ -802,6 +805,7 @@ body.pc .editor{min-height:300px}
       if (ch === '>') { push(); var ap = seg[i + 1] === '>'; if (ap) i++; var fn = ''; i++; while (i < seg.length && seg[i] === ' ') i++; while (i < seg.length && seg[i] !== ' ' && seg[i] !== '|') fn += seg[i++]; i--; redir.out = fn; redir.append = ap; continue; }
       if (ch === '<') { push(); var fi = ''; i++; while (i < seg.length && seg[i] === ' ') i++; while (i < seg.length && seg[i] !== ' ') fi += seg[i++]; i--; redir.in = fi; continue; }
       if (ch === ' ') { push(); continue; }
+      if (ch === '*' || ch === '?' || ch === '[') ug = true;
       cur += ch;
     }
     push();
@@ -809,7 +813,7 @@ body.pc .editor{min-height:300px}
     toks.forEach(function (t, idx) {
       var e = t.sq ? t.s : self.expand(t.s); // single-quoted stays literal
       if (!t.q && (e === '~' || e.indexOf('~/') === 0)) e = self.env.HOME + e.slice(1);
-      if (idx === 0 || t.q) { out.push(e); return; }  // first word and quoted words are not globbed
+      if (idx === 0 || (t.q && !t.ug)) { out.push(e); return; }  // first word and quoted words are not globbed
       self.glob(e).forEach(function (g) { out.push(g); });
     });
     if (redir.out) redir.out = self.expand(redir.out); if (redir.in) redir.in = self.expand(redir.in);
@@ -1347,6 +1351,463 @@ body.pc .editor{min-height:300px}
   var api = { Shell: Shell, baseFS: baseFS, F: F, D: D };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.ShSim = api;
 })(this);
+
+;
+/* ShScript — adds real bash scripting to the ShSim teaching sandbox:
+   VAR=value, $(cmd), $((math)), ${#v} ${v:-def}, [ test ] / [[ ]], if/elif/else/fi, for/while/until loops,
+   while read ... done < file, break/continue, functions with $1..$9 $# $@, exit/return codes,
+   bash script.sh / ./script.sh with arguments, printf, tee, xargs, read, and a nano/edit file editor hook.
+   Everything runs inside the in-browser virtual filesystem; nothing touches a real machine. */
+(function (root) {
+  'use strict';
+  var Sh = root.ShSim || (typeof require !== 'undefined' ? require('./shsim.js') : null);
+  var P = Sh.Shell.prototype, F = Sh.F;
+  var origRun = P.run, origDispatch = P.dispatch, origExpand = P.expand;
+  function ERR(s, c) { return { out: '', err: s, code: c || 1 }; }
+  function OK(s) { return { out: s == null ? '' : s, err: '', code: 0 }; }
+  var STEP_LIMIT = 20000;
+
+  // ---------- expansion ----------
+  P.expand = function (tok) {
+    var self = this;
+    tok = tok.replace(/\$\{#(\w+)\}/g, function (_, k) { return String((self.env[k] || '').length); })
+      .replace(/\$\{(\w+):-([^}]*)\}/g, function (_, k, d) { return self.env[k] ? self.env[k] : d; })
+      .replace(/\$\{(\w+):=([^}]*)\}/g, function (_, k, d) { if (!self.env[k]) self.env[k] = d; return self.env[k]; })
+      .replace(/\$([#@*])/g, function (_, k) { return k === '#' ? (self.env['#'] || '0') : (self.env['@'] || ''); });
+    return origExpand.call(this, tok);
+  };
+
+  // replace $((...)), $(...) and `...` outside single quotes
+  P.substitute = function (s, ctx) {
+    var out = '', i = 0, q = null, self = this;
+    while (i < s.length) {
+      var ch = s[i];
+      if (q === "'") { out += ch; if (ch === "'") q = null; i++; continue; }
+      if (ch === '\\' && i + 1 < s.length) { out += ch + s[i + 1]; i += 2; continue; }
+      if (ch === "'" && !q) { q = "'"; out += ch; i++; continue; }
+      if (ch === '"') { q = q === '"' ? null : '"'; out += ch; i++; continue; }
+      if (ch === '$' && s[i + 1] === '(') {
+        var arith = s[i + 2] === '(', start = i + (arith ? 3 : 2), depth = arith ? 2 : 1, j = start, iq = null;
+        for (; j < s.length; j++) {
+          var c = s[j];
+          if (iq) { if (c === iq) iq = null; continue; }
+          if (c === "'" || c === '"') { iq = c; continue; }
+          if (c === '(') depth++; else if (c === ')') { depth--; if (depth === 0) break; }
+        }
+        var inner = s.slice(start, arith ? j - 1 : j), rep;
+        if (arith) { try { rep = String(self.arith(inner)); } catch (e) { rep = '0'; } }
+        else { var r = self.runScript(inner, ctx, true); rep = r.out.replace(/\n+$/, ''); if (!q) rep = rep.replace(/\s*\n\s*/g, ' '); }
+        out += rep; i = j + 1; continue;
+      }
+      if (ch === '`') { var k = s.indexOf('`', i + 1); if (k < 0) { out += ch; i++; continue; } var r2 = self.runScript(s.slice(i + 1, k), ctx, true).out.replace(/\n+$/, ''); out += q ? r2 : r2.replace(/\s*\n\s*/g, ' '); i = k + 1; continue; }
+      out += ch; i++;
+    }
+    return out;
+  };
+
+  // ---------- integer arithmetic with assignment (for $(( )) and (( ))) ----------
+  P.arith = function (src) {
+    var self = this, t = [], m, re = /\s*(\d+|[A-Za-z_]\w*|\$\w+|\+\+|--|\*\*|<=|>=|==|!=|&&|\|\||\+=|-=|\*=|\/=|%=|[-+*\/%()<>!=?:])/y;
+    re.lastIndex = 0;
+    while (re.lastIndex < src.length) { var at = re.lastIndex; m = re.exec(src); if (!m) { if (/^\s*$/.test(src.slice(at))) break; throw new Error('syntax'); } t.push(m[1]); }
+    var p = 0;
+    function peek() { return t[p]; }
+    function val(name) { return parseInt(self.env[name.replace(/^\$/, '')], 10) || 0; }
+    function setv(name, v) { self.env[name] = String(v); return v; }
+    function primary() {
+      var x = t[p++];
+      if (x === '(') { var v = assign(); p++; return v; }
+      if (x === '-') return -unary(); if (x === '+') return unary(); if (x === '!') return unary() ? 0 : 1;
+      if (x === '++' || x === '--') { var nm = t[p++]; return setv(nm, val(nm) + (x === '++' ? 1 : -1)); }
+      if (/^\d+$/.test(x)) return +x;
+      if (/^(\$\w+|[A-Za-z_]\w*)$/.test(x)) { if (peek() === '++' || peek() === '--') { var op = t[p++], old = val(x); setv(x.replace(/^\$/, ''), old + (op === '++' ? 1 : -1)); return old; } return val(x); }
+      throw new Error('syntax');
+    }
+    function unary() { return primary(); }
+    function pow() { var a = unary(); while (peek() === '**') { p++; a = Math.pow(a, unary()); } return a; }
+    function mul() { var a = pow(); while (/^[*\/%]$/.test(peek() || '')) { var o = t[p++], b = pow(); if ((o === '/' || o === '%') && b === 0) throw new Error('division by 0'); a = o === '*' ? a * b : o === '/' ? Math.trunc(a / b) : a % b; } return a; }
+    function add() { var a = mul(); while (peek() === '+' || peek() === '-') { var o = t[p++], b = mul(); a = o === '+' ? a + b : a - b; } return a; }
+    function cmp() { var a = add(); while (/^(<|>|<=|>=)$/.test(peek() || '')) { var o = t[p++], b = add(); a = (o === '<' ? a < b : o === '>' ? a > b : o === '<=' ? a <= b : a >= b) ? 1 : 0; } return a; }
+    function eq() { var a = cmp(); while (peek() === '==' || peek() === '!=') { var o = t[p++], b = cmp(); a = (o === '==' ? a === b : a !== b) ? 1 : 0; } return a; }
+    function and() { var a = eq(); while (peek() === '&&') { p++; var b = eq(); a = a && b ? 1 : 0; } return a; }
+    function or() { var a = and(); while (peek() === '||') { p++; var b = and(); a = a || b ? 1 : 0; } return a; }
+    function tern() { var c = or(); if (peek() === '?') { p++; var a = assign(); p++; var b = assign(); return c ? a : b; } return c; }
+    function assign() {
+      if (/^[A-Za-z_]\w*$/.test(t[p] || '') && /^(=|\+=|-=|\*=|\/=|%=)$/.test(t[p + 1] || '')) {
+        var nm = t[p], op = t[p + 1]; p += 2; var v = assign(), cur = val(nm);
+        if ((op === '/=' || op === '%=') && v === 0) throw new Error('division by 0');
+        return setv(nm, op === '=' ? v : op === '+=' ? cur + v : op === '-=' ? cur - v : op === '*=' ? cur * v : op === '/=' ? Math.trunc(cur / v) : cur % v);
+      }
+      return tern();
+    }
+    if (!t.length) return 0;
+    var r = assign(); if (p < t.length) throw new Error('syntax');
+    return r;
+  };
+
+  // ---------- split a script into statements ----------
+  function splitStatements(text) {
+    var out = [], cur = '', q = null, depth = 0, brace = 0;
+    function push() { var s = cur.trim(); if (s) out.push(s); cur = ''; }
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (q) { cur += ch; if (ch === q) q = null; else if (ch === '\\' && q === '"' && i + 1 < text.length) cur += text[++i]; continue; }
+      if (ch === '\\' && i + 1 < text.length) { if (text[i + 1] === '\n') { i++; continue; } cur += ch + text[++i]; continue; }
+      if (ch === "'" || ch === '"' || ch === '`') { q = ch; cur += ch; continue; }
+      if (ch === '(') depth++; else if (ch === ')') depth = Math.max(0, depth - 1);
+      if (ch === '#' && depth === 0 && (cur === '' || /\s$/.test(cur))) { while (i < text.length && text[i] !== '\n') i++; push(); continue; }
+      if (depth === 0 && (ch === '\n' || (ch === ';' && text[i + 1] !== ';'))) { push(); continue; }
+      if (depth === 0 && ch === '{' && /\)\s*$/.test(cur)) { cur += '{'; push(); continue; }  // f() {  → its own statement
+      if (depth === 0 && ch === '}' && /^\s*$/.test(cur)) { cur = '}'; push(); continue; }
+      cur += ch;
+    }
+    push();
+    // peel leading keywords: "do echo x" → "do", "echo x"
+    var res = [];
+    out.forEach(function (s) {
+      var m;
+      while ((m = /^(do|then|else)(\s+([\s\S]*))?$/.exec(s))) { res.push(m[1]); s = (m[3] || '').trim(); if (!s) break; }
+      if (s) res.push(s);
+    });
+    return res;
+  }
+
+  // ---------- parse statements into a tree ----------
+  function parse(st) {
+    var p = 0;
+    function kw(s) { return (/^(\S+)/.exec(s) || [])[1]; }
+    function block(stops) {
+      var nodes = [];
+      while (p < st.length) {
+        var s = st[p], k = kw(s);
+        if (stops.indexOf(k) >= 0 || (stops.indexOf(s) >= 0)) return nodes;
+        var m;
+        if ((m = /^for\s+([A-Za-z_]\w*)(?:\s+in(?:\s+([\s\S]*))?)?$/.exec(s))) {
+          p++; expect('do'); var body = block(['done']); var end = closer('done');
+          nodes.push({ t: 'for', v: m[1], words: m[2] === undefined ? (/\sin$/.test(s) ? '' : '"$@"') : m[2], body: body, redir: end });
+        } else if ((m = /^(while|until)\s+([\s\S]+)$/.exec(s))) {
+          p++; expect('do'); var wb = block(['done']); var we = closer('done');
+          nodes.push({ t: 'while', until: m[1] === 'until', cond: m[2], body: wb, redir: we });
+        } else if ((m = /^if\s+([\s\S]+)$/.exec(s))) {
+          p++; var branches = [], els = null; expect('then'); branches.push({ cond: m[1], body: block(['elif', 'else', 'fi']) });
+          while (p < st.length && kw(st[p]) === 'elif') { var em = /^elif\s+([\s\S]+)$/.exec(st[p]); p++; expect('then'); branches.push({ cond: em[1], body: block(['elif', 'else', 'fi']) }); }
+          if (p < st.length && st[p] === 'else') { p++; els = block(['fi']); }
+          closer('fi'); nodes.push({ t: 'if', branches: branches, els: els });
+        } else if ((m = /^(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\)\s*\{?$/.exec(s)) || (m = /^function\s+([A-Za-z_][\w-]*)\s*\{?$/.exec(s))) {
+          p++; if (st[p] === '{') p++; var fb = block(['}']); closer('}');
+          nodes.push({ t: 'func', name: m[1], body: fb });
+        } else { nodes.push({ t: 'cmd', s: s }); p++; }
+      }
+      return nodes;
+    }
+    function expect(k) { if (st[p] !== k) throw new Error('syntax error: expected "' + k + '" near "' + (st[p] || 'end of input') + '"'); p++; }
+    function closer(k) {
+      var s = st[p] || '';
+      var m = new RegExp('^' + k.replace('}', '\\}') + '\\s*(?:(>>?|<)\\s*(\\S+))?$').exec(s);
+      if (!m) throw new Error('syntax error: expected "' + k + '" near "' + (s || 'end of input') + '"');
+      p++; return m[1] ? { op: m[1], file: m[2] } : null;
+    }
+    var tree = block([]);
+    if (p < st.length) throw new Error('syntax error near unexpected token "' + st[p] + '"');
+    return tree;
+  }
+
+  // ---------- run ----------
+  P.run = function (line, nohist) {
+    if (!nohist) this.history.push(line);
+    var r = this.runScript(line, null, false);
+    return { out: r.out, code: r.code, clear: r.clear, edit: r.edit };
+  };
+
+  P.runScript = function (text, ctx, sub) {
+    ctx = ctx || { steps: 0, funcs: this.funcs || (this.funcs = {}) };
+    var tree;
+    try { tree = parse(splitStatements(text)); } catch (e) { this.env['?'] = '2'; return { out: 'bash: ' + e.message + '\n', code: 2 }; }
+    var res = { out: '', code: 0 };
+    var r = this.execNodes(tree, ctx, res);
+    if (r && r.edit) res.edit = r.edit;
+    return res;
+  };
+
+  // returns a control signal: null | {brk:n} | {cont:n} | {exit:true} | {ret:true}
+  P.execNodes = function (nodes, ctx, res) {
+    for (var i = 0; i < nodes.length; i++) { var sig = this.execNode(nodes[i], ctx, res); if (sig) return sig; if (ctx.errexit && nodes[i].t === 'cmd' && res.code !== 0) return { exit: true }; }
+    return null;
+  };
+
+  function writeRedir(self, redir, text) {
+    if (!redir || redir.op === '<') return text;
+    var f = self.expand(redir.file).replace(/^["']|["']$/g, ''), par = self.parent(f);
+    if (f === '/dev/null') return '';
+    if (!par.dir || par.dir.t !== 'd') return text + 'bash: ' + f + ': No such file or directory\n';
+    var ex = par.dir.c[par.name];
+    par.dir.c[par.name] = F((redir.op === '>>' && ex && ex.t === 'f' ? ex.d : '') + text, ex && ex.mode);
+    return '';
+  }
+
+  P.execNode = function (n, ctx, res) {
+    var self = this;
+    if (++ctx.steps > STEP_LIMIT) { res.out += 'bash: stopped — too many steps (is a loop running forever?)\n'; res.code = 1; return { exit: true }; }
+    if (n.t === 'cmd') return this.execCmd(n.s, ctx, res);
+    if (n.t === 'func') { ctx.funcs[n.name] = n.body; res.code = 0; return null; }
+    if (n.t === 'if') {
+      for (var b = 0; b < n.branches.length; b++) {
+        var cr = { out: '', code: 0 }, s = this.execCmd(n.branches[b].cond, ctx, cr); res.out += cr.out; if (s) return s;
+        if (cr.code === 0) return this.execNodes(n.branches[b].body, ctx, res);
+      }
+      if (n.els) return this.execNodes(n.els, ctx, res);
+      res.code = 0; return null;
+    }
+    if (n.t === 'for' || n.t === 'while') {
+      var inner = { out: '', code: 0 }, sig = null, saveIn = ctx.input;
+      if (n.redir && n.redir.op === '<') { var fn = this.node(this.expand(n.redir.file).replace(/^["']|["']$/g, '')); if (!fn || fn.t !== 'f') { res.out += 'bash: ' + n.redir.file + ': No such file or directory\n'; res.code = 1; return null; } ctx.input = fn.d.split('\n'); if (ctx.input[ctx.input.length - 1] === '') ctx.input.pop(); }
+      if (n.t === 'for') {
+        var words = this.words(n.words, ctx);
+        for (var w = 0; w < words.length; w++) {
+          this.env[n.v] = words[w];
+          sig = this.execNodes(n.body, ctx, inner);
+          if (sig && sig.brk) { sig = sig.brk > 1 ? { brk: sig.brk - 1 } : null; break; }
+          if (sig && sig.cont) { if (sig.cont > 1) { sig = { cont: sig.cont - 1 }; break; } sig = null; continue; }
+          if (sig) break;
+        }
+      } else {
+        var guard = 0;
+        while (true) {
+          if (++guard > 5000) { inner.out += 'bash: loop stopped after 5000 iterations\n'; break; }
+          var cc = { out: '', code: 0 }; sig = this.execCmd(n.cond, ctx, cc); inner.out += cc.out; if (sig) break;
+          if ((cc.code === 0) === n.until) break;
+          sig = this.execNodes(n.body, ctx, inner);
+          if (sig && sig.brk) { sig = sig.brk > 1 ? { brk: sig.brk - 1 } : null; break; }
+          if (sig && sig.cont) { if (sig.cont > 1) { sig = { cont: sig.cont - 1 }; break; } sig = null; continue; }
+          if (sig) break;
+        }
+      }
+      ctx.input = saveIn;
+      res.out += writeRedir(this, n.redir, inner.out); res.code = inner.code;
+      return sig;
+    }
+    return null;
+  };
+
+  // word list for `for x in ...`: substitution, brace ranges, variable splitting, globs
+  P.words = function (s, ctx) {
+    var self = this, sub = this.substitute(s, ctx), out = [];
+    sub = sub.replace(/\{(-?\d+)\.\.(-?\d+)\}/g, function (_, a, b) { a = +a; b = +b; var r = [], st = a <= b ? 1 : -1; for (var i = a; st > 0 ? i <= b : i >= b; i += st) r.push(i); return r.join(' '); });
+    if (/^\s*"\$@"\s*$/.test(sub)) return (this.env['@'] || '').split(' ').filter(Boolean);
+    // split unquoted variable values on whitespace
+    sub = sub.replace(/(^|[^\\])\$(\w+)/g, function (m, pre, k) { if (k === '@' ) return m; return pre + (self.env[k] || ''); });
+    var toks = this.tokenize('for ' + sub).argv.slice(1);
+    toks.forEach(function (t) { out.push(t); });
+    return out;
+  };
+
+  function splitChain(s) {
+    var parts = [], ops = [], cur = '', q = null, depth = 0;
+    for (var i = 0; i < s.length; i++) {
+      var ch = s[i];
+      if (q) { cur += ch; if (ch === q) q = null; continue; }
+      if (ch === '\\' && i + 1 < s.length) { cur += ch + s[++i]; continue; }
+      if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; }
+      if (ch === '(') depth++; else if (ch === ')') depth--;
+      var two = s.substr(i, 2);
+      if (depth === 0 && (two === '&&' || two === '||')) { parts.push(cur.trim()); ops.push(two); cur = ''; i++; continue; }
+      cur += ch;
+    }
+    parts.push(cur.trim());
+    return { parts: parts, ops: ops };
+  }
+  function stripGroups(v) {
+    var out = '', depth = 0, q = null;
+    for (var i = 0; i < v.length; i++) {
+      var c = v[i];
+      if (q) { if (c === q) q = null; continue; }
+      if (depth === 0 && (c === '"' || c === "'")) { q = c; continue; }
+      if (c === '$' && v[i + 1] === '(') { depth++; i++; continue; }
+      if (depth > 0) { if (c === '(') depth++; else if (c === ')') depth--; continue; }
+      if (c === '`') { var k = v.indexOf('`', i + 1); i = k < 0 ? v.length : k; continue; }
+      out += c;
+    }
+    return out;
+  }
+  function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+
+  P.execCmd = function (s, ctx, res) {
+    var self = this, m;
+    s = s.trim();
+    var chain = splitChain(s);
+    if (chain.parts.length > 1) {
+      var sig0 = null, last = 0;
+      for (var ci = 0; ci < chain.parts.length; ci++) {
+        if (ci > 0) { var op = chain.ops[ci - 1]; if ((op === '&&' && last !== 0) || (op === '||' && last === 0)) continue; }
+        var pr = { out: '', code: 0 }; sig0 = this.execCmd(chain.parts[ci], ctx, pr); res.out += pr.out; if (pr.edit) res.edit = pr.edit; last = res.code = pr.code; this.env['?'] = String(last);
+        if (sig0) return sig0;
+      }
+      return null;
+    }
+    // arithmetic command (( ... ))
+    if ((m = /^\(\(([\s\S]*)\)\)$/.exec(s))) { var v; try { v = this.arith(this.substitute(m[1], ctx)); } catch (e) { res.out += 'bash: ((: ' + m[1].trim() + ': ' + e.message + '\n'; res.code = 1; return null; } res.code = v ? 0 : 1; this.env['?'] = String(res.code); return null; }
+    if (/^!\s+/.test(s)) { var nr = { out: '', code: 0 }, sg = this.execCmd(s.replace(/^!\s+/, ''), ctx, nr); res.out += nr.out; res.code = nr.code === 0 ? 1 : 0; this.env['?'] = String(res.code); return sg; }
+    s = s.replace(/^\[\[\s+([\s\S]*)\s+\]\]$/, '[ $1 ]');
+    // assignment with a command substitution / arithmetic value: no word splitting
+    var am = /^(?:local\s+|readonly\s+|declare\s+)?([A-Za-z_]\w*)=([\s\S]*)$/.exec(s);
+    if (am && /\$\(|`/.test(am[2]) && !/\s/.test(stripGroups(am[2]))) {
+      var v0 = this.substitute(am[2].replace(/^"([\s\S]*)"$/, '$1'), Object.assign({}, ctx, { inq: true }));
+      this.env[am[1]] = this.expand(v0); res.code = +(this.env['?'] || 0) ? +this.env['?'] : 0; this.env['?'] = String(res.code); res.code = 0; return null;
+    }
+    if (/^set(\s|$)/.test(s)) {
+      var sa = this.tokenize(s).argv.slice(1);
+      if (sa[0] === '--') { var keys0 = ['1', '2', '3', '4', '5', '6', '7', '8', '9']; keys0.forEach(function (k) { delete self.env[k]; }); sa.slice(1).forEach(function (v, k) { if (k < 9) self.env[String(k + 1)] = v; }); this.env['#'] = String(sa.length - 1); this.env['@'] = sa.slice(1).join(' '); }
+      else sa.forEach(function (o) { if (/^-\w*e/.test(o)) ctx.errexit = true; if (/^\+\w*e/.test(o)) ctx.errexit = false; });
+      res.code = 0; return null;
+    }
+    s = this.substitute(s, ctx);
+    // assignments: NAME=value [NAME2=value2]  (also `local`, `readonly`, `declare`)
+    var asg = /^(?:local\s+|readonly\s+|declare\s+)?([A-Za-z_]\w*)=((?:"[^"]*"|'[^']*'|[^\s"'])*)\s*$/.exec(s);
+    if (asg) {
+      var raw = asg[2], val;
+      if (/^'[\s\S]*'$/.test(raw)) val = raw.slice(1, -1);
+      else val = this.expand(raw.replace(/"([^"]*)"/g, '$1').replace(/'([^']*)'/g, '$1'));
+      if (val === '~' || val.indexOf('~/') === 0) val = this.env.HOME + val.slice(1);
+      this.env[asg[1]] = val; res.code = 0; this.env['?'] = '0'; return null;
+    }
+    if (/^local\s+[A-Za-z_]\w*$/.test(s)) { res.code = 0; return null; }
+    var first = (/^(\S+)/.exec(s) || [])[1] || '', restStr = s.slice(first.length).trim();
+    // builtins that change control flow or need the script context
+    if (first === 'exit' || first === 'return') { var c = parseInt(this.expand(restStr), 10); res.code = isNaN(c) ? +(this.env['?'] || 0) : c; this.env['?'] = String(res.code); return first === 'exit' ? { exit: true } : { ret: true }; }
+    if (first === 'break' || first === 'continue') { var nlev = parseInt(restStr, 10) || 1; return first === 'break' ? { brk: nlev } : { cont: nlev }; }
+    if (first === 'read') {
+      var names = this.tokenize(s).argv.slice(1).filter(function (x) { return x[0] !== '-'; }); if (!names.length) names = ['REPLY'];
+      if (!ctx.input || !ctx.input.length) { res.code = 1; return null; }
+      var line = ctx.input.shift(), parts = line.trim().split(/\s+/);
+      names.forEach(function (nm, k) { self.env[nm] = k === names.length - 1 ? parts.slice(k).join(' ') : (parts[k] || ''); });
+      if (names.length === 1) this.env[names[0]] = line;
+      res.code = 0; return null;
+    }
+    if ((first === 'source' || first === '.') && restStr) { var sf = this.node(this.expand(restStr.split(/\s+/)[0])); if (!sf || sf.t !== 'f') { res.out += 'bash: ' + restStr + ': No such file or directory\n'; res.code = 1; return null; } var sres = this.runScript(sf.d, ctx, true); res.out += sres.out; res.code = sres.code; return null; }
+    if (first === 'nano' || first === 'edit' || first === 'vim' || first === 'vi') {
+      var ef = this.expand(restStr.split(/\s+/)[0] || ''); if (!ef) { res.out += first + ': give a file name, e.g. ' + first + ' script.sh\n'; res.code = 1; return null; }
+      var par = this.parent(ef); if (!par.dir || par.dir.t !== 'd') { res.out += first + ': ' + ef + ': No such directory\n'; res.code = 1; return null; }
+      res.edit = par.path; ctx.edit = par.path; res.code = 0; return { edit: par.path };
+    }
+    // function call or script execution: only when the command is not part of a pipeline/chain
+    var simple = !/[|&]/.test(s.replace(/'[^']*'|"[^"]*"/g, ''));
+    if (simple && first) {
+      var argv = this.tokenize(s).argv, scriptText = null, name = argv[0], params = argv.slice(1), redir = this.tokenize(s).redir;
+      if (ctx.funcs[name]) scriptText = ctx.funcs[name];
+      else if ((name === 'bash' || name === 'sh') && params.length) {
+        var bf = this.node(params[0]); if (!bf || bf.t !== 'f') { res.out += name + ': ' + params[0] + ': No such file or directory\n'; res.code = 127; this.env['?'] = '127'; return null; }
+        scriptText = bf.d; name = params[0]; params = params.slice(1);
+      } else if (/\//.test(name) && !/^-/.test(name)) {
+        var xf = this.node(name);
+        if (xf && xf.t === 'f') {
+          if (xf.mode[2] !== 'x') { res.out += 'bash: ' + name + ': Permission denied\n'; res.code = 126; this.env['?'] = '126'; return null; }
+          scriptText = xf.d;
+        } else if (!xf) { res.out += 'bash: ' + name + ': No such file or directory\n'; res.code = 127; this.env['?'] = '127'; return null; }
+      }
+      if (scriptText !== null) {
+        var save = {}, keys = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '#', '@'];
+        keys.forEach(function (k) { save[k] = self.env[k]; delete self.env[k]; });
+        if (typeof scriptText === 'string') this.env['0'] = name;
+        params.forEach(function (v, k) { if (k < 9) self.env[String(k + 1)] = v; });
+        this.env['#'] = String(params.length); this.env['@'] = params.join(' ');
+        var inner = { out: '', code: 0 }, sig;
+        if (typeof scriptText === 'string') {
+          // a script runs in a child process: its cd and variables do not leak back
+          var envSnap = {}, cwdSnap = this.cwd; Object.keys(this.env).forEach(function (k) { envSnap[k] = self.env[k]; });
+          var sc = { steps: ctx.steps, funcs: Object.create(null), input: ctx.input }; var rr = this.runScript(scriptText, sc, true); inner = rr; ctx.steps = sc.steps;
+          this.env = envSnap; this.cwd = cwdSnap;
+        }
+        else { sig = this.execNodes(scriptText, ctx, inner); if (sig && !sig.ret && !sig.exit) sig = null; }
+        keys.forEach(function (k) { if (save[k] === undefined) delete self.env[k]; else self.env[k] = save[k]; });
+        var text = inner.out;
+        if (redir.out) text = writeRedir(this, { op: redir.append ? '>>' : '>', file: redir.out }, text);
+        res.out += text; res.code = inner.code; this.env['?'] = String(res.code);
+        return sig && sig.exit ? sig : null;
+      }
+    }
+    var saveCtx = this._ctx; this._ctx = ctx;
+    var r = origRun.call(this, s, true);
+    this._ctx = saveCtx;
+    res.out += r.out; res.code = r.code; if (r.clear) res.clear = true;
+    return null;
+  };
+
+  // ---------- extra commands ----------
+  function testExpr(self, a) {
+    if (!a.length) return false;
+    if (a[0] === '!') return !testExpr(self, a.slice(1));
+    var oi = a.indexOf('-o'); if (oi > 0) return testExpr(self, a.slice(0, oi)) || testExpr(self, a.slice(oi + 1));
+    var ai = a.indexOf('-a'); if (ai > 0 && a.length > 3) return testExpr(self, a.slice(0, ai)) && testExpr(self, a.slice(ai + 1));
+    if (a.length === 1) return a[0] !== '';
+    if (a.length === 2) {
+      var op = a[0], f = a[1], n = self.node(f);
+      switch (op) {
+        case '-z': return f === ''; case '-n': return f !== '';
+        case '-e': return !!n; case '-f': return !!n && n.t === 'f'; case '-d': return !!n && n.t === 'd';
+        case '-s': return !!n && n.t === 'f' && n.d.length > 0;
+        case '-r': return !!n && n.mode[0] === 'r'; case '-w': return !!n && n.mode[1] === 'w'; case '-x': return !!n && n.mode[2] === 'x';
+      }
+      return false;
+    }
+    var x = a[0], o = a[1], y = a.slice(2).join(' '), nx = parseInt(x, 10), ny = parseInt(y, 10);
+    switch (o) {
+      case '=': case '==': return x === y; case '!=': return x !== y;
+      case '-eq': return nx === ny; case '-ne': return nx !== ny; case '-lt': return nx < ny; case '-le': return nx <= ny; case '-gt': return nx > ny; case '-ge': return nx >= ny;
+      case '<': return x < y; case '>': return x > y;
+    }
+    return false;
+  }
+  function printf(fmt, args) {
+    fmt = fmt.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+    var out = '', ai = 0, guard = 0;
+    do {
+      var used = false;
+      out += fmt.replace(/%(-?)(\d*)(?:\.(\d+))?([sdfi%])/g, function (m, left, w, prec, c) {
+        if (c === '%') return '%'; used = true; var v = args[ai++]; if (v === undefined) v = c === 's' ? '' : '0';
+        var s = c === 's' ? String(v) : c === 'f' ? (parseFloat(v) || 0).toFixed(prec === undefined ? 6 : +prec) : String(parseInt(v, 10) || 0);
+        if (c === 's' && prec !== undefined) s = s.slice(0, +prec);
+        w = +w || 0; while (s.length < w) s = left ? s + ' ' : ' ' + s; return s;
+      });
+    } while (used && ai < args.length && ++guard < 1000);
+    return out;
+  }
+  P.dispatch = function (cmd, a, args, flags, stdin) {
+    var self = this;
+    switch (cmd) {
+      case 'help': { var h = origDispatch.call(this, cmd, a, args, flags, stdin); h.out += 'Scripts: nano FILE (editor), bash FILE ARGS, ./FILE after chmod +x\n  VAR=value  $(cmd)  $((1 + 2))  [ test ]  if/elif/else/fi  for/while/until ... do/done\n  while read line; do ...; done < file   functions: name() { ... }   printf tee xargs du\n'; return h; }
+      case 'grep': if (flags.indexOf('q') >= 0) { var gr = origDispatch.call(this, cmd, a, args, flags, stdin); return { out: '', err: gr.err && !/^$/.test(gr.err) && gr.code > 1 ? gr.err : '', code: gr.code }; } break;
+      case 'tr': return origDispatch.call(this, cmd, a.map(function (x) { return x.replace(/\\n/g, '\n').replace(/\\t/g, '\t'); }), args.map(function (x) { return x.replace(/\\n/g, '\n').replace(/\\t/g, '\t'); }), flags, stdin);
+      case 'test': return testExpr(this, a) ? OK('') : ERR('', 1);
+      case '[': if (a[a.length - 1] !== ']') return ERR("bash: [: missing ']'", 2); return testExpr(this, a.slice(0, -1)) ? OK('') : ERR('', 1);
+      case 'true': return OK(''); case 'false': return ERR('', 1);
+      case 'printf': return a.length ? OK(printf(a[0], a.slice(1))) : ERR('printf: usage: printf FORMAT [ARGS]');
+      case 'tee': {
+        var app = flags.indexOf('a') >= 0;
+        args.forEach(function (f) { var par = self.parent(f); if (par.dir && par.dir.t === 'd') { var ex = par.dir.c[par.name]; par.dir.c[par.name] = F((app && ex && ex.t === 'f' ? ex.d : '') + (stdin || '')); } });
+        return OK(stdin || '');
+      }
+      case 'xargs': {
+        var items = (stdin || '').split(/\s+/).filter(Boolean), base = a.length ? a : ['echo'], n1 = false, bi = base.indexOf('-n');
+        if (bi >= 0) { n1 = base[bi + 1] === '1'; base = base.slice(0, bi).concat(base.slice(bi + 2)); }
+        var groups = n1 ? items.map(function (x) { return [x]; }) : [items], out = '', code = 0;
+        groups.forEach(function (g) { var r = origRun.call(self, base.concat(g).map(shq).join(' '), true); out += r.out; if (r.code) code = r.code; });
+        return { out: out, err: '', code: code };
+      }
+      case 'basename': { if (!args[0]) return ERR('basename: missing operand'); var b = args[0].replace(/\/+$/, '').split('/').pop(); if (args[1] && b.slice(-args[1].length) === args[1]) b = b.slice(0, -args[1].length); return OK(b + '\n'); }
+      case 'expr': { try { return OK(String(this.arith(a.join(' ').replace(/\\\*/g, '*'))) + '\n'); } catch (e) { return ERR('expr: syntax error', 2); } }
+      case 'du': {
+        var tgt = args[0] || '.', nd = this.node(tgt); if (!nd) return ERR('du: cannot access \'' + tgt + '\'');
+        var size = function (n) { return n.t === 'f' ? n.d.length : Object.keys(n.c).reduce(function (s, k) { return s + size(n.c[k]); }, 0); };
+        if (flags.indexOf('s') >= 0 || nd.t === 'f') return OK(size(nd) + '\t' + tgt + '\n');
+        return OK(Object.keys(nd.c).sort().map(function (k) { return size(nd.c[k]) + '\t' + tgt.replace(/\/$/, '') + '/' + k; }).join('\n') + '\n' + size(nd) + '\t' + tgt + '\n');
+      }
+    }
+    return origDispatch.call(this, cmd, a, args, flags, stdin);
+  };
+
+  P.writeFile = function (path, text) { var par = this.parent(path); if (!par.dir || par.dir.t !== 'd') return false; var ex = par.dir.c[par.name]; par.dir.c[par.name] = F(text, ex && ex.mode); return true; };
+  P.readFile = function (path) { var n = this.node(path); return n && n.t === 'f' ? n.d : ''; };
+})(typeof window !== 'undefined' ? window : this);
 
 ;
 /* GitSim — a teaching Git simulator with a real commit DAG, index, branches, merges,
@@ -2592,6 +3053,305 @@ window.X = {
   },
   insertAfter: function (id, stage) { var i = COURSE.stages.indexOf(this.st(id)); COURSE.stages.splice(i + 1, 0, stage); }
 };
+
+;
+/* Linux depth pack: deeper lessons, more questions, real bash scripting labs (editor + autograded scripts), and two new stages */
+(function () {
+  var X = window.X, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs, F = window.ShSim.F, D = window.ShSim.D;
+  var H = '/home/phil';
+  function fileLines(e, p) { var n = e.node(p); return n && n.t === 'f' ? n.d.split('\n').map(function (l) { return l.trim(); }).filter(Boolean) : null; }
+  function ran(e, re) { return e.history.some(function (h) { return re.test(h); }); }
+  function mode(e, p) { var n = e.node(p); return n ? n.mode : ''; }
+  // Run the learner's script in a fresh sandbox (so autograding never changes their lab state).
+  function trial(e, script, files, cmd) {
+    var t = new window.ShSim.Shell(null, {});
+    var src = e.node(script); if (!src || src.t !== 'f') return { out: '', code: -1, sh: t };
+    t.writeFile(script, src.d); t.node(script).mode = src.mode;
+    Object.keys(files || {}).forEach(function (p) { if (/\/$/.test(p)) t.mkdirp(p); else { t.mkdirp(p.replace(/\/[^\/]*$/, '')); t.writeFile(p, files[p]); } });
+    var r = t.run(cmd, true); r.sh = t; return r;
+  }
+  function B(code, right, wrong, e) { return P(code, right, wrong, e, 'Bash'); }
+
+  // ---------------- lnx1 ----------------
+  X.add('lnx1', { gateN: 14,
+    lesson: [{ h: 'Deep dive: moving around like you live here', html: '<pre>/home/phil/projects/app.py     # absolute: starts at /\nprojects/app.py                # relative: from where you are now\n../Documents                   # .. = parent, . = here, ~ = your home\n\nmkdir -p work/2026/reports     # -p creates missing parents, no error if it exists\ncp -r projects projects-copy   # -r copies a directory tree\nmv draft.txt final.txt         # mv renames…\nmv final.txt ~/Documents/      # …and moves\nrm -r old-folder               # recursive delete — there is no recycle bin\nls -la                         # long listing including hidden .dotfiles\ntree                           # the whole tree at a glance</pre><ul><li><b>Globs</b> are expanded by the shell <i>before</i> the command runs: <code>*.pdf</code>, <code>report-?.txt</code>, <code>[ab]*</code>. Run <code>echo *.pdf</code> to preview what a glob matches before handing it to <code>rm</code>.</li><li>Linux is <b>case-sensitive</b>: <code>Notes.txt</code> and <code>notes.txt</code> are different files.</li><li>Key places: <code>/etc</code> (config), <code>/var/log</code> (logs), <code>/home</code> (users), <code>/tmp</code> (scratch), <code>/usr/bin</code> (programs), <code>/root</code> (the admin\'s home).</li><li><code>file x</code> says what a file is; <code>stat x</code> shows size, permissions and times.</li></ul>' }],
+    qs: [
+      Q('You are in /home/phil/projects. Where does cd ../Documents take you?', '/home/phil/Documents', ['/home/phil/projects/Documents', '/Documents', '/home/Documents'], '.. goes up one level first.', 0),
+      Q('mkdir -p a/b/c does what if a does not exist?', 'Creates a, a/b and a/b/c', ['Fails with an error', 'Creates only c', 'Creates a file'], '-p makes parents.', 0),
+      Q('Copy the directory site and everything in it to site-backup:', 'cp -r site site-backup', ['cp site site-backup', 'mv site site-backup', 'cp -a site'], '-r recurses into directories.', 0),
+      Q('Safest way to see what rm *.log would delete:', 'Run echo *.log (or ls *.log) first', ['Run rm -i only after', 'There is no way', 'Use rm -rf *.log'], 'Preview the glob.', 0),
+      Q('Where do system configuration files usually live?', '/etc', ['/var/log', '/tmp', '/usr/bin'], '/etc = config.', 0),
+      Q('Which shows hidden files like .bashrc?', 'ls -a', ['ls -h', 'ls -r', 'ls hidden'], 'Dotfiles are hidden by default.', 0),
+      Q('mv report.txt report-final.txt:', 'Renames the file', ['Copies it', 'Deletes it', 'Moves it to /tmp'], 'mv within a folder renames.', 0),
+      Q('report-?.txt matches:', 'report-1.txt and report-a.txt, but not report-10.txt', ['Any report file', 'Only report-?.txt literally', 'report-10.txt only'], '? is exactly one character.', 0),
+      T('Type the command that creates the nested directory path a/b/c in one go.', ['mkdir -p a/b/c'], 'mkdir -p a/b/c', 0, 'mkdir ...')
+    ],
+    labs: ['lx-organize'] });
+
+  L['lx-organize'] = {
+    kind: 'sh', title: 'Clean up a messy Downloads folder',
+    brief: 'Your <code>~/Downloads</code> is a mess. Organize it:<br>(1) inside Downloads create <code>docs</code>, <code>images</code> and <code>scripts</code>;<br>(2) move all <code>.pdf</code> files into docs and all <code>.jpg</code> files into images;<br>(3) move <code>setup.sh</code> into scripts and make it <b>executable</b>;<br>(4) delete the <code>.tmp</code> files;<br>(5) move <code>notes.txt</code> to <code>~/Documents</code>.',
+    setup: { extraHome: { Downloads: D({ 'report.pdf': F('%PDF report\n'), 'invoice.pdf': F('%PDF invoice\n'), 'photo1.jpg': F('JPG1\n'), 'photo2.jpg': F('JPG2\n'), 'setup.sh': F('#!/bin/bash\necho "setting up"\n'), 'notes.txt': F('call the bank\n'), 'a.tmp': F(''), 'b.tmp': F('') }) } },
+    tasks: [
+      { t: 'docs, images and scripts folders exist in Downloads', c: function (e) { return ['docs', 'images', 'scripts'].every(function (d) { var n = e.node(H + '/Downloads/' + d); return n && n.t === 'd'; }); } },
+      { t: 'PDFs are in docs, JPGs in images', c: function (e) { var d = e.node(H + '/Downloads/docs'), i = e.node(H + '/Downloads/images'); return !!d && !!i && d.c['report.pdf'] && d.c['invoice.pdf'] && i.c['photo1.jpg'] && i.c['photo2.jpg'] && !e.node(H + '/Downloads/report.pdf') && !e.node(H + '/Downloads/photo1.jpg'); } },
+      { t: 'setup.sh is in scripts and executable', c: function (e) { return mode(e, H + '/Downloads/scripts/setup.sh')[2] === 'x'; } },
+      { t: 'No .tmp files left', c: function (e) { var n = e.node(H + '/Downloads'); return !!n && !Object.keys(n.c).some(function (k) { return /\.tmp$/.test(k); }); } },
+      { t: 'notes.txt moved to ~/Documents', c: function (e) { return !!e.node(H + '/Documents/notes.txt') && !e.node(H + '/Downloads/notes.txt'); } }
+    ],
+    hints: ['<code>cd Downloads</code> then <code>mkdir docs images scripts</code>.', '<code>mv *.pdf docs/</code> and <code>mv *.jpg images/</code>', '<code>mv setup.sh scripts/ &amp;&amp; chmod +x scripts/setup.sh</code>, then <code>rm *.tmp</code> and <code>mv notes.txt ~/Documents/</code>.'],
+    solution: ['cd Downloads', 'mkdir -p docs images scripts', 'mv *.pdf docs/', 'mv *.jpg images/', 'mv setup.sh scripts/', 'chmod +x scripts/setup.sh', 'echo *.tmp', 'rm *.tmp', 'mv notes.txt ~/Documents/', 'tree'],
+    debrief: 'mkdir, mv with globs, chmod and a previewed rm — the everyday file-management loop. You now do in 10 commands what takes 5 minutes of dragging in a GUI.'
+  };
+
+  // ---------------- lnx2 ----------------
+  X.add('lnx2', { gateN: 14,
+    lesson: [{ h: 'Deep dive: the three streams and composing tools', html: '<p>Every program has <b>stdin</b> (0), <b>stdout</b> (1) and <b>stderr</b> (2). Pipes connect stdout to the next stdin; errors go to the screen unless you redirect them.</p><pre>cmd &gt; out.txt          # stdout to a file (overwrite)\ncmd &gt;&gt; out.txt         # append\ncmd 2&gt; errors.txt      # stderr only\ncmd &gt; all.txt 2&gt;&amp;1     # both streams into one file\ncmd 2&gt;/dev/null        # discard errors\ncmd | tee copy.txt | wc -l   # save a copy AND keep piping\nls *.log | xargs wc -l       # turn lines of input into arguments\n\n# CSV columns: skip the header, pick a column, count unique values\ntail -n +2 sales.csv | cut -d, -f2 | sort | uniq -c | sort -rn</pre><ul><li><code>sort -t, -k4 -n</code> sorts a CSV by its 4th column numerically.</li><li><code>uniq</code> only collapses <b>adjacent</b> duplicates — always <code>sort</code> first.</li><li><code>tr \'a-z\' \'A-Z\'</code> translates characters; <code>tr -d \'\\r\'</code> strips Windows line endings.</li><li>Exit codes: 0 = success. <code>a &amp;&amp; b</code> runs b only if a succeeded; <code>a || b</code> only if it failed.</li></ul>' }],
+    qs: [
+      Q('Save only the error messages of a command to errors.txt:', 'cmd 2> errors.txt', ['cmd > errors.txt', 'cmd | errors.txt', 'cmd >> errors.txt'], 'File descriptor 2 is stderr.', 0),
+      Q('Put stdout and stderr into the same file:', 'cmd > all.txt 2>&1', ['cmd 2> all.txt > all.txt', 'cmd | all.txt', 'cmd &> 2'], 'Redirect stdout, then point stderr at it.', 0),
+      Q('What does tee do in cmd | tee log.txt | grep x?', 'Writes the stream to log.txt and also passes it on down the pipe', ['Deletes log.txt', 'Only writes the file', 'Sorts the output'], 'A T-junction for data.', 0),
+      Q('Why does sort | uniq -c work but uniq -c alone miscounts?', 'uniq only merges adjacent duplicate lines', ['uniq cannot count', 'sort adds counts', 'uniq needs a file'], 'Sort first.', 0),
+      Q('Skip the header line of a CSV:', 'tail -n +2 file.csv', ['head -n 1 file.csv', 'tail -n 2 file.csv', 'cut -f2 file.csv'], '+2 starts at line 2.', 0),
+      Q('Sort a CSV numerically by its 4th column:', 'sort -t, -k4 -n file.csv', ['sort -k4 file.csv', 'sort -n4 file.csv', 'sort -c4 file.csv'], '-t sets the separator, -k the key.', 0),
+      Q('ls *.log | xargs wc -l:', 'Runs wc -l with every file name from the list as arguments', ['Counts the lines of ls output', 'Fails always', 'Deletes the logs'], 'xargs converts input to arguments.', 0),
+      B('echo "a b c" | tr " " "\\n" | wc -l', '3', ['1', '2', '5'], 'Each space becomes a newline: three lines.'),
+      B('printf "b\\na\\nb\\n" | sort | uniq -c | sort -rn | head -1', '      2 b', ['      1 a', '2 b a', 'b'], 'Counts, highest first.'),
+      T('Type the redirection that throws away error messages (no spaces).', ['2>/dev/null'], '2>/dev/null', 0, '2>...')
+    ],
+    labs: ['lx-streams'] });
+
+  L['lx-streams'] = {
+    kind: 'sh', title: 'Streams and CSV plumbing',
+    brief: 'Using <code>~/sales.csv</code> (header: date,region,product,units,price):<br>(1) the sorted list of <b>unique regions</b> → <code>~/regions.txt</code>;<br>(2) the number of <b>data rows</b> (no header) → <code>~/rowcount.txt</code>;<br>(3) run <code>cat missing.csv</code> and capture <b>only its error message</b> in <code>~/err.txt</code>;<br>(4) save every Keyboard row to <code>~/kb.csv</code> <b>while also</b> counting them on screen in the same pipeline (use <code>tee</code>).',
+    setup: {},
+    tasks: [
+      { t: 'regions.txt is East, North, West (one per line)', c: function (e) { var l = fileLines(e, H + '/regions.txt'); return !!l && l.join(',') === 'East,North,West'; } },
+      { t: 'rowcount.txt holds 8', c: function (e) { var l = fileLines(e, H + '/rowcount.txt'); return !!l && l.length === 1 && +l[0].split(/\s+/)[0] === 8; } },
+      { t: 'err.txt contains the error, not file data', c: function (e) { var l = fileLines(e, H + '/err.txt'); return !!l && /No such file/.test(l.join(' ')); } },
+      { t: 'kb.csv has the 3 Keyboard rows, made with tee', c: function (e) { var l = fileLines(e, H + '/kb.csv'); return !!l && l.length === 3 && l.every(function (x) { return /Keyboard/.test(x); }) && ran(e, /\btee\b/); } }
+    ],
+    hints: ['<code>tail -n +2 sales.csv | cut -d, -f2 | sort -u &gt; regions.txt</code>', '<code>tail -n +2 sales.csv | wc -l &gt; rowcount.txt</code>', '<code>cat missing.csv 2&gt; err.txt</code>, then <code>grep Keyboard sales.csv | tee kb.csv | wc -l</code>'],
+    solution: ['tail -n +2 sales.csv | cut -d, -f2 | sort -u > regions.txt', 'tail -n +2 sales.csv | wc -l > rowcount.txt', 'cat missing.csv 2> err.txt', 'grep Keyboard sales.csv | tee kb.csv | wc -l', 'cat regions.txt rowcount.txt err.txt'],
+    debrief: 'Separate streams, skip headers, dedupe, and tee a copy mid-pipeline. These patterns carry straight into log analysis and data prep.'
+  };
+
+  // ---------------- lnx3 ----------------
+  X.add('lnx3', { gateN: 16,
+    lesson: [{ h: 'Try it for real: your first script', html: '<p>The lab terminal has a built-in editor. Type <code>nano hello.sh</code>, write the script, tap <b>Save</b>, then run it.</p><pre>#!/bin/bash\n# hello.sh — greet the current user\nname="$USER"\necho "Hello, $name"\necho "You are in $(pwd)"</pre><pre>bash hello.sh        # run it with bash (no permission needed)\nchmod +x hello.sh    # or make it executable…\n./hello.sh           # …and run it directly (./ = "in this folder")</pre><ul><li><code>$(command)</code> inserts a command\'s output: <code>today=$(date)</code>.</li><li><code>$((2 + 3))</code> does integer math.</li><li><b>Quote your variables</b>: <code>"$file"</code> keeps names with spaces in one piece.</li><li>Single quotes are literal: <code>echo \'$HOME\'</code> prints <code>$HOME</code>; double quotes expand: <code>echo "$HOME"</code> prints <code>/home/phil</code>.</li></ul>' }],
+    qs: [
+      B('name=Phil\necho \'$name\' "$name"', '$name Phil', ['Phil Phil', '$name $name', 'Phil $name'], 'Single quotes stay literal; double quotes expand.'),
+      B('x=4\necho $((x * 2 + 1))', '9', ['4*2+1', '10', '8'], 'Integer arithmetic.'),
+      B('files=$(echo a b c)\necho "got: $files"', 'got: a b c', ['got: $files', 'got:', 'got: echo a b c'], 'Command substitution captures output.'),
+      Q('Run a script that is not executable yet, without chmod:', 'bash script.sh', ['./script.sh', 'run script.sh', 'exec script.sh'], 'bash reads the file itself.', 0),
+      Q('Why ./script.sh instead of just script.sh?', 'The current folder is not in $PATH, so you must give its path', ['./ makes it faster', 'It runs as root', 'It is required syntax for bash'], 'PATH lookup.', 0),
+      Q('echo $(( 7 / 2 )) prints:', '3', ['3.5', '4', '7/2'], 'Bash math is integer-only.', 0),
+      Q('Which line makes a script\'s variables available to programs it starts?', 'export NAME', ['local NAME', 'set NAME', 'readonly NAME'], 'Exported variables pass to child processes.', 0)
+    ],
+    labs: ['lx-sc-first'] });
+
+  L['lx-sc-first'] = {
+    kind: 'sh', title: 'Write and run your first script',
+    brief: 'Type <code>nano hello.sh</code> to open the editor. Write a script that starts with a <b>shebang</b> (<code>#!/bin/bash</code>) and prints <code>Hello, </code> followed by the user name from <code>$USER</code>. Save it, make it <b>executable</b>, and run it with <code>./hello.sh</code>.',
+    setup: {},
+    tasks: [
+      { t: 'hello.sh exists and starts with #!/bin/bash', c: function (e) { var n = e.node(H + '/hello.sh'); return !!n && n.t === 'f' && /^#!\s*\/bin\/(ba)?sh/.test(n.d); } },
+      { t: 'hello.sh is executable', c: function (e) { return mode(e, H + '/hello.sh')[2] === 'x'; } },
+      { t: 'Running it prints "Hello, phil" (using $USER)', c: function (e) { var n = e.node(H + '/hello.sh'); if (!n || !/\$\{?USER/.test(n.d)) return false; var r = trial(e, H + '/hello.sh', {}, 'bash ' + H + '/hello.sh'); return /Hello, phil/.test(r.out); } },
+      { t: 'You ran it with ./hello.sh', c: function (e) { return ran(e, /^\.\/hello\.sh/); } }
+    ],
+    hints: ['Type <code>nano hello.sh</code> — an editor opens. Line 1: <code>#!/bin/bash</code>', 'Line 2: <code>echo "Hello, $USER"</code> — then tap Save.', '<code>chmod +x hello.sh</code> then <code>./hello.sh</code>'],
+    solutionFiles: { '/home/phil/hello.sh': '#!/bin/bash\necho "Hello, $USER"\n' },
+    solution: ['nano hello.sh', 'chmod +x hello.sh', './hello.sh'],
+    debrief: 'Shebang, a variable, the execute bit, and ./ — every script you ever write starts exactly like this.'
+  };
+
+  // ---------------- lnx4 ----------------
+  X.add('lnx4', { gateN: 14,
+    qs: [
+      B("printf 'a,3\\nb,5\\na,4\\n' | awk -F, '{s[$1]+=$2} END {print s[\"a\"]}'", '7', ['3', '12', '4'], 'Group-sum by key.'),
+      B("echo 'one two three' | awk '{print NF, $NF}'", '3 three', ['3 one', 'three 3', '1 three'], 'NF = number of fields; $NF = last field.'),
+      B("printf '5\\n10\\n' | awk '{t+=$1} END {printf \"%.1f\\n\", t/NR}'", '7.5', ['15', '7', '7.50'], 'Average with printf formatting.'),
+      Q('awk -F, \'NR > 1\' file.csv prints:', 'Every line except the header', ['Only the header', 'Column 1', 'Nothing'], 'A pattern with no action prints matching lines.', 0),
+      Q('Format a number with exactly two decimals in awk:', 'printf "%.2f\\n", x', ['print x.2', 'round(x, 2)', 'print %2f x'], 'printf format strings.', 0)
+    ],
+    labs: ['lx-awk-revenue'] });
+
+  L['lx-awk-revenue'] = {
+    kind: 'sh', title: 'Revenue report with awk',
+    brief: 'From <code>~/sales.csv</code> (date,region,product,units,price), revenue = units × price.<br>(1) Write <code>~/revenue.txt</code>: one line per region, <code>REGION AMOUNT</code> with the amount to <b>2 decimals</b>, highest revenue first;<br>(2) write the grand total (2 decimals) to <code>~/total.txt</code>.',
+    setup: {},
+    tasks: [
+      { t: 'revenue.txt has the right totals, highest first', c: function (e) { var l = fileLines(e, H + '/revenue.txt'); return !!l && l.join('|') === 'West 1673.88|East 1481.85|North 452.42'; } },
+      { t: 'total.txt holds 3608.15', c: function (e) { var l = fileLines(e, H + '/total.txt'); return !!l && l.length === 1 && l[0] === '3608.15'; } }
+    ],
+    hints: ['Skip the header with <code>NR &gt; 1</code> and use <code>-F,</code>.', "Group: <code>{r[$2] += $4 * $5} END {for (k in r) printf \"%s %.2f\\n\", k, r[k]}</code>", 'Then <code>| sort -k2 -nr &gt; revenue.txt</code>. Total: sum <code>$4 * $5</code> into one variable and printf it in END.'],
+    solution: ["awk -F, 'NR > 1 {r[$2] += $4 * $5} END {for (k in r) printf \"%s %.2f\\n\", k, r[k]}' sales.csv | sort -k2 -nr > revenue.txt", "awk -F, 'NR > 1 {s += $4 * $5} END {printf \"%.2f\\n\", s}' sales.csv > total.txt", 'cat revenue.txt total.txt'],
+    debrief: 'Compute, group, format, rank — a full report pipeline in two lines, no spreadsheet needed.'
+  };
+
+  // ---------------- lnx5 ----------------
+  X.add('lnx5', { gateN: 14,
+    qs: [
+      Q('find site -type f -perm 777 finds:', 'Files whose permissions are exactly rwxrwxrwx', ['Files you own', 'All files', 'Empty files'], 'Exact permission match.', 0),
+      Q('find . -name "*.sh" -exec chmod 755 {} \\; does what?', 'Runs chmod 755 on every .sh file found', ['Lists .sh files', 'Deletes them', 'Prints 755'], '{} is replaced by each path.', 0),
+      Q('Why are world-writable (o+w) files a security problem?', 'Any user on the system can modify them, e.g. inject code into a web page or script', ['They load slowly', 'They cannot be read', 'They are hidden'], 'Least privilege for files.', 0),
+      Q('Typical safe permissions for web content and scripts:', 'Files 644, executable scripts and directories 755', ['Everything 777', 'Everything 600', 'Files 755, scripts 644'], 'Owner writes; others only read/execute.', 0)
+    ],
+    labs: ['lx-perm-audit'] });
+
+  L['lx-perm-audit'] = {
+    kind: 'sh', title: 'Permission audit of a website folder',
+    brief: 'A teammate deployed <code>~/site</code> with sloppy permissions. Audit and fix it:<br>(1) list every file that is world-writable (mode <code>666</code> or <code>777</code>) → <code>~/ww.txt</code>;<br>(2) set <b>every file</b> under site to <code>644</code> (use <code>find … -exec</code>);<br>(3) then make <code>site/deploy.sh</code> <code>755</code> so it can still run.',
+    setup: { extraHome: { site: D({ 'index.html': F('<h1>shop</h1>\n', 'rw-rw-rw-'), 'app.js': F('init()\n', 'rwxrwxrwx'), 'deploy.sh': F('#!/bin/bash\necho deploy\n'), 'style.css': F('body{}\n'), assets: D({ 'logo.svg': F('<svg/>\n', 'rw-rw-rw-') }) }) } },
+    tasks: [
+      { t: 'ww.txt lists exactly the 3 world-writable files', c: function (e) { var l = fileLines(e, H + '/ww.txt'); if (!l || l.length !== 3) return false; return ['index.html', 'app.js', 'logo.svg'].every(function (w) { return l.some(function (x) { return x.split('/').pop() === w; }); }); } },
+      { t: 'No file under site is world-writable', c: function (e) { var bad = false; (function walk(n) { Object.keys(n.c).forEach(function (k) { var c = n.c[k]; if (c.t === 'd') walk(c); else if (c.mode[7] === 'w') bad = true; }); })(e.node(H + '/site')); return !bad && ran(e, /-exec/); } },
+      { t: 'index.html and logo.svg are rw-r--r--', c: function (e) { return mode(e, H + '/site/index.html') === 'rw-r--r--' && mode(e, H + '/site/assets/logo.svg') === 'rw-r--r--'; } },
+      { t: 'deploy.sh is rwxr-xr-x', c: function (e) { return mode(e, H + '/site/deploy.sh') === 'rwxr-xr-x'; } }
+    ],
+    hints: ['<code>find site -type f -perm 666 &gt; ww.txt</code> then <code>find site -type f -perm 777 &gt;&gt; ww.txt</code>', '<code>find site -type f -exec chmod 644 {} \\;</code>', '<code>chmod 755 site/deploy.sh</code>, then <code>ls -l site site/assets</code> to verify.'],
+    solution: ['find site -type f -perm 666 > ww.txt', 'find site -type f -perm 777 >> ww.txt', 'cat ww.txt', 'find site -type f -exec chmod 644 {} \\;', 'chmod 755 site/deploy.sh', 'ls -l site'],
+    debrief: 'Audit first (save the evidence), fix in bulk with find -exec, then restore the one exception. That order — find, record, fix, verify — is how hardening work is done.'
+  };
+
+  // ---------------- new stage: bash scripting ----------------
+  X.insertAfter('lnx5', {
+    id: 'lnx6', track: 'linux', tier: 'lnx-x', title: 'Bash scripting for automation', code: 'set -euo pipefail', gateN: 12,
+    goal: 'Write real, robust bash scripts: arguments and usage checks, if/test, loops, reading files line by line, functions, exit codes — and fix broken scripts.',
+    lesson: [
+      { h: 'Arguments, tests and exit codes', html: '<pre>#!/bin/bash\n# count.sh PATTERN FILE\nif [ $# -lt 2 ]; then            # $# = number of arguments\n  echo "usage: $0 PATTERN FILE"   # $0 = script name\n  exit 1                         # non-zero = failure\nfi\npattern=$1; file=$2\nif [ ! -f "$file" ]; then\n  echo "no such file: $file"; exit 2\nfi\necho "$(grep -c "$pattern" "$file") matches"</pre><table><tr><th>Test</th><th>True when</th></tr><tr><td><code>-f F</code> / <code>-d D</code> / <code>-e P</code></td><td>file / directory / anything exists</td></tr><tr><td><code>-z "$s"</code> / <code>-n "$s"</code></td><td>string empty / not empty</td></tr><tr><td><code>"$a" = "$b"</code> / <code>!=</code></td><td>strings equal / differ</td></tr><tr><td><code>$x -eq 5</code> <code>-ne -lt -le -gt -ge</code></td><td>numeric comparisons</td></tr></table><p><code>$@</code> is all arguments (quote it: <code>"$@"</code>). Every command returns an <b>exit code</b> — <code>if</code> just checks it, so <code>if grep -q ERROR log; then</code> works with no brackets.</p>' },
+      { h: 'Loops and reading files', html: '<pre>for f in logs/*.log; do         # over files\n  echo "$(wc -l &lt; "$f") $f"\ndone\n\nfor i in {1..5}; do echo $i; done   # over a range\n\nwhile read -r name status load; do  # over lines, split into fields\n  if [ "$status" = "down" ]; then echo "DOWN $name"; fi\ndone &lt; servers.txt\n\ncount=0\ncount=$((count + 1))            # arithmetic\n(( count &gt; 3 )) &amp;&amp; echo "many"</pre><p><code>break</code> leaves a loop, <code>continue</code> skips to the next item. Redirect a whole loop: <code>done &gt; report.txt</code>.</p>' },
+      { h: 'Functions and robust habits', html: '<pre>log() { echo "[$(date +%H:%M)] $*"; }    # define\nbackup() {\n  local src=$1                           # local to the function\n  cp "$src" "$src.bak" || return 1        # return an exit code\n}\nbackup app.conf &amp;&amp; log "backed up"</pre><ul><li><code>set -euo pipefail</code> at the top of real scripts: stop on errors (<code>-e</code>), on unset variables (<code>-u</code>), and on failures inside pipes (<code>pipefail</code>).</li><li><b>Quote every variable</b> (<code>"$file"</code>) — unquoted variables split on spaces and expand globs.</li><li>Default values: <code>${1:-servers.txt}</code>. String length: <code>${#name}</code>.</li><li><code>trap \'rm -f "$tmp"\' EXIT</code> cleans up temp files even on failure; <code>getopts</code> parses <code>-v -o file</code> style options.</li><li>Run <b>ShellCheck</b> on scripts — it catches most quoting and logic bugs automatically.</li><li>Never put passwords in scripts; read secrets from protected files or environment, and keep scripts writable only by their owner.</li></ul>' }
+    ],
+    cards: [['$#', 'Number of arguments passed to the script.'], ['$@ (quoted "$@")', 'All arguments, each kept intact.'], ['$0', 'The script\'s name.'], ['$?', 'Exit code of the last command.'], ['exit 1', 'End the script reporting failure.'], ['[ -f FILE ]', 'True if FILE is a regular file.'], ['[ -z "$s" ]', 'True if the string is empty.'], ['-eq -lt -gt', 'Numeric comparisons inside [ ].'], ['while read -r a b; do … done < file', 'Process a file line by line, split into fields.'], ['$((x + 1))', 'Integer arithmetic.'], ['${1:-default}', 'Use a default when the argument is missing.'], ['set -euo pipefail', 'Fail fast on errors, unset variables and pipe failures.'], ['local var', 'Variable scoped to a function.'], ['trap … EXIT', 'Run cleanup when the script exits.'], ['ShellCheck', 'Linter that finds common bash bugs.']],
+    qs: [
+      B('set -- a b c\necho $#', '3', ['1', 'a b c', '0'], 'set -- sets the positional arguments; $# counts them.'),
+      B('out=""\nfor i in 1 2 3 4; do\n  [ $i -eq 3 ] && continue\n  out="$out$i"\ndone\necho $out', '124', ['1234', '12', '3'], 'continue skips 3.'),
+      B('n=0\nwhile [ $n -lt 3 ]; do n=$((n + 1)); done\necho $n', '3', ['2', '0', '4'], 'Loops until n is no longer less than 3.'),
+      B('s="hello world"\necho ${#s}', '11', ['2', '10', 'hello world'], '${#s} is the string length, including the space.'),
+      B('greet() { echo "hi $1"; }\ngreet Ann', 'hi Ann', ['hi', 'hi $1', 'greet Ann'], 'Inside a function, $1 is the function\'s first argument.'),
+      B('echo ${NAME:-guest}', 'guest', ['NAME', '', 'error'], 'Default when unset.'),
+      Q('[ "$a" -eq "$b" ] fails with "integer expression expected". Why?', '-eq compares numbers; use = for strings', ['Missing semicolon', '-eq is not a bash operator', 'Variables need $$'], 'String vs numeric tests.', 0),
+      Q('What does set -e do?', 'Exits the script as soon as a command fails', ['Enables echo of commands', 'Exports all variables', 'Ignores errors'], 'Fail fast.', 0),
+      Q('Why quote "$file" in cp "$file" backup/?', 'A name with spaces would otherwise split into several arguments', ['Quotes make it faster', 'cp requires quotes', 'To expand globs'], 'Quote your variables.', 0),
+      Q('A script ends with exit 3. The caller checks:', '$? — it will be 3', ['$#', '$0', '$3'], 'Exit codes signal how it went.', 0),
+      Q('if grep -q ERROR app.log; then … — why no [ ]?', 'if tests any command\'s exit code; grep -q returns 0 when it finds a match', ['[ ] is optional everywhere', 'grep is a test operator', 'It is a syntax error'], '[ is just another command.', 0),
+      Q('A script is writable by everyone and run by a cron job as an admin. Risk?', 'Anyone could edit it to run their own commands with admin rights', ['None', 'It runs slower', 'It cannot be scheduled'], 'Protect automation scripts: owner-only write.', 0)
+    ],
+    labs: ['lx-sc-args', 'lx-sc-health', 'lx-fix-script', 'lx-sc-rotate']
+  });
+
+  L['lx-sc-args'] = {
+    kind: 'sh', title: 'A script with arguments and error handling',
+    brief: 'Write <code>~/count.sh PATTERN FILE</code> (use <code>nano count.sh</code>):<ul><li>fewer than 2 arguments → print a line containing <code>usage</code> and <b>exit 1</b>;</li><li>FILE does not exist → print <code>no such file: FILE</code> and <b>exit 2</b>;</li><li>otherwise print <code>N matches</code>, where N is the number of lines in FILE containing PATTERN.</li></ul>Make it executable and try it on <code>projects/old.log</code>. The checker runs your script with its own test inputs.',
+    setup: {},
+    tasks: [
+      { t: 'count.sh exists and is executable', c: function (e) { return mode(e, H + '/count.sh')[2] === 'x'; } },
+      { t: 'No arguments → usage message and exit 1', c: function (e) { var r = trial(e, H + '/count.sh', {}, H + '/count.sh'); return /usage/i.test(r.out) && r.code === 1; } },
+      { t: 'Missing file → "no such file: …" and exit 2', c: function (e) { var r = trial(e, H + '/count.sh', {}, H + '/count.sh x /home/phil/nope.txt'); return /no such file: \/home\/phil\/nope\.txt/.test(r.out) && r.code === 2; } },
+      { t: 'Counts matches correctly (checker\'s own file)', c: function (e) { var r = trial(e, H + '/count.sh', { '/home/phil/t/a.log': 'ok\nfail one\nok\nfail two\nfail three\n' }, H + '/count.sh fail /home/phil/t/a.log'); var r2 = trial(e, H + '/count.sh', { '/home/phil/t/a.log': 'nothing here\n' }, H + '/count.sh fail /home/phil/t/a.log'); return /^3 matches\s*$/.test(r.out) && r.code === 0 && /^0 matches\s*$/.test(r2.out); } }
+    ],
+    hints: ['Start with <code>#!/bin/bash</code> then <code>if [ $# -lt 2 ]; then echo "usage: count.sh PATTERN FILE"; exit 1; fi</code>', 'File check: <code>if [ ! -f "$2" ]; then echo "no such file: $2"; exit 2; fi</code>', 'Count: <code>n=$(grep -c "$1" "$2")</code> then <code>echo "$n matches"</code>. Finally <code>chmod +x count.sh</code>.'],
+    solutionFiles: { '/home/phil/count.sh': '#!/bin/bash\nif [ $# -lt 2 ]; then\n  echo "usage: count.sh PATTERN FILE"\n  exit 1\nfi\nif [ ! -f "$2" ]; then\n  echo "no such file: $2"\n  exit 2\nfi\nn=$(grep -c "$1" "$2")\necho "$n matches"\n' },
+    solution: ['nano count.sh', 'chmod +x count.sh', './count.sh', 'echo $?', './count.sh ERROR projects/old.log'],
+    debrief: 'Validate input, fail with a clear message and a meaningful exit code, then do the work. That structure makes a script safe to call from other scripts and schedulers.'
+  };
+
+  var SERVERS2 = 'api01 up 30\napi02 down 0\nqueue01 up 99\nqueue02 up 91\nlb01 down 0\n';
+  L['lx-sc-health'] = {
+    kind: 'sh', title: 'Server health report (while read)',
+    brief: 'Write <code>~/health.sh [FILE]</code> that reads a file of <code>NAME STATUS LOAD</code> lines (default <code>servers.txt</code> when no argument is given). For each server: if STATUS is <code>down</code> print <code>DOWN NAME</code>; otherwise if LOAD is <b>greater than 90</b> print <code>BUSY NAME</code>. Finish with <code>checked T servers, D down, B busy</code>. Run it on <code>servers.txt</code> and save the output to <code>~/health.txt</code>.',
+    setup: {},
+    tasks: [
+      { t: 'Correct report for servers.txt', c: function (e) { var r = trial(e, H + '/health.sh', {}, 'cd /home/phil; bash /home/phil/health.sh'); return r.out.trim().split('\n').map(function (x) { return x.trim(); }).join('|') === 'BUSY db01|DOWN cache01|BUSY db02|checked 6 servers, 1 down, 2 busy'; } },
+      { t: 'Works on a different file passed as an argument', c: function (e) { var r = trial(e, H + '/health.sh', { '/home/phil/other.txt': SERVERS2 }, 'bash /home/phil/health.sh /home/phil/other.txt'); return r.out.trim().split('\n').map(function (x) { return x.trim(); }).join('|') === 'DOWN api02|BUSY queue01|BUSY queue02|DOWN lb01|checked 5 servers, 2 down, 2 busy'; } },
+      { t: 'health.txt saved with the report', c: function (e) { var l = fileLines(e, H + '/health.txt'); return !!l && l[l.length - 1] === 'checked 6 servers, 1 down, 2 busy'; } }
+    ],
+    hints: ['Default file: <code>file=${1:-servers.txt}</code>. Counters: <code>total=0; down=0; busy=0</code>', 'Loop: <code>while read -r name status load; do … done &lt; "$file"</code> with <code>total=$((total + 1))</code>', 'Inside: <code>if [ "$status" = "down" ]; then …; elif [ "$load" -gt 90 ]; then …; fi</code>. After the loop, echo the summary. Run <code>bash health.sh &gt; health.txt</code>.'],
+    solutionFiles: { '/home/phil/health.sh': '#!/bin/bash\nfile=${1:-servers.txt}\ntotal=0; down=0; busy=0\nwhile read -r name status load; do\n  total=$((total + 1))\n  if [ "$status" = "down" ]; then\n    echo "DOWN $name"\n    down=$((down + 1))\n  elif [ "$load" -gt 90 ]; then\n    echo "BUSY $name"\n    busy=$((busy + 1))\n  fi\ndone < "$file"\necho "checked $total servers, $down down, $busy busy"\n' },
+    solution: ['nano health.sh', 'bash health.sh', 'bash health.sh > health.txt', 'cat health.txt'],
+    debrief: 'while read + if/elif + counters is the skeleton of countless monitoring and report scripts. Because it takes the file as an argument, it works on tomorrow\'s data too.'
+  };
+
+  L['lx-fix-script'] = {
+    kind: 'sh', title: 'Fix it: the broken backup script',
+    brief: '<code>~/backup.sh DIR</code> should copy every <code>.conf</code> file in DIR to <code>~/backups/NAME.bak</code> and print <code>backed up N files</code>. With no argument it prints a usage line and exits 1; if DIR is not a directory it prints <code>not a directory: DIR</code> and exits 2. Run <code>cat backup.sh</code>, then <code>./backup.sh etcdemo</code> — it fails in several ways. Fix it with <code>nano backup.sh</code> so <code>./backup.sh etcdemo</code> works.',
+    setup: { extraHome: { 'backup.sh': F('#!/bin/bash\n# back up every .conf file in a directory into ~/backups\nsrc=$1\ndest = ~/backups\nif [ -z "$src" ]; then\n  echo "usage: backup.sh DIR"\n  exit 1\nfi\nmkdir -p $dest\ncount=0\nfor f in $src/*.conf; do\n  cp "$f" "$dest/$(basename "$f").bak"\n  count=$count+1\ndone\necho "backed up $count files"\n'), etcdemo: D({ 'app.conf': F('port=8080\n'), 'db.conf': F('host=db01\n'), 'readme.txt': F('not a conf\n') }) } },
+    tasks: [
+      { t: 'backup.sh is executable', c: function (e) { return mode(e, H + '/backup.sh')[2] === 'x'; } },
+      { t: 'Backs up the right files and counts them (checker test)', c: function (e) { var r = trial(e, H + '/backup.sh', { '/home/phil/cfg/a.conf': 'a\n', '/home/phil/cfg/b.conf': 'b\n', '/home/phil/cfg/c.conf': 'c\n', '/home/phil/cfg/x.txt': 'x\n' }, 'cd /home/phil; ./backup.sh cfg'); var b = r.sh.node('/home/phil/backups'); return /backed up 3 files/.test(r.out) && !!b && !!b.c['a.conf.bak'] && !!b.c['c.conf.bak'] && !b.c['x.txt.bak']; } },
+      { t: 'Not a directory → message and exit 2', c: function (e) { var r = trial(e, H + '/backup.sh', {}, 'cd /home/phil; ./backup.sh nope'); return /not a directory: nope/.test(r.out) && r.code === 2; } },
+      { t: 'You backed up etcdemo for real', c: function (e) { var b = e.node(H + '/backups'); return !!b && !!b.c['app.conf.bak'] && !!b.c['db.conf.bak']; } }
+    ],
+    hints: ['"Permission denied" → <code>chmod +x backup.sh</code>. "dest: command not found" → no spaces around = in assignments.', '<code>count=$count+1</code> builds the text "0+1+1". Use <code>count=$((count + 1))</code>.', 'Add after the usage check: <code>if [ ! -d "$src" ]; then echo "not a directory: $src"; exit 2; fi</code>'],
+    solutionFiles: { '/home/phil/backup.sh': '#!/bin/bash\n# back up every .conf file in a directory into ~/backups\nsrc=$1\ndest=~/backups\nif [ -z "$src" ]; then\n  echo "usage: backup.sh DIR"\n  exit 1\nfi\nif [ ! -d "$src" ]; then\n  echo "not a directory: $src"\n  exit 2\nfi\nmkdir -p "$dest"\ncount=0\nfor f in "$src"/*.conf; do\n  cp "$f" "$dest/$(basename "$f").bak"\n  count=$((count + 1))\ndone\necho "backed up $count files"\n' },
+    solution: ['cat backup.sh', 'nano backup.sh', 'chmod +x backup.sh', './backup.sh etcdemo', 'ls backups'],
+    debrief: 'Permission bit, assignment spacing, string-vs-math, and a missing guard. Run the script, read the first error, fix, repeat — that is how every broken script gets fixed.'
+  };
+
+  L['lx-sc-rotate'] = {
+    kind: 'sh', title: 'Log rotation script',
+    brief: 'Write <code>~/rotate.sh DIR</code>: for every <code>.log</code> file in DIR that is <b>not empty</b>, move it to <code>DIR/archive/NAME.1</code> (create archive if needed) and create a new <b>empty</b> NAME in its place. Skip empty logs. Print <code>rotated N</code> at the end. Run it on <code>~/logs</code>.',
+    setup: { extraHome: { logs: D({ 'app.log': F('line 1\nline 2\n'), 'web.log': F('GET /\n'), 'idle.log': F(''), 'notes.txt': F('keep\n') }) } },
+    tasks: [
+      { t: 'Checker test: rotates non-empty logs, skips empty ones', c: function (e) { var r = trial(e, H + '/rotate.sh', { '/home/phil/d/a.log': 'A\n', '/home/phil/d/b.log': '', '/home/phil/d/c.log': 'C\n', '/home/phil/d/x.txt': 'X\n' }, 'cd /home/phil; bash rotate.sh d'); var t = r.sh; var ar = t.node('/home/phil/d/archive'); return /rotated 2/.test(r.out) && !!ar && ar.c['a.log.1'] && ar.c['a.log.1'].d === 'A\n' && ar.c['c.log.1'] && !ar.c['b.log.1'] && t.node('/home/phil/d/a.log') && t.node('/home/phil/d/a.log').d === '' && !ar.c['x.txt.1']; } },
+      { t: 'logs/archive has app.log.1 and web.log.1 with the old contents', c: function (e) { var ar = e.node(H + '/logs/archive'); return !!ar && ar.c['app.log.1'] && ar.c['app.log.1'].d === 'line 1\nline 2\n' && ar.c['web.log.1'] && !ar.c['idle.log.1']; } },
+      { t: 'Fresh empty app.log and web.log exist; notes.txt untouched', c: function (e) { var a = e.node(H + '/logs/app.log'), w = e.node(H + '/logs/web.log'), n = e.node(H + '/logs/notes.txt'); return !!a && a.d === '' && !!w && w.d === '' && !!n && n.d === 'keep\n'; } }
+    ],
+    hints: ['<code>dir=$1; mkdir -p "$dir/archive"; n=0</code>', '<code>for f in "$dir"/*.log; do if [ -s "$f" ]; then … fi; done</code> — <code>-s</code> means "exists and is not empty".', 'Inside: <code>mv "$f" "$dir/archive/$(basename "$f").1"</code>, <code>touch "$f"</code>, <code>n=$((n + 1))</code>. After: <code>echo "rotated $n"</code>.'],
+    solutionFiles: { '/home/phil/rotate.sh': '#!/bin/bash\ndir=$1\nmkdir -p "$dir/archive"\nn=0\nfor f in "$dir"/*.log; do\n  if [ -s "$f" ]; then\n    mv "$f" "$dir/archive/$(basename "$f").1"\n    touch "$f"\n    n=$((n + 1))\n  fi\ndone\necho "rotated $n"\n' },
+    solution: ['nano rotate.sh', 'bash rotate.sh logs', 'ls logs logs/archive'],
+    debrief: 'This is what logrotate does for you on every server: archive, recreate, skip empties. Writing it once means you understand the config you will tune later.'
+  };
+
+  // ---------------- new stage: admin essentials ----------------
+  X.insertAfter('lnx6', {
+    id: 'lnx7', track: 'linux', tier: 'lnx-x', title: 'Admin essentials: processes, services, users, network', code: 'systemctl status sshd', gateN: 14,
+    goal: 'The commands a junior sysadmin or SOC analyst uses daily on real servers: processes and signals, systemd services and logs, users and sudo, packages, networking, SSH keys and cron.',
+    lesson: [
+      { h: 'Processes and services', html: '<pre>ps aux | grep nginx          # every process; find one\ntop   /   htop               # live CPU / memory view\nkill 1234                    # polite stop (SIGTERM, 15)\nkill -9 1234                 # force kill (SIGKILL) — last resort, no cleanup\n\nsystemctl status sshd        # is the service running? recent log lines\nsudo systemctl restart nginx\nsudo systemctl enable --now nginx   # start now AND at boot\njournalctl -u nginx --since "1 hour ago"   # that service\'s logs\njournalctl -p err -b         # errors since this boot</pre>' },
+      { h: 'Users, groups and sudo', html: '<pre>id                       # your uid, gid and groups\nsudo useradd -m -s /bin/bash ana    # create a user with a home\nsudo passwd ana\nsudo usermod -aG developers ana      # -a append! without it you REPLACE groups\nsudo chown ana:developers report.txt\nsudo -l                  # what am I allowed to run with sudo?</pre><ul><li><code>/etc/passwd</code>: accounts (readable by all). <code>/etc/shadow</code>: password hashes (root only). <code>/etc/group</code>: groups. <code>/etc/sudoers</code> (edit only with <code>visudo</code>).</li><li>Least privilege: give people the groups and sudo rules they need, nothing more; disable direct root login over SSH.</li></ul>' },
+      { h: 'Packages, disks and networking', html: '<pre>sudo apt update &amp;&amp; sudo apt upgrade     # Debian/Ubuntu\nsudo dnf install httpd                   # RHEL/Fedora\ndf -h                 # free space per filesystem\ndu -sh /var/log/*     # what is using it\nip a                  # interfaces and IP addresses\nip route              # default gateway\nss -tulpn             # listening ports and which process owns them\nping -c 3 8.8.8.8     # basic reachability\ncurl -I https://example.com   # HTTP headers\ndig example.com       # DNS lookup</pre>' },
+      { h: 'SSH keys and cron', html: '<pre>ssh-keygen -t ed25519            # create a key pair (~/.ssh/id_ed25519 + .pub)\nssh-copy-id ana@server           # install the PUBLIC key in ~/.ssh/authorized_keys\nssh ana@server                   # log in with the key\nscp report.txt ana@server:/tmp/  # copy a file over SSH\n\ncrontab -e       # edit your scheduled jobs\n# ┌ minute (0-59)  ┌ hour (0-23)  ┌ day of month  ┌ month  ┌ day of week (0-7, Sun=0 or 7)\n  30            2              *               *        *      /home/ana/backup.sh\n  */15          *              *               *        *      /home/ana/check.sh\n  0             9              *               *        1-5    /home/ana/report.sh</pre><p>Private keys never leave your machine (<code>chmod 600</code>); only the <code>.pub</code> file is shared. Harden SSH with key-only login (<code>PasswordAuthentication no</code>) and <code>PermitRootLogin no</code>.</p>' }
+    ],
+    cards: [['ps aux', 'List all processes.'], ['kill PID / kill -9 PID', 'SIGTERM (polite) / SIGKILL (forced).'], ['systemctl status SVC', 'Service state and recent log lines.'], ['systemctl enable --now SVC', 'Start now and at every boot.'], ['journalctl -u SVC', 'Logs for one systemd unit.'], ['/etc/shadow', 'Password hashes — root-readable only.'], ['usermod -aG GROUP USER', 'Add a user to a group (keep existing groups).'], ['sudo -l', 'Show what you may run with sudo.'], ['visudo', 'Safely edit sudoers.'], ['df -h / du -sh', 'Free disk space / what uses it.'], ['ss -tulpn', 'Listening ports and owning processes.'], ['ip a / ip route', 'Addresses / routing table.'], ['dig', 'DNS lookups.'], ['ssh-keygen -t ed25519', 'Create an SSH key pair.'], ['authorized_keys', 'Public keys allowed to log in to an account.'], ['Cron fields', 'minute hour day-of-month month day-of-week command.'], ['*/15 in minutes', 'Every 15 minutes.']],
+    qs: [
+      Q('A web service hangs. You try kill 4242 and it does not exit. Next step?', 'kill -9 4242 (SIGKILL), knowing it gets no chance to clean up', ['rm the binary', 'reboot immediately', 'kill -0 4242'], 'Escalate from TERM to KILL.', 0),
+      Q('Start nginx now and make it start at every boot:', 'sudo systemctl enable --now nginx', ['sudo systemctl start nginx', 'sudo service nginx boot', 'nginx --boot'], 'enable = at boot; --now = also start.', 0),
+      Q('Read only sshd\'s log entries from the systemd journal:', 'journalctl -u sshd', ['cat /etc/ssh/sshd_config', 'systemctl logs', 'tail /etc/passwd'], '-u selects the unit.', 0),
+      Q('usermod -G developers ana (without -a) does what?', 'Replaces all of ana\'s supplementary groups with just developers', ['Adds developers to her groups', 'Deletes ana', 'Nothing'], 'Always use -aG to append.', 0),
+      Q('Where are password hashes stored on modern Linux?', '/etc/shadow (readable only by root)', ['/etc/passwd', '/home/user/.password', '/var/log/auth.log'], 'passwd is world-readable, so hashes moved to shadow.', 0),
+      Q('Which shows what is listening on port 22 and which process owns it?', 'ss -tulpn', ['ip a', 'df -h', 'ps -p 22'], 'Sockets: tcp/udp, listening, process, numeric.', 0),
+      Q('Disk is full. Find what is using space under /var/log:', 'du -sh /var/log/*', ['df -h /var/log/*', 'ls /var/log', 'free -h'], 'du = disk usage per item.', 0),
+      Q('With SSH key authentication, what do you copy to the server?', 'The public key (.pub) into ~/.ssh/authorized_keys', ['The private key', 'Your password', 'Both keys'], 'Private keys never leave your machine.', 0),
+      Q('Cron line 0 9 * * 1-5 /opt/report.sh runs:', 'At 9:00 every weekday (Monday–Friday)', ['Every 9 minutes', 'On the 9th of each month', 'At 9:00 on Sundays only'], 'minute hour dom month dow.', 0),
+      Q('Cron for every 15 minutes:', '*/15 * * * *', ['15 * * * *', '* */15 * * *', '0 15 * * *'], '*/15 in the minute field.', 0),
+      Q('A hardening step for SSH on a server:', 'Disable password login and direct root login (key-only, PermitRootLogin no)', ['Move SSH to port 80', 'Allow empty passwords', 'Share one key with the whole team'], 'Reduce attack surface.', 0),
+      Q('Which command answers "what am I allowed to run as root here?"', 'sudo -l', ['whoami', 'id -u', 'su -'], 'Lists your sudo rules.', 0),
+      Q('Debian/Ubuntu: refresh the package index, then upgrade installed packages:', 'sudo apt update && sudo apt upgrade', ['sudo apt upgrade && sudo apt update', 'sudo dnf update', 'sudo apt install update'], 'update = index; upgrade = packages.', 0),
+      Q('A private SSH key file should have permissions:', '600 (owner read/write only)', ['644', '755', '777'], 'SSH refuses keys others can read.', 0)
+    ],
+    labs: ['lx-cron']
+  });
+
+  function cronOK(lines, re) { return lines.some(function (l) { return re.test(l.replace(/\s+/g, ' ').trim()); }); }
+  L['lx-cron'] = {
+    kind: 'sh', title: 'Write a crontab',
+    brief: 'Prepare a crontab file at <code>~/mycron</code> (use <code>nano mycron</code>) with three jobs, one per line:<br>(1) run <code>/home/phil/backup.sh</code> every day at <b>2:30 AM</b>;<br>(2) run <code>/home/phil/health.sh</code> <b>every 15 minutes</b>;<br>(3) run <code>/home/phil/report.sh</code> at <b>9:00 AM Monday through Friday</b>.<br>Lines starting with # are comments. (On a real server you would load it with <code>crontab mycron</code>.)',
+    setup: {},
+    tasks: [
+      { t: 'Daily 2:30 backup', c: function (e) { var l = fileLines(e, H + '/mycron'); return !!l && cronOK(l, /^30 2 \* \* \* \/home\/phil\/backup\.sh$/); } },
+      { t: 'Health check every 15 minutes', c: function (e) { var l = fileLines(e, H + '/mycron'); return !!l && cronOK(l, /^(\*\/15|0,15,30,45) \* \* \* \* \/home\/phil\/health\.sh$/); } },
+      { t: 'Weekday 9:00 report', c: function (e) { var l = fileLines(e, H + '/mycron'); return !!l && cronOK(l, /^0 9 \* \* (1-5|mon-fri|MON-FRI|1,2,3,4,5) \/home\/phil\/report\.sh$/); } },
+      { t: 'Exactly three jobs (comments allowed)', c: function (e) { var l = fileLines(e, H + '/mycron'); return !!l && l.filter(function (x) { return x[0] !== '#'; }).length === 3; } }
+    ],
+    hints: ['Fields: <code>minute hour day-of-month month day-of-week command</code>.', '2:30 AM daily → <code>30 2 * * *</code>. Every 15 min → <code>*/15 * * * *</code>.', 'Weekdays at 9 → <code>0 9 * * 1-5</code>.'],
+    solutionFiles: { '/home/phil/mycron': '# m h dom mon dow command\n30 2 * * * /home/phil/backup.sh\n*/15 * * * * /home/phil/health.sh\n0 9 * * 1-5 /home/phil/report.sh\n' },
+    solution: ['nano mycron', 'cat mycron'],
+    debrief: 'Cron syntax is five time fields then a command. Combine it with the scripts you wrote earlier and you have real automation.'
+  };
+})();
 
 ;
 /* Python depth pack: deeper lessons, more questions, build + find-and-fix labs, and a debugging stage */
@@ -5265,9 +6025,27 @@ COURSE.tools = [];
       var hist = [], hpos = 0, hintsShown = 0;
       (L.pre || []).forEach(function (c) { runRaw(c); });
       var outBuf = log.length ? '' : '';
-      log.forEach(function (c) { runRaw(c); hist.push(c); });
+      log.forEach(function (c) { runRaw(c); if (c.indexOf('#EDIT ') !== 0) hist.push(c); });
       hpos = hist.length;
-      function runRaw(c) { return kind === 'git' ? eng.run(c) : eng.run(c).out; }
+      function runRaw(c) { if (kind !== 'git' && c.indexOf('#EDIT ') === 0) { try { var ed = JSON.parse(c.slice(6)); eng.writeFile(ed[0], ed[1]); } catch (e) { } return ''; } return kind === 'git' ? eng.run(c) : eng.run(c).out; }
+      function openEditor(path) {
+        var old = eng.readFile ? eng.readFile(path) : '';
+        var ov = document.createElement('div'); ov.className = 'edov';
+        ov.innerHTML = '<div class="edbox"><div class="row"><b class="mono small">' + esc(path.replace('/home/phil', '~')) + '</b><span class="grow"></span><button class="btn sm ghost" data-ed="cancel">Cancel</button><button class="btn sm pri" data-ed="save">Save</button></div>' +
+          '<textarea class="mono" spellcheck="false" autocapitalize="none" autocorrect="off"></textarea><div class="row small dim" style="margin-top:6px"><button class="btn sm ghost" data-ed="tab">Insert 2 spaces</button><span class="grow"></span><span>Save writes the file; then run it with <code>bash FILE</code>.</span></div></div>';
+        m.appendChild(ov);
+        var ta = ov.querySelector('textarea'); ta.value = old; ta.focus();
+        ov.addEventListener('click', function (e) {
+          var b = e.target.closest('[data-ed]'); if (!b) return;
+          if (b.dataset.ed === 'tab') { var st = ta.selectionStart; ta.value = ta.value.slice(0, st) + '  ' + ta.value.slice(ta.selectionEnd); ta.selectionStart = ta.selectionEnd = st + 2; ta.focus(); return; }
+          if (b.dataset.ed === 'save') {
+            var text = ta.value; if (text && text.slice(-1) !== '\n') text += '\n';
+            eng.writeFile(path, text); var rec = '#EDIT ' + JSON.stringify([path, text]); log.push(rec); api.save({ log: log });
+            outBuf += '<span class="dim">[saved ' + esc(path.replace('/home/phil', '~')) + ' — ' + text.split('\n').length + ' lines]</span>\n';
+          }
+          ov.remove(); draw(); cin.focus({ preventScroll: true });
+        });
+      }
 
       var prompt = kind === 'git' ? 'phil@range:~/project$ ' : null;
       m.innerHTML = '<div class="row" style="margin-bottom:8px"><button class="btn sm ghost" data-go="' + api.back + '">← Back</button><span class="grow"></span>' +
@@ -5281,8 +6059,8 @@ COURSE.tools = [];
         '<div class="termwrap"><div class="term"><div class="out" id="out"></div>' +
         '<div class="inl"><span class="pr" id="pr"></span><input id="cin" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="send" aria-label="command"></div>' +
         '<div class="keys" id="keys">' + (kind === 'git' ? ['git ', 'status', 'add ', 'commit -m "', 'log --oneline', 'branch ', 'checkout -b ', 'merge ', 'push ', '↑']
-          : ['ls', 'ls -la', 'cd ', 'cat ', 'grep ', '|', '>', '$', '↑', 'Tab']).map(function (k) { return '<button data-k="' + esc(k) + '">' + esc(k.trim() || k) + '</button>'; }).join('') + '</div></div>' +
-        '<p class="dim small">' + (kind === 'git' ? 'A real Git engine: commits, branches, merges, conflicts and a simulated origin. Edit files with <code>echo "text" &gt; file</code>.' : 'A Linux sandbox with a real filesystem, pipes, redirection, globs and text tools. <code>man &lt;cmd&gt;</code> for help, Tab to complete.') + '</p></div></div>';
+          : ['ls', 'ls -la', 'cd ', 'cat ', 'grep ', '|', '>', '$', 'nano ', 'bash ', '↑', 'Tab']).map(function (k) { return '<button data-k="' + esc(k) + '">' + esc(k.trim() || k) + '</button>'; }).join('') + '</div></div>' +
+        '<p class="dim small">' + (kind === 'git' ? 'A real Git engine: commits, branches, merges, conflicts and a simulated origin. Edit files with <code>echo "text" &gt; file</code>.' : 'A Linux sandbox with a real filesystem, pipes, redirection, globs, text tools and bash scripting. <code>nano FILE</code> opens an editor; <code>bash FILE</code> runs a script; <code>help</code> lists everything.') + '</p></div></div>';
 
       var out = $('#out', m), cin = $('#cin', m);
       function draw() {
@@ -5312,10 +6090,12 @@ COURSE.tools = [];
         }
       }
       function run(cmd) {
-        var o = kind === 'git' ? eng.run(cmd) : (function () { var r = eng.run(cmd); if (r.clear) { outBuf = ''; return null; } return r.out; })();
+        var editPath = null;
+        var o = kind === 'git' ? eng.run(cmd) : (function () { var r = eng.run(cmd); if (r.edit) editPath = r.edit; if (r.clear) { outBuf = ''; return null; } return r.out; })();
         log.push(cmd); api.save({ log: log }); hist.push(cmd); hpos = hist.length;
         if (o !== null) { if (outBuf.length > 60000) outBuf = outBuf.slice(-40000); outBuf += '<span class="cmd">' + esc($('#pr', m).textContent + cmd) + '</span>\n' + (o ? esc(o).replace(/(CONFLICT|fatal:|error:|not a git)/g, '<span style="color:var(--bad)">$1</span>') + (/\n$/.test(o) ? '' : '\n') : ''); }
         draw();
+        if (editPath) openEditor(editPath);
       }
       cin.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') { e.preventDefault(); var v = cin.value; cin.value = ''; if (!v.trim()) return; run(v); }
@@ -5347,7 +6127,7 @@ COURSE.tools = [];
         draw();
       };
       $('#hint', m).onclick = function () { var hs = L.hints || []; if (!hs.length) return; var k = Math.min(hintsShown++, hs.length - 1); api.modal('<div class="tag">Hint ' + (k + 1) + ' of ' + hs.length + '</div><p>' + hs[k] + '</p><button class="btn" data-close>Got it</button>'); };
-      $('#sol', m).onclick = function () { if (!confirm('Show the solution? Try the hints first.')) return; api.modal('<h3>Solution</h3>' + (L.why ? '<p class="small muted">' + L.why + '</p>' : '') + '<pre class="mono small" style="background:#070b10;padding:10px;border-radius:8px;white-space:pre-wrap">' + esc((L.solution || []).join('\n')) + '</pre><button class="btn" data-close style="margin-top:10px">Close</button>'); };
+      $('#sol', m).onclick = function () { if (!confirm('Show the solution? Try the hints first.')) return; api.modal('<h3>Solution</h3>' + (L.why ? '<p class="small muted">' + L.why + '</p>' : '') + '<pre class="mono small" style="background:#070b10;padding:10px;border-radius:8px;white-space:pre-wrap">' + esc(Object.keys(L.solutionFiles || {}).map(function (f) { return '# nano ' + f.replace('/home/phil/', '') + '   (file contents:)\n' + L.solutionFiles[f]; }).concat(L.solutionFiles ? ['# then run:'] : []).concat(L.solution || []).join('\n')) + '</pre><button class="btn" data-close style="margin-top:10px">Close</button>'); };
       draw(); if (!api.lite) cin.focus();
     };
   }
