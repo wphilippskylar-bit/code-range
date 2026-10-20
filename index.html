@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build c174caa3ea */
+/* build 30309c45d6 */
 /* AwkCore — a small but real awk interpreter for the bash sandbox.
    Supports: BEGIN/END, pattern-only rules, /regex/ patterns, expressions with
    fields ($0, $n, $NF), NR, NF, FS/OFS, variables, associative arrays,
@@ -3234,6 +3234,284 @@ window.X = {
     solution: 'function createStore() {\n  const items = [];\n  return {\n    add(text) { items.push({ id: items.length + 1, text, done: false }); },\n    toggle(id) { const it = items.find(i => i.id === id); if (it) it.done = !it.done; },\n    stats() { return { total: items.length, done: items.filter(i => i.done).length }; },\n  };\n}',
     why: 'A closure holds the private items array; the methods are the only way to change or read it — a clean, testable module.',
     debrief: 'You built the factory/closure module pattern that underlies real state stores and services.' });
+})();
+
+;
+/* JavaScript depth pack: deeper lessons, more questions, build + find-and-fix labs, and a debugging stage */
+(function () {
+  var X = window.X, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs;
+  function lab(id, o) { o.kind = 'code'; o.lang = 'js'; L[id] = o; }
+
+  // ---------------- js1 ----------------
+  X.add('js1', { gateN: 16,
+    lesson: [{ h: 'Deep dive: coercion, scope and the gotchas', html: '<ul><li><code>+</code> with a string concatenates: <code>"5" + 1 === "51"</code>, but <code>"5" - 1 === 4</code> (other operators convert to numbers). Convert explicitly: <code>Number("5")</code>, <code>parseInt("42px", 10)</code>, <code>String(5)</code>.</li><li><code>NaN</code> is not equal to itself — test with <code>Number.isNaN(x)</code>.</li><li><b>Falsy</b> values: <code>false, 0, -0, 0n, "", null, undefined, NaN</code>. Everything else is truthy — including <code>"0"</code>, <code>[]</code> and <code>{}</code>.</li><li><code>??</code> (nullish coalescing) only replaces <code>null</code>/<code>undefined</code>: <code>0 ?? 5 === 0</code> but <code>0 || 5 === 5</code>. <code>?.</code> (optional chaining) stops on null: <code>user?.address?.city</code>.</li><li><code>let</code>/<code>const</code> are block-scoped; <code>var</code> is function-scoped and hoisted — avoid it. <code>const</code> prevents reassignment, not mutation (<code>const xs = []; xs.push(1)</code> is fine).</li><li>Template literals: <code>`Total: ${total.toFixed(2)}`</code>.</li></ul>' }],
+    qs: [
+      P('console.log("5" + 1, "5" - 1);', '51 4', ['6 4', '51 51', '6 51'], '+ concatenates with a string; - converts to numbers.', 'JavaScript'),
+      P('console.log(0 ?? 5, 0 || 5);', '0 5', ['5 5', '0 0', '5 0'], '?? only replaces null/undefined.', 'JavaScript'),
+      P('const u = {};\nconsole.log(u?.address?.city);', 'undefined', ['null', 'error', '""'], 'Optional chaining stops safely.', 'JavaScript'),
+      P('console.log(NaN === NaN, Number.isNaN(NaN));', 'false true', ['true true', 'false false', 'true false'], 'NaN is never equal to itself.', 'JavaScript'),
+      P('console.log(Boolean("0"), Boolean(""), Boolean([]));', 'true false true', ['false false false', 'false false true', 'true true true'], '"0" and [] are truthy.', 'JavaScript'),
+      P('console.log(parseInt("42px", 10), Number("42px"));', '42 NaN', ['42 42', 'NaN NaN', 'NaN 42'], 'parseInt reads the leading digits; Number needs the whole string.', 'JavaScript'),
+      P('console.log((0.1 + 0.2).toFixed(2));', '0.30', ['0.3', '0.30000000000000004', '0.31'], 'toFixed returns a string with fixed decimals.', 'JavaScript'),
+      P('const xs = [];\nxs.push(1);\nconsole.log(xs.length);', '1', ['0', 'error', 'undefined'], 'const prevents reassignment, not mutation.', 'JavaScript'),
+      Q('Why prefer === over ==?', '=== does not coerce types, so comparisons behave predictably', ['== is not valid JavaScript', '=== is faster to type', 'They are identical'], 'Avoid surprise coercion.', 0),
+      Q('Which declaration should you use by default?', 'const (and let when the variable must be reassigned)', ['var', 'global variables', 'No declaration'], 'Block scope, no hoisting surprises.', 0),
+      Q('How do you safely read user.profile.email when profile may be missing?', 'user.profile?.email', ['user.profile.email!', 'user?profile.email', 'try user.profile.email'], 'Optional chaining.', 0),
+      T('Type the expression that turns the string "42" into a number using the Number function.', ['Number("42")', "Number('42')"], 'Number("42")', 0, 'Number(...)')
+    ],
+    labs: ['jsx-tip', 'jsx-fix-coerce'] });
+
+  lab('jsx-tip', { title: 'Split the bill', brief: 'Write <code>splitBill(total, tipPercent, people)</code> that returns a string like <code>"Each pays $27.60"</code>. The tip is added to the total, then divided by people, rounded to 2 decimals. Throw an <code>Error</code> if <code>people</code> is less than 1.',
+    starter: 'function splitBill(total, tipPercent, people) {\n  // return "Each pays $X.XX"\n}\n',
+    tests: [
+      { name: '$120, 15%, 5 people', check: 'return splitBill(120, 15, 5) === "Each pays $27.60";' },
+      { name: '$50, 20%, 3 people', check: 'return splitBill(50, 20, 3) === "Each pays $20.00";' },
+      { name: 'Zero tip works', check: 'return splitBill(10, 0, 4) === "Each pays $2.50";' },
+      { name: 'people < 1 throws', check: 'try { splitBill(10, 10, 0); return false; } catch (e) { return e instanceof Error; }' }
+    ],
+    hints: ['Total with tip: <code>total * (1 + tipPercent / 100)</code>.', 'Format: <code>(amount).toFixed(2)</code> inside a template literal.', 'Guard first: <code>if (people &lt; 1) throw new Error("need at least one person");</code>'],
+    solution: 'function splitBill(total, tipPercent, people) {\n  if (people < 1) throw new Error("need at least one person");\n  const each = (total * (1 + tipPercent / 100)) / people;\n  return `Each pays $${each.toFixed(2)}`;\n}',
+    debrief: 'Validate inputs, compute, then format with toFixed and a template literal.' });
+  lab('jsx-fix-coerce', { title: 'Fix it: the form totals', brief: 'Form fields arrive as <b>strings</b>. <code>orderTotal(fields)</code> should add <code>fields.qty × fields.price</code> plus <code>fields.shipping</code> (which may be missing → 0, but a real 0 must stay 0) and return a number. It has <b>three bugs</b>.',
+    starter: 'function orderTotal(fields) {\n  const qty = fields.qty;\n  const price = fields.price;\n  const shipping = fields.shipping || 5;\n  return qty * price + shipping;\n}\n',
+    tests: [
+      { name: 'Strings are converted', check: 'return orderTotal({ qty: "2", price: "3.5", shipping: "4" }) === 11;' },
+      { name: 'Missing shipping counts as 0', check: 'return orderTotal({ qty: "1", price: "10" }) === 10;' },
+      { name: 'A real shipping of "0" stays 0', check: 'return orderTotal({ qty: "3", price: "2", shipping: "0" }) === 6;' },
+      { name: 'Returns a number, not a string', check: 'return typeof orderTotal({ qty: "1", price: "1", shipping: "1" }) === "number";' }
+    ],
+    hints: ['<code>"2" * "3.5"</code> happens to work (multiplication converts) but <code>+ shipping</code> concatenates strings. Convert each field with <code>Number()</code>.', 'Missing should be 0, not 5: use <code>?? 0</code>.', '<code>||</code> replaces <code>"0"</code>… after conversion 0 is falsy too — that is why <code>??</code> is the right operator.'],
+    solution: 'function orderTotal(fields) {\n  const qty = Number(fields.qty);\n  const price = Number(fields.price);\n  const shipping = Number(fields.shipping ?? 0);\n  return qty * price + shipping;\n}',
+    debrief: 'String concatenation from +, a wrong default, and || swallowing a valid 0 — classic form-handling bugs.' });
+
+  // ---------------- js2 ----------------
+  X.add('js2', { gateN: 16,
+    lesson: [{ h: 'Deep dive: data shaping and the async traps', html: '<pre>const orders = [{ region: "West", total: 20 }, { region: "East", total: 5 }, { region: "West", total: 10 }];\n\n// group and sum with reduce\nconst byRegion = orders.reduce((acc, o) => {\n  acc[o.region] = (acc[o.region] ?? 0) + o.total;\n  return acc;\n}, {});                                       // { West: 30, East: 5 }\n\nconst sorted = Object.entries(byRegion).sort((a, b) => b[1] - a[1]);  // highest first\nconst names = orders.map(o => o.region);\nconst unique = [...new Set(names)];\nconst copy = { ...orders[0], total: 99 };     // spread: shallow copy with a change\nconst { region, total = 0 } = orders[1];      // destructuring with default</pre><ul><li><code>sort()</code> without a comparator sorts as <b>strings</b>: <code>[10, 9, 1].sort()</code> → <code>[1, 10, 9]</code>. Always pass <code>(a, b) =&gt; a - b</code> for numbers. <code>sort</code> mutates; use <code>[...xs].sort()</code> or <code>toSorted()</code> for a copy.</li><li><code>forEach</code> does <b>not wait</b> for async callbacks. Use <code>for…of</code> with <code>await</code> (sequential) or <code>await Promise.all(xs.map(async …))</code> (parallel).</li><li>Forgetting <code>await</code> gives you a Promise object instead of the value.</li></ul>' }],
+    qs: [
+      P('console.log(JSON.stringify([10, 9, 1].sort()));', '[1,10,9]', ['[1,9,10]', '[10,9,1]', '[9,10,1]'], 'Default sort compares strings.', 'JavaScript'),
+      P('console.log(JSON.stringify([10, 9, 1].sort((a, b) => a - b)));', '[1,9,10]', ['[1,10,9]', '[10,9,1]', 'error'], 'Numeric comparator.', 'JavaScript'),
+      P('const xs = ["a", "b", "a"];\nconsole.log([...new Set(xs)].length);', '2', ['3', '1', '0'], 'Set removes duplicates.', 'JavaScript'),
+      P('const { a, b = 5 } = { a: 1 };\nconsole.log(a + b);', '6', ['1', 'NaN', '15'], 'Default applies when b is undefined.', 'JavaScript'),
+      P('const o = { x: 1, y: 2 };\nconst c = { ...o, y: 9 };\nconsole.log(o.y, c.y);', '2 9', ['9 9', '2 2', '9 2'], 'Spread copies; the original is unchanged.', 'JavaScript'),
+      P('const t = [1, 2, 3].reduce((s, n) => s + n, 10);\nconsole.log(t);', '16', ['6', '10', '123'], 'Starts at 10.', 'JavaScript'),
+      P('async function f() { return 1; }\nconsole.log(typeof f());', 'object', ['number', 'function', 'undefined'], 'An async function returns a Promise.', 'JavaScript'),
+      Q('Why does items.forEach(async item => await save(item)) followed by "done" print "done" too early?', 'forEach does not wait for the async callbacks', ['await is ignored inside arrow functions', 'save is synchronous', 'console.log is async'], 'Use for…of or Promise.all.', 0),
+      Q('Run 5 independent fetches in parallel and wait for all of them:', 'await Promise.all(urls.map(u => fetch(u)))', ['for (const u of urls) await fetch(u)', 'urls.forEach(fetch)', 'await urls'], 'Promise.all runs them together.', 0),
+      Q('Get an object\'s key/value pairs as an array to sort:', 'Object.entries(obj)', ['obj.pairs()', 'Array(obj)', 'Object.sort(obj)'], 'entries → [key, value] pairs.', 0),
+      Q('Which method returns a sorted copy without mutating the original (modern JS)?', 'toSorted()', ['sort()', 'reverse()', 'splice()'], 'toSorted is non-mutating.', 0)
+    ],
+    labs: ['jsx-group', 'jsx-fix-await'] });
+
+  lab('jsx-group', { title: 'Group and rank orders', brief: 'Write <code>topRegions(orders, n)</code>: sum <code>total</code> by <code>region</code> and return the top n as an array of <code>{ region, total }</code>, highest total first; ties broken alphabetically. Do not mutate the input.',
+    starter: 'function topRegions(orders, n) {\n  // reduce → entries → sort → slice → map\n}\n',
+    tests: [
+      { name: 'Sums and ranks', check: 'const r = topRegions([{region:"W",total:20},{region:"E",total:5},{region:"W",total:10},{region:"N",total:7}], 2);\nreturn JSON.stringify(r) === JSON.stringify([{region:"W",total:30},{region:"N",total:7}]);' },
+      { name: 'Ties alphabetical', check: 'const r = topRegions([{region:"b",total:5},{region:"a",total:5}], 2);\nreturn r[0].region === "a" && r[1].region === "b";' },
+      { name: 'Input not mutated', check: 'const input = [{region:"x",total:1}];\nconst before = JSON.stringify(input);\ntopRegions(input, 1);\nreturn JSON.stringify(input) === before;' },
+      { name: 'n larger than regions returns all', check: 'return topRegions([{region:"a",total:1}], 5).length === 1;' }
+    ],
+    hints: ['Group: <code>orders.reduce((acc, o) =&gt; { acc[o.region] = (acc[o.region] ?? 0) + o.total; return acc; }, {})</code>.', '<code>Object.entries(groups)</code> gives <code>[region, total]</code> pairs.', 'Sort: <code>(a, b) =&gt; b[1] - a[1] || a[0].localeCompare(b[0])</code>, then <code>.slice(0, n).map(([region, total]) =&gt; ({ region, total }))</code>.'],
+    solution: 'function topRegions(orders, n) {\n  const groups = orders.reduce((acc, o) => {\n    acc[o.region] = (acc[o.region] ?? 0) + o.total;\n    return acc;\n  }, {});\n  return Object.entries(groups)\n    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))\n    .slice(0, n)\n    .map(([region, total]) => ({ region, total }));\n}',
+    debrief: 'reduce → entries → sort with a two-key comparator → slice → map: the JavaScript "GROUP BY ... ORDER BY ... LIMIT".' });
+  lab('jsx-fix-await', { title: 'Fix it: the save-all function', brief: '<code>saveAll(items, save)</code> must call the async <code>save(item)</code> for every item <b>in order, one at a time</b>, and resolve to the number saved. Currently it returns before anything is saved. Fix it.',
+    starter: 'async function saveAll(items, save) {\n  let count = 0;\n  items.forEach(async (item) => {\n    await save(item);\n    count++;\n  });\n  return count;\n}\n',
+    tests: [
+      { name: 'Resolves to the number saved', check: 'const saved = [];\nconst save = async (x) => { await new Promise(r => setTimeout(r, 5)); saved.push(x); };\nconst n = await saveAll([1, 2, 3], save);\nreturn n === 3 && saved.length === 3;' },
+      { name: 'Saves in order, one at a time', check: 'const log = []; let active = 0, peak = 0;\nconst save = async (x) => { active++; peak = Math.max(peak, active); await new Promise(r => setTimeout(r, 10 - x)); log.push(x); active--; };\nawait saveAll([1, 2, 3, 4], save);\nreturn JSON.stringify(log) === "[1,2,3,4]" && peak === 1;' },
+      { name: 'Errors propagate', check: 'try { await saveAll([1], async () => { throw new Error("db down"); }); return false; } catch (e) { return e.message === "db down"; }' }
+    ],
+    hints: ['<code>forEach</code> ignores the promises its callback returns.', 'Use <code>for (const item of items) { await save(item); count++; }</code>.', 'With <code>for…of</code>, a thrown error rejects <code>saveAll</code> naturally.'],
+    solution: 'async function saveAll(items, save) {\n  let count = 0;\n  for (const item of items) {\n    await save(item);\n    count++;\n  }\n  return count;\n}',
+    debrief: 'async + forEach is one of the most common real-world JavaScript bugs — and AI assistants produce it often.' });
+
+  // ---------------- js3 ----------------
+  X.add('js3', { gateN: 14,
+    lesson: [{ h: 'Deep dive: closures for privacy, and keeping this', html: '<pre>function makeCounter(start = 0) {\n  let count = start;                 // private — only these functions can see it\n  return {\n    inc: () =&gt; ++count,\n    get value() { return count; }\n  };\n}\n\nclass Timer {\n  #elapsed = 0;                      // true private field\n  tick = () =&gt; { this.#elapsed++; }; // arrow class field: this is always the instance\n  get elapsed() { return this.#elapsed; }\n}\nconst t = new Timer();\nsetTimeout(t.tick, 0);               // works: arrow keeps this</pre><ul><li>A regular method passed as a callback (<code>button.onclick = obj.method</code>) loses <code>this</code>. Fix with an arrow function, <code>obj.method.bind(obj)</code>, or a wrapper <code>() =&gt; obj.method()</code>.</li><li>Classic loop bug: with <code>var i</code>, every closure sees the final value; with <code>let i</code>, each iteration gets its own binding.</li><li><code>static</code> members belong to the class, getters/setters wrap property access, <code>extends</code> + <code>super</code> for inheritance.</li></ul>' }],
+    qs: [
+      P('const fns = [];\nfor (var i = 0; i < 3; i++) fns.push(() => i);\nconsole.log(fns.map(f => f()).join(","));', '3,3,3', ['0,1,2', '2,2,2', '1,2,3'], 'var is shared across iterations.', 'JavaScript'),
+      P('const fns = [];\nfor (let i = 0; i < 3; i++) fns.push(() => i);\nconsole.log(fns.map(f => f()).join(","));', '0,1,2', ['3,3,3', '0,0,0', '1,2,3'], 'let gives each iteration its own binding.', 'JavaScript'),
+      P('function make() { let n = 0; return () => ++n; }\nconst a = make(), b = make();\na(); a();\nconsole.log(a(), b());', '3 1', ['3 3', '1 1', '2 1'], 'Each closure has its own n.', 'JavaScript'),
+      P('class A { static hello() { return "hi"; } }\nconsole.log(A.hello());', 'hi', ['undefined', 'error', 'A'], 'Static methods are called on the class.', 'JavaScript'),
+      P('const o = { n: 1, get double() { return this.n * 2; } };\no.n = 5;\nconsole.log(o.double);', '10', ['2', 'undefined', 'error'], 'Getters compute on access.', 'JavaScript'),
+      Q('setTimeout(obj.method, 100) logs undefined for this.name. Simplest fix?', 'setTimeout(() => obj.method(), 100) (or obj.method.bind(obj))', ['Use var', 'Make method async', 'Call setTimeout twice'], 'Preserve the receiver.', 0),
+      Q('What does #balance inside a class declare?', 'A private field that code outside the class cannot read', ['A comment', 'A static field', 'A CSS selector'], 'True privacy in classes.', 0),
+      Q('A closure is:', 'A function bundled with the variables from the scope where it was created', ['A closed file handle', 'A finished promise', 'A class with no methods'], 'Functions remember their scope.', 0),
+      Q('In a class, an arrow function field (handle = () => {...}) is useful because:', 'this always refers to the instance, even when passed as a callback', ['It runs faster', 'It is static', 'It cannot access this'], 'Arrows capture this lexically.', 0)
+    ],
+    labs: ['jsx-rate', 'jsx-fix-this'] });
+
+  lab('jsx-rate', { title: 'A rate limiter with closures', brief: 'Write <code>makeLimiter(max)</code> returning a function <code>allow()</code> that returns <code>true</code> for the first <code>max</code> calls and <code>false</code> after, plus a <code>reset()</code> method on the returned function. The count must be <b>private</b> (not a property anyone can edit), and separate limiters must be independent.',
+    starter: 'function makeLimiter(max) {\n  // return a function allow() that also has allow.reset()\n}\n',
+    tests: [
+      { name: 'Allows exactly max calls', check: 'const allow = makeLimiter(2);\nreturn allow() === true && allow() === true && allow() === false;' },
+      { name: 'reset() starts over', check: 'const allow = makeLimiter(1);\nallow(); allow();\nallow.reset();\nreturn allow() === true;' },
+      { name: 'Limiters are independent', check: 'const a = makeLimiter(1), b = makeLimiter(1);\na();\nreturn b() === true;' },
+      { name: 'Count is private', check: 'const allow = makeLimiter(1);\nallow();\nallow.count = 0; allow.used = 0;\nreturn allow() === false;' }
+    ],
+    hints: ['Keep <code>let used = 0;</code> inside <code>makeLimiter</code>.', '<code>function allow() { if (used &lt; max) { used++; return true; } return false; }</code>', 'Functions are objects: <code>allow.reset = () =&gt; { used = 0; };</code> then <code>return allow;</code>.'],
+    solution: 'function makeLimiter(max) {\n  let used = 0;\n  function allow() {\n    if (used < max) {\n      used++;\n      return true;\n    }\n    return false;\n  }\n  allow.reset = () => { used = 0; };\n  return allow;\n}',
+    debrief: 'Closure state is genuinely private — the same idea powers module patterns, memoization and rate limiters in real services.' });
+  lab('jsx-fix-this', { title: 'Fix it: the lost this', brief: '<code>Downloader</code> collects finished file names. <code>start(names, scheduler)</code> passes <code>this.onDone</code> to a scheduler that calls it later — and it crashes. Fix the class so <code>onDone</code> works as a callback, without changing the scheduler or how tests call it.',
+    starter: 'class Downloader {\n  constructor() {\n    this.done = [];\n  }\n  onDone(name) {\n    this.done.push(name);\n  }\n  start(names, scheduler) {\n    names.forEach(n => scheduler(this.onDone, n));\n  }\n}\n',
+    tests: [
+      { name: 'Callbacks record finished files', check: 'const d = new Downloader();\nd.start(["a.txt", "b.txt"], (cb, n) => cb(n));\nreturn JSON.stringify(d.done) === \'["a.txt","b.txt"]\';' },
+      { name: 'Works with async schedulers', check: 'const d = new Downloader();\nd.start(["x"], (cb, n) => setTimeout(() => { try { cb(n); } catch (e) {} }, 1));\nawait new Promise(r => setTimeout(r, 20));\nreturn d.done.length === 1;' },
+      { name: 'Instances stay separate', check: 'const a = new Downloader(), b = new Downloader();\na.start(["1"], (cb, n) => cb(n));\nreturn b.done.length === 0 && a.done.length === 1;' }
+    ],
+    hints: ['When <code>scheduler</code> calls <code>cb(n)</code>, the function is called with no receiver, so <code>this</code> is undefined.', 'Option 1: make it an arrow class field: <code>onDone = (name) =&gt; { this.done.push(name); };</code>', 'Option 2: bind in the constructor: <code>this.onDone = this.onDone.bind(this);</code>'],
+    solution: 'class Downloader {\n  constructor() {\n    this.done = [];\n  }\n  onDone = (name) => {\n    this.done.push(name);\n  };\n  start(names, scheduler) {\n    names.forEach(n => scheduler(this.onDone, n));\n  }\n}',
+    debrief: 'this depends on how a function is called, not where it is defined. Arrow fields or bind fix every event-handler and callback version of this bug.' });
+
+  // ---------------- js4 ----------------
+  X.add('js4', { gateN: 14,
+    lesson: [{ h: 'Deep dive: timeouts, races and controlled concurrency', html: '<pre>const sleep = (ms) =&gt; new Promise(r =&gt; setTimeout(r, ms));\n\nfunction withTimeout(promise, ms) {\n  const timeout = new Promise((_, reject) =&gt;\n    setTimeout(() =&gt; reject(new Error("timeout")), ms));\n  return Promise.race([promise, timeout]);     // first to settle wins\n}\n\nconst results = await Promise.allSettled(tasks);  // never rejects; each is {status, value|reason}\nconst first = await Promise.any(mirrors);          // first to FULFILL (ignores rejections)</pre><ul><li><b>Event loop order</b>: synchronous code first, then <b>microtasks</b> (promise callbacks, <code>await</code> continuations), then <b>macrotasks</b> (setTimeout). So <code>setTimeout(…, 0)</code> runs after resolved promises.</li><li>Unhandled rejections crash Node and log errors in browsers — always <code>catch</code> or <code>await</code> inside <code>try</code>.</li><li>Real fetch: <code>const res = await fetch(url); if (!res.ok) throw new Error(res.status); const data = await res.json();</code> — fetch only rejects on network failure, not on HTTP 404/500.</li><li><code>AbortController</code> cancels fetches: pass <code>{ signal }</code> and call <code>controller.abort()</code>.</li></ul>' }],
+    qs: [
+      Q('Order of output: console.log("a"); setTimeout(() => console.log("b"), 0); Promise.resolve().then(() => console.log("c")); console.log("d");', 'a d c b', ['a b c d', 'a c d b', 'a d b c'], 'Sync, then microtasks, then timers.', 0),
+      Q('fetch("/api") returns a 404 response. What happens?', 'The promise resolves; you must check res.ok yourself', ['The promise rejects automatically', 'fetch throws synchronously', 'The page reloads'], 'fetch rejects only on network errors.', 0),
+      Q('Run 10 requests and get every outcome, even if some fail:', 'Promise.allSettled', ['Promise.all', 'Promise.race', 'Promise.any'], 'allSettled never short-circuits.', 0),
+      Q('Use whichever of 3 mirror servers responds successfully first:', 'Promise.any', ['Promise.all', 'Promise.allSettled', 'A for loop with await'], 'any = first fulfillment.', 0),
+      Q('Cancel an in-flight fetch when the user navigates away:', 'AbortController and pass its signal to fetch', ['Delete the promise variable', 'Call fetch again', 'Use setTimeout(0)'], 'Abort signals cancel requests.', 0),
+      P('const p = Promise.reject(new Error("x"));\np.catch(e => console.log("caught", e.message));', 'caught x', ['x', 'Uncaught Error: x', 'caught'], 'catch handles the rejection.', 'JavaScript'),
+      P('(async () => {\n  try {\n    await Promise.reject(new Error("boom"));\n  } catch (e) {\n    console.log("handled " + e.message);\n  }\n})();', 'handled boom', ['boom', 'Uncaught boom', 'handled'], 'await rethrows into try/catch.', 'JavaScript')
+    ],
+    labs: ['jsx-timeout', 'jsx-pool'] });
+
+  lab('jsx-timeout', { title: 'Add a timeout to any promise', brief: 'Write <code>withTimeout(promise, ms)</code> that resolves/rejects like <code>promise</code> if it settles within <code>ms</code>, otherwise rejects with an <code>Error</code> whose message is <code>"timeout"</code>. Also write <code>retryAsync(fn, attempts)</code> that awaits <code>fn()</code>, retrying on rejection up to <code>attempts</code> total tries, and rethrows the last error.',
+    starter: 'function withTimeout(promise, ms) {\n  return promise;\n}\n\nasync function retryAsync(fn, attempts) {\n  return fn();\n}\n',
+    tests: [
+      { name: 'Fast promise resolves normally', check: 'const v = await withTimeout(new Promise(r => setTimeout(() => r(7), 5)), 100);\nreturn v === 7;' },
+      { name: 'Slow promise rejects with "timeout"', check: 'try { await withTimeout(new Promise(r => setTimeout(r, 200)), 20); return false; } catch (e) { return e.message === "timeout"; }' },
+      { name: 'Original rejection passes through', check: 'try { await withTimeout(Promise.reject(new Error("nope")), 50); return false; } catch (e) { return e.message === "nope"; }' },
+      { name: 'retryAsync succeeds after failures', check: 'let n = 0;\nconst v = await retryAsync(async () => { n++; if (n < 3) throw new Error("flaky"); return "ok"; }, 3);\nreturn v === "ok" && n === 3;' },
+      { name: 'retryAsync rethrows after the limit', check: 'let n = 0;\ntry { await retryAsync(async () => { n++; throw new Error("down " + n); }, 2); return false; } catch (e) { return e.message === "down 2" && n === 2; }' }
+    ],
+    hints: ['Build a timeout promise that rejects after ms, then <code>return Promise.race([promise, timeout]);</code>', 'retryAsync: <code>let last; for (let i = 0; i &lt; attempts; i++) { try { return await fn(); } catch (e) { last = e; } } throw last;</code>', 'Use <code>return await</code> inside try so rejections are caught there.'],
+    solution: 'function withTimeout(promise, ms) {\n  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms));\n  return Promise.race([promise, timeout]);\n}\n\nasync function retryAsync(fn, attempts) {\n  let last;\n  for (let i = 0; i < attempts; i++) {\n    try {\n      return await fn();\n    } catch (e) {\n      last = e;\n    }\n  }\n  throw last;\n}',
+    debrief: 'Timeouts and retries are the two tools that make network code survive real networks.' });
+  lab('jsx-pool', { title: 'A concurrency-limited task pool', brief: 'Write <code>runPool(tasks, limit)</code>. <code>tasks</code> is an array of functions returning promises. Run them with at most <code>limit</code> in flight at once and resolve to an array of results <b>in the original order</b>.',
+    starter: 'async function runPool(tasks, limit) {\n  return Promise.all(tasks.map(t => t()));\n}\n',
+    tests: [
+      { name: 'Results keep input order', check: 'const mk = (v, ms) => () => new Promise(r => setTimeout(() => r(v), ms));\nconst out = await runPool([mk("a", 30), mk("b", 5), mk("c", 15)], 2);\nreturn JSON.stringify(out) === \'["a","b","c"]\';' },
+      { name: 'Never exceeds the limit', check: 'let active = 0, peak = 0;\nconst mk = (ms) => async () => { active++; peak = Math.max(peak, active); await new Promise(r => setTimeout(r, ms)); active--; return ms; };\nawait runPool([10, 20, 5, 15, 10, 5].map(mk), 2);\nreturn peak === 2;' },
+      { name: 'Actually runs in parallel', check: 'const t0 = Date.now();\nconst mk = () => () => new Promise(r => setTimeout(r, 40));\nawait runPool([mk(), mk(), mk(), mk()], 4);\nreturn Date.now() - t0 < 120;' },
+      { name: 'Empty task list', check: 'const out = await runPool([], 3);\nreturn Array.isArray(out) && out.length === 0;' }
+    ],
+    hints: ['Keep a shared index: <code>let next = 0; const results = new Array(tasks.length);</code>', 'Start <code>limit</code> workers: each loops <code>while (next &lt; tasks.length) { const i = next++; results[i] = await tasks[i](); }</code>.', '<code>await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker)); return results;</code>'],
+    solution: 'async function runPool(tasks, limit) {\n  const results = new Array(tasks.length);\n  let next = 0;\n  async function worker() {\n    while (next < tasks.length) {\n      const i = next++;\n      results[i] = await tasks[i]();\n    }\n  }\n  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));\n  return results;\n}',
+    debrief: 'The worker-pool pattern: N workers pull from a shared queue and write results by index. It is how you call an API with 1,000 requests without getting rate-limited.' });
+
+  // ---------------- js5 ----------------
+  X.add('js5', { gateN: 14,
+    lesson: [{ h: 'Deep dive: composition, memoization and avoiding mutation', html: '<pre>const pipe = (...fns) =&gt; (x) =&gt; fns.reduce((v, f) =&gt; f(v), x);\nconst slug = pipe(s =&gt; s.trim(), s =&gt; s.toLowerCase(), s =&gt; s.replace(/\\s+/g, "-"));\nslug("  Hello World ")   // "hello-world"\n\nfunction memoize(fn) {\n  const cache = new Map();\n  return (arg) =&gt; {\n    if (!cache.has(arg)) cache.set(arg, fn(arg));\n    return cache.get(arg);\n  };\n}</pre><ul><li>Mutating methods: <code>push, pop, shift, unshift, splice, sort, reverse</code>. Non-mutating: <code>map, filter, slice, concat, toSorted, toReversed, with</code>, spread <code>[...xs]</code>.</li><li><code>structuredClone(obj)</code> makes a deep copy; spread is shallow (nested objects are still shared).</li><li><code>Object.freeze</code> prevents changes (shallowly).</li><li>Big-O awareness: <code>array.includes</code> inside a loop is O(n²); build a <code>Set</code> first for O(n).</li></ul>' }],
+    qs: [
+      P('const pipe = (...f) => x => f.reduce((v, g) => g(v), x);\nconsole.log(pipe(x => x + 1, x => x * 2)(3));', '8', ['7', '6', '9'], '(3+1)*2.', 'JavaScript'),
+      P('const a = { inner: { n: 1 } };\nconst b = { ...a };\nb.inner.n = 9;\nconsole.log(a.inner.n);', '9', ['1', 'undefined', 'error'], 'Spread is shallow — inner is shared.', 'JavaScript'),
+      P('const a = { inner: { n: 1 } };\nconst b = structuredClone(a);\nb.inner.n = 9;\nconsole.log(a.inner.n);', '1', ['9', 'undefined', 'error'], 'structuredClone copies deeply.', 'JavaScript'),
+      P('const xs = [3, 1, 2];\nconst ys = xs.toSorted();\nconsole.log(xs.join(""), ys.join(""));', '312 123', ['123 123', '312 312', '123 312'], 'toSorted leaves the original alone.', 'JavaScript'),
+      Q('Checking 10,000 IDs against a 10,000-item array with includes() inside a loop is slow because:', 'It is O(n²); converting the array to a Set makes each lookup O(1)', ['includes is broken', 'Arrays cannot hold numbers', 'Loops are slow in JS'], 'Pick the right data structure.', 0),
+      Q('A pure function:', 'Returns the same output for the same input and has no side effects', ['Never returns anything', 'Always uses classes', 'Mutates its arguments'], 'Predictable and testable.', 0),
+      Q('Which of these mutates the original array?', 'splice', ['slice', 'map', 'filter'], 'splice changes in place.', 0),
+      Q('memoize(fn) speeds up code by:', 'Caching results for inputs it has already seen', ['Running fn in parallel', 'Deleting slow code', 'Compiling to C'], 'Trade memory for speed.', 0)
+    ],
+    labs: ['jsx-memo', 'jsx-fix-mutate'] });
+
+  lab('jsx-memo', { title: 'memoize and pipe', brief: 'Write <code>memoize(fn)</code> (cache results by the <b>first argument</b>, and expose the cache size as <code>memo.size()</code>), and <code>pipe(...fns)</code> that composes functions left to right.',
+    starter: 'function memoize(fn) {\n  return fn;\n}\n\nfunction pipe(...fns) {\n  return (x) => x;\n}\n',
+    tests: [
+      { name: 'memoize returns correct values', check: 'const sq = memoize(x => x * x);\nreturn sq(4) === 16 && sq(5) === 25;' },
+      { name: 'memoize calls fn once per input', check: 'let calls = 0;\nconst slow = memoize(x => { calls++; return x + 1; });\nslow(1); slow(1); slow(2); slow(1);\nreturn calls === 2;' },
+      { name: 'size() reports cached entries', check: 'const m = memoize(x => x);\nm("a"); m("b"); m("a");\nreturn m.size() === 2;' },
+      { name: 'pipe composes left to right', check: 'return pipe(x => x + 1, x => x * 10, String)(2) === "30";' },
+      { name: 'pipe with no functions is identity', check: 'return pipe()(5) === 5;' }
+    ],
+    hints: ['<code>const cache = new Map();</code> inside memoize.', '<code>const memo = (arg, ...rest) =&gt; { if (!cache.has(arg)) cache.set(arg, fn(arg, ...rest)); return cache.get(arg); }; memo.size = () =&gt; cache.size; return memo;</code>', 'pipe: <code>(x) =&gt; fns.reduce((v, f) =&gt; f(v), x)</code>.'],
+    solution: 'function memoize(fn) {\n  const cache = new Map();\n  const memo = (arg, ...rest) => {\n    if (!cache.has(arg)) cache.set(arg, fn(arg, ...rest));\n    return cache.get(arg);\n  };\n  memo.size = () => cache.size;\n  return memo;\n}\n\nfunction pipe(...fns) {\n  return (x) => fns.reduce((v, f) => f(v), x);\n}',
+    debrief: 'Higher-order functions returning functions: memoize trades memory for speed; pipe builds readable data transformations.' });
+  lab('jsx-fix-mutate', { title: 'Fix it: the function that edits your data', brief: '<code>applyDiscount(cart, pct)</code> should return a <b>new</b> cart with discounted prices and items sorted by price (low → high). Callers complain their original cart changes. Fix it so the input is never modified.',
+    starter: 'function applyDiscount(cart, pct) {\n  cart.items.forEach(item => {\n    item.price = Math.round(item.price * (100 - pct)) / 100;\n  });\n  cart.items.sort((a, b) => a.price - b.price);\n  return cart;\n}\n',
+    tests: [
+      { name: 'Prices discounted and sorted', check: 'const out = applyDiscount({ items: [{ n: "a", price: 10 }, { n: "b", price: 4 }] }, 50);\nreturn JSON.stringify(out.items) === JSON.stringify([{ n: "b", price: 2 }, { n: "a", price: 5 }]);' },
+      { name: 'Original cart is untouched', check: 'const cart = { items: [{ n: "a", price: 10 }, { n: "b", price: 4 }] };\nconst before = JSON.stringify(cart);\napplyDiscount(cart, 50);\nreturn JSON.stringify(cart) === before;' },
+      { name: 'Returns a different object', check: 'const cart = { items: [{ n: "a", price: 1 }] };\nconst out = applyDiscount(cart, 10);\nreturn out !== cart && out.items !== cart.items && out.items[0] !== cart.items[0];' }
+    ],
+    hints: ['Two mutations: assigning <code>item.price</code> on the original objects, and <code>sort</code> (which sorts in place).', 'Create new items: <code>cart.items.map(item =&gt; ({ ...item, price: … }))</code>.', 'Sort the new array (or use <code>toSorted</code>) and return <code>{ ...cart, items: newItems }</code>.'],
+    solution: 'function applyDiscount(cart, pct) {\n  const items = cart.items\n    .map(item => ({ ...item, price: Math.round(item.price * (100 - pct)) / 100 }))\n    .sort((a, b) => a.price - b.price);\n  return { ...cart, items };\n}',
+    debrief: 'Hidden mutation is behind countless "it changed on its own" bugs, especially in UI state. Copy, then change.' });
+
+  // ---------------- js6 ----------------
+  X.add('js6', { gateN: 12,
+    qs: [
+      Q('An event emitter\'s once(event, fn) should:', 'Call fn the first time the event fires, then remove it', ['Call fn every time', 'Never call fn', 'Call fn immediately'], 'Self-removing listener.', 0),
+      Q('Why return an unsubscribe function from subscribe()?', 'Callers can remove their listener later without knowing internals, preventing leaks', ['It is required by JavaScript', 'It makes emit faster', 'To delete the store'], 'Clean API, no memory leaks.', 0),
+      Q('How should a module expose state safely?', 'Through functions (get/set/subscribe) while keeping the data private', ['Export the raw mutable object', 'Use global variables', 'Store it in the DOM'], 'Encapsulation.', 0)
+    ],
+    labs: ['jsx-emitter'] });
+
+  lab('jsx-emitter', { title: 'Build an event emitter', brief: 'Write <code>class Emitter</code> with <code>on(event, fn)</code> (returns an unsubscribe function), <code>off(event, fn)</code>, <code>once(event, fn)</code> and <code>emit(event, ...args)</code> (returns how many listeners ran). Listeners run in the order they were added. A listener throwing must not stop the others.',
+    starter: 'class Emitter {\n  on(event, fn) {}\n  off(event, fn) {}\n  once(event, fn) {}\n  emit(event, ...args) { return 0; }\n}\n',
+    tests: [
+      { name: 'on + emit with arguments', check: 'const e = new Emitter(); let got;\ne.on("msg", (a, b) => { got = a + b; });\nreturn e.emit("msg", 2, 3) === 1 && got === 5;' },
+      { name: 'Order is preserved', check: 'const e = new Emitter(); const log = [];\ne.on("x", () => log.push(1)); e.on("x", () => log.push(2));\ne.emit("x");\nreturn log.join() === "1,2";' },
+      { name: 'Unsubscribe and off work', check: 'const e = new Emitter(); let n = 0;\nconst f = () => n++;\nconst un = e.on("x", f); un();\nconst g = () => n++; e.on("x", g); e.off("x", g);\nreturn e.emit("x") === 0 && n === 0;' },
+      { name: 'once fires only once', check: 'const e = new Emitter(); let n = 0;\ne.once("x", () => n++);\ne.emit("x"); e.emit("x");\nreturn n === 1;' },
+      { name: 'A throwing listener does not stop others', check: 'const e = new Emitter(); let ok = false;\ne.on("x", () => { throw new Error("bad"); });\ne.on("x", () => { ok = true; });\ntry { e.emit("x"); } catch (err) {}\nreturn ok;' },
+      { name: 'Unknown event emits to nobody', check: 'return new Emitter().emit("nothing") === 0;' }
+    ],
+    hints: ['Store <code>this.listeners = new Map()</code> mapping event → array of functions (create it in a constructor or class field).', '<code>once</code>: register a wrapper that calls <code>off</code> for itself, then calls fn.', 'In <code>emit</code>, loop over a <b>copy</b> (<code>[...list]</code>) so removals during emit are safe, and wrap each call in try/catch (log the error).'],
+    solution: 'class Emitter {\n  listeners = new Map();\n  on(event, fn) {\n    if (!this.listeners.has(event)) this.listeners.set(event, []);\n    this.listeners.get(event).push(fn);\n    return () => this.off(event, fn);\n  }\n  off(event, fn) {\n    const list = this.listeners.get(event);\n    if (!list) return;\n    const i = list.indexOf(fn);\n    if (i >= 0) list.splice(i, 1);\n  }\n  once(event, fn) {\n    const wrapper = (...args) => {\n      this.off(event, wrapper);\n      fn(...args);\n    };\n    return this.on(event, wrapper);\n  }\n  emit(event, ...args) {\n    const list = [...(this.listeners.get(event) || [])];\n    for (const fn of list) {\n      try {\n        fn(...args);\n      } catch (err) {\n        console.error(err);\n      }\n    }\n    return list.length;\n  }\n}',
+    debrief: 'Pub/sub is the backbone of UIs, Node streams and message buses. You handled ordering, unsubscription, once, and fault isolation.' });
+
+  // ---------------- new stage: reading & debugging JS ----------------
+  X.insertAfter('js6', {
+    id: 'js7', track: 'js', tier: 'js-exp', title: 'Reading & debugging real JavaScript', code: 'debugger; then step over', gateN: 12,
+    goal: 'Read stack traces and DevTools, understand the browser vs Node environments, JSON and fetch, and repair multi-bug programs — so AI-written JavaScript is something you can verify.',
+    lesson: [
+      { h: 'Read the error and the stack', html: '<pre>TypeError: Cannot read properties of undefined (reading \'name\')\n    at renderUser (app.js:42:21)\n    at Array.map (&lt;anonymous&gt;)\n    at renderList (app.js:30:17)</pre><ul><li>The <b>message</b> says what: something you expected to be an object was <code>undefined</code>.</li><li>The <b>top frame</b> says where: <code>app.js</code> line 42, column 21, inside <code>renderUser</code>.</li><li>Frames below show how you got there. Ask: <i>which</i> value was undefined, and why — a missing API field, a typo, an index past the end?</li></ul><p>Common errors: <code>ReferenceError</code> (name not defined), <code>TypeError</code> (wrong type / calling undefined / reading a property of null), <code>SyntaxError</code> (often bad JSON in <code>JSON.parse</code>), <code>RangeError</code> (e.g. infinite recursion).</p>' },
+      { h: 'DevTools and the debugger', html: '<ul><li><b>Console</b>: <code>console.log({ user })</code> (prints name and value), <code>console.table(rows)</code>, <code>console.trace()</code>.</li><li><b>Sources</b>: set breakpoints, or write <code>debugger;</code> in code. Step over / into / out, watch expressions, inspect scope.</li><li><b>Network</b>: see every request, status, headers, response body and timing — the first place to look when "the data is wrong".</li><li>In Node: <code>node --inspect app.js</code> and attach Chrome DevTools, or use your editor\'s debugger.</li></ul>' },
+      { h: 'The environment matters: browser, Node, JSON', html: '<ul><li>Browser: <code>document</code>, <code>window</code>, DOM events, <code>fetch</code>, <code>localStorage</code>. Node: <code>require</code>/<code>import</code>, <code>process</code>, the file system, no DOM.</li><li>DOM basics: <code>document.querySelector("#id")</code>, <code>el.textContent = …</code> (safe), <code>el.addEventListener("click", fn)</code>. Avoid <code>innerHTML</code> with untrusted data — it can inject scripts.</li><li>JSON: <code>JSON.parse(text)</code> throws on invalid input — wrap in try/catch when parsing anything external; <code>JSON.stringify(obj, null, 2)</code> pretty-prints. Dates become strings and functions disappear.</li><li>Fetch pattern: check <code>res.ok</code>, then <code>await res.json()</code>; handle network errors and timeouts.</li></ul>' }
+    ],
+    cards: [['TypeError: cannot read properties of undefined', 'Something expected to be an object is undefined — find which value and why.'], ['ReferenceError', 'A variable name is not defined (typo or scope).'], ['SyntaxError from JSON.parse', 'The text is not valid JSON.'], ['Stack trace top frame', 'File, line and function where the error happened.'], ['console.log({ x })', 'Prints the variable name and value together.'], ['console.table', 'Prints arrays of objects as a table.'], ['debugger;', 'Pauses execution in DevTools at that line.'], ['Network tab', 'Shows requests, status codes and responses.'], ['textContent vs innerHTML', 'textContent is safe for untrusted text; innerHTML can inject HTML/scripts.'], ['res.ok', 'False for HTTP errors — fetch does not reject on 404/500.'], ['JSON.stringify(obj, null, 2)', 'Pretty-print JSON.'], ['node --inspect', 'Debug Node with DevTools.']],
+    qs: [
+      Q('"TypeError: Cannot read properties of undefined (reading \'email\')" means:', 'You accessed .email on a value that is undefined', ['The email field is empty', 'email is misspelled in the HTML', 'The server is down'], 'Find which object is undefined.', 0),
+      Q('In a stack trace, the top "at" line usually shows:', 'Where the error was thrown (function, file, line, column)', ['The first line of the program', 'The test runner', 'The network request'], 'Top frame = location.', 0),
+      Q('JSON.parse("{name: \'Al\'}") throws because:', 'JSON requires double-quoted keys and strings', ['Names cannot be Al', 'parse needs a second argument', 'Objects cannot be parsed'], 'JSON is stricter than JS object syntax.', 0),
+      Q('The API returns wrong data. Where do you look first in DevTools?', 'The Network tab — check the request and the raw response', ['The Elements tab only', 'The Lighthouse report', 'The Memory tab'], 'See what actually came back.', 0),
+      Q('Why prefer el.textContent = userInput over el.innerHTML = userInput?', 'textContent treats input as text, preventing script/HTML injection (XSS)', ['textContent is required by browsers', 'innerHTML is deprecated', 'It is faster to type'], 'Never inject untrusted HTML.', 0),
+      Q('Which statement pauses execution so you can inspect variables?', 'debugger;', ['pause();', 'console.stop()', 'break;'], 'Works when DevTools is open.', 0),
+      Q('document and window are undefined when the script runs. Most likely environment?', 'Node.js (no DOM)', ['Chrome', 'Firefox', 'Safari'], 'The DOM exists only in browsers.', 0),
+      P('const s = JSON.stringify({ d: new Date(0), f() {} });\nconsole.log(s);', '{"d":"1970-01-01T00:00:00.000Z"}', ['{"d":{},"f":{}}', '{"d":0}', '{}'], 'Dates become ISO strings; functions are dropped.', 'JavaScript'),
+      P('try {\n  JSON.parse("{bad}");\n} catch (e) {\n  console.log(e.name);\n}', 'SyntaxError', ['TypeError', 'JSONError', 'Error'], 'Invalid JSON throws SyntaxError.', 'JavaScript'),
+      P('const users = [{ name: "a" }];\nconsole.log(users[1]?.name ?? "none");', 'none', ['undefined', 'a', 'error'], 'Optional chaining + nullish default.', 'JavaScript'),
+      Q('A bug only happens with real API data. A good first step is:', 'Capture one failing response and reproduce it in a small test', ['Rewrite the whole app', 'Add try/catch around everything', 'Ignore it'], 'Reproduce, then fix.', 0),
+      Q('console.log({ user }) is useful because it:', 'Prints both the variable name and its value', ['Deletes user', 'Sends user to the server', 'Freezes user'], 'Shorthand property names.', 0)
+    ],
+    labs: ['jsx-fix-cart', 'jsx-fix-ai']
+  });
+
+  lab('jsx-fix-cart', { title: 'Debug: the cart summary', brief: '<code>summarize(json)</code> receives a JSON string from an API: <code>{"items":[{"name":"pen","price":"1.50","qty":2}, …]}</code>. It should return <code>{ count, total, names }</code>: total quantity, total price rounded to 2 decimals (number), and item names sorted alphabetically. Invalid JSON should return <code>null</code>. It has <b>four bugs</b>.',
+    starter: 'function summarize(json) {\n  const data = JSON.parse(json);\n  let count = 0;\n  let total = 0;\n  for (let i = 0; i <= data.items.length; i++) {\n    const item = data.items[i];\n    count += item.qty;\n    total += item.price * item.qty;\n  }\n  const names = data.items.map(i => i.name).sort;\n  return { count, total, names };\n}\n',
+    tests: [
+      { name: 'Sample cart', check: 'const r = summarize(\'{"items":[{"name":"pen","price":"1.50","qty":2},{"name":"cup","price":"3.25","qty":1}]}\');\nreturn r && r.count === 3 && r.total === 6.25 && JSON.stringify(r.names) === \'["cup","pen"]\';' },
+      { name: 'Total is rounded to cents', check: 'const r = summarize(\'{"items":[{"name":"a","price":"0.1","qty":1},{"name":"b","price":"0.2","qty":1}]}\');\nreturn r.total === 0.3;' },
+      { name: 'Empty cart', check: 'const r = summarize(\'{"items":[]}\');\nreturn r.count === 0 && r.total === 0 && r.names.length === 0;' },
+      { name: 'Invalid JSON returns null', check: 'return summarize("{oops") === null;' }
+    ],
+    hints: ['Run the sample: <code>i &lt;= length</code> reads one past the end → item is undefined.', '<code>.sort</code> without parentheses returns the function itself, not a sorted array.', 'Round: <code>Math.round(total * 100) / 100</code>. Wrap <code>JSON.parse</code> in try/catch and return null on error.'],
+    solution: 'function summarize(json) {\n  let data;\n  try {\n    data = JSON.parse(json);\n  } catch (e) {\n    return null;\n  }\n  let count = 0;\n  let total = 0;\n  for (let i = 0; i < data.items.length; i++) {\n    const item = data.items[i];\n    count += item.qty;\n    total += Number(item.price) * item.qty;\n  }\n  total = Math.round(total * 100) / 100;\n  const names = data.items.map(i => i.name).sort();\n  return { count, total, names };\n}',
+    debrief: 'Off-by-one, an uncalled method, float drift and unguarded JSON.parse — four bugs that pass a quick glance and fail in production.' });
+  lab('jsx-fix-ai', { title: 'Review & fix: AI-generated query-string parser', brief: 'An AI wrote <code>parseQuery(qs)</code> to turn <code>"?q=red+shoes&amp;size=9&amp;tag=a&amp;tag=b"</code> into <code>{ q: "red shoes", size: "9", tag: ["a", "b"] }</code>. Rules: leading <code>?</code> optional, <code>+</code> means space, values are URL-decoded, repeated keys become arrays, a key with no <code>=</code> gets <code>""</code>, empty input gives <code>{}</code>. Fix it.',
+    starter: 'function parseQuery(qs) {\n  const out = {};\n  qs.split("&").forEach(pair => {\n    const [key, value] = pair.split("=");\n    out[key] = value;\n  });\n  return out;\n}\n',
+    tests: [
+      { name: 'Basic pairs with leading ?', check: 'const r = parseQuery("?a=1&b=2");\nreturn r.a === "1" && r.b === "2" && Object.keys(r).length === 2;' },
+      { name: '+ and %20 decode to spaces, %26 to &', check: 'const r = parseQuery("q=red+shoes&n=ann%20lee&c=a%26b");\nreturn r.q === "red shoes" && r.n === "ann lee" && r.c === "a&b";' },
+      { name: 'Repeated keys become arrays', check: 'const r = parseQuery("tag=a&tag=b&tag=c");\nreturn Array.isArray(r.tag) && r.tag.join() === "a,b,c";' },
+      { name: 'Key without = gets empty string', check: 'return parseQuery("flag&x=1").flag === "";' },
+      { name: 'Empty input gives {}', check: 'return JSON.stringify(parseQuery("")) === "{}" && JSON.stringify(parseQuery("?")) === "{}";' },
+      { name: 'Values containing = are kept whole', check: 'return parseQuery("token=abc==").token === "abc==";' }
+    ],
+    hints: ['Strip a leading "?" and skip empty pieces: <code>qs.replace(/^\\?/, "").split("&amp;").filter(Boolean)</code>.', 'Split only on the first "=": <code>const i = pair.indexOf("="); const key = i &lt; 0 ? pair : pair.slice(0, i);</code>', 'Decode with <code>decodeURIComponent(s.replace(/\\+/g, " "))</code>; when the key already exists, turn the value into an array and push.'],
+    solution: 'function parseQuery(qs) {\n  const out = {};\n  const dec = (s) => decodeURIComponent(s.replace(/\\+/g, " "));\n  qs.replace(/^\\?/, "").split("&").filter(Boolean).forEach(pair => {\n    const i = pair.indexOf("=");\n    const key = dec(i < 0 ? pair : pair.slice(0, i));\n    const value = i < 0 ? "" : dec(pair.slice(i + 1));\n    if (key in out) {\n      out[key] = Array.isArray(out[key]) ? [...out[key], value] : [out[key], value];\n    } else {\n      out[key] = value;\n    }\n  });\n  return out;\n}',
+    debrief: 'Generated code handled the happy path only. Edge cases — encoding, repeats, missing values, empty input, delimiters inside values — are where you earn your keep as a reviewer. (In real code, URLSearchParams does this for you.)' });
 })();
 
 ;
