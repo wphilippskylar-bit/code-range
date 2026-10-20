@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build d2a16d91ef */
+/* build 1cca4d12d2 */
 /* AwkCore — a small but real awk interpreter for the bash sandbox.
    Supports: BEGIN/END, pattern-only rules, /regex/ patterns, expressions with
    fields ($0, $n, $NF), NR, NF, FS/OFS, variables, associative arrays,
@@ -1637,6 +1637,9 @@ window.COURSE = {
     { id: 'js-exp', track: 'js', name: 'Expert', desc: 'Functional patterns, immutability, performance, and a capstone module.' },
     { id: 'cpp-f', track: 'cpp', name: 'Foundations', desc: 'Types, I/O, control flow, functions.' },
     { id: 'cpp-c', track: 'cpp', name: 'Memory & Objects', desc: 'Pointers, references, vectors, classes.' },
+    { id: 'cpp-p', track: 'cpp', name: 'The STL', desc: 'Containers, strings, algorithms, iterators and lambdas.' },
+    { id: 'cpp-adv', track: 'cpp', name: 'Modern C++', desc: 'RAII, smart pointers, move semantics, Rule of Zero, templates.' },
+    { id: 'cpp-exp', track: 'cpp', name: 'Expert', desc: 'Undefined behavior, sanitizers, code review and a capstone tool.' },
     { id: 'git-f', track: 'git', name: 'Foundations', desc: 'init, add, commit, log, the three areas.' },
     { id: 'git-c', track: 'git', name: 'Branching & Remotes', desc: 'Branches, merges, conflicts, push/pull.' },
     { id: 'git-x', track: 'git', name: 'Expert', desc: 'Undo/reset/stash, amend, remotes, tags and the PR workflow.' },
@@ -3585,6 +3588,207 @@ window.COURSE = {
 })();
 
 ;
+/* C++ track — Pro → Advanced → Expert: the STL, modern C++ (RAII, smart pointers, move, templates), and safety/UB/review */
+(function () {
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs;
+  function clab(o) { o.kind = 'code'; o.lang = 'cpp'; L[o.id] = o; }
+
+  // ======================= cpp3 — STL & algorithms =======================
+  S.push({
+    id: 'cpp3', track: 'cpp', tier: 'cpp-p', title: 'The STL: containers, algorithms & lambdas', code: 'map<string, int> counts;', gateN: 12,
+    goal: 'Stop writing loops for everything. Use the Standard Library containers (vector, map, unordered_map, set), strings, iterators, algorithms and lambdas the way professional C++ is written.',
+    lesson: [
+      { h: 'Pick the right container', html: '<table><tr><th>Container</th><th>Use it for</th><th>Lookup</th></tr><tr><td><code>vector&lt;T&gt;</code></td><td>The default: a growable array, contiguous and cache-friendly</td><td>by index O(1)</td></tr><tr><td><code>map&lt;K,V&gt;</code></td><td>Key → value, kept <b>sorted by key</b></td><td>O(log n)</td></tr><tr><td><code>unordered_map&lt;K,V&gt;</code></td><td>Key → value, hash table, no order</td><td>avg O(1)</td></tr><tr><td><code>set&lt;T&gt;</code> / <code>unordered_set</code></td><td>Unique values; "have I seen this?"</td><td>O(log n) / O(1)</td></tr><tr><td><code>deque</code>, <code>queue</code>, <code>stack</code>, <code>priority_queue</code></td><td>Queues, stacks, "always give me the biggest"</td><td>—</td></tr></table><div class="callout pro"><b class="k">Rule of thumb</b>Start with <code>vector</code>. Reach for a map when you look things up by key, a set when you need uniqueness.</div>' },
+      { h: 'map and unordered_map', html: '<pre>map&lt;string, int&gt; count;\nstring w;\nwhile (cin &gt;&gt; w) count[w]++;        // [] inserts 0 if missing, then ++\n\nfor (const auto&amp; [word, n] : count)  // structured bindings (C++17)\n    cout &lt;&lt; word &lt;&lt; " " &lt;&lt; n &lt;&lt; "\\n"; // alphabetical: map is sorted\n\nif (count.count("the")) { … }         // membership without inserting\nauto it = count.find("cat");          // iterator, or count.end() if absent\nif (it != count.end()) cout &lt;&lt; it-&gt;second;</pre><p><b>Trap:</b> just <i>reading</i> <code>count["typo"]</code> silently inserts the key. Use <code>find</code>/<code>count</code>/<code>contains</code> (C++20) to test.</p>' },
+      { h: 'Strings and string streams', html: '<pre>string s = "hello world";\ns.size();  s.substr(0, 5);  s.find("world");   // 6, or string::npos\ns += "!";  toupper(s[0]);\n\n#include &lt;sstream&gt;\nstring line;\ngetline(cin, line);                // a whole line, spaces included\nistringstream in(line);\nstring cmd; int qty;\nin &gt;&gt; cmd &gt;&gt; qty;                  // parse words/numbers out of it\n\nostringstream out;\nout &lt;&lt; "total=" &lt;&lt; 42;  out.str();  // build a string</pre><p><code>cin &gt;&gt; x</code> stops at whitespace; <code>getline</code> reads to the end of the line. Mixing them? Call <code>cin.ignore()</code> after a <code>&gt;&gt;</code> to eat the leftover newline.</p>' },
+      { h: 'Algorithms, iterators and lambdas', html: '<pre>#include &lt;algorithm&gt;\n#include &lt;numeric&gt;\nvector&lt;int&gt; v = {5, 3, 9, 1};\n\nsort(v.begin(), v.end());                          // 1 3 5 9\nsort(v.begin(), v.end(), greater&lt;int&gt;());          // 9 5 3 1\nint total = accumulate(v.begin(), v.end(), 0);     // 18\nauto mx = *max_element(v.begin(), v.end());        // 9\nint big = count_if(v.begin(), v.end(), [](int x){ return x &gt; 4; });  // 2\nauto it = find(v.begin(), v.end(), 3);              // iterator to 3\nreverse(v.begin(), v.end());\n\n// sort structs with a lambda comparator\nsort(people.begin(), people.end(), [](const Person&amp; a, const Person&amp; b) {\n    if (a.score != b.score) return a.score &gt; b.score;   // higher first\n    return a.name &lt; b.name;                             // tie-break A→Z\n});</pre><p>A <b>lambda</b> is an inline function: <code>[capture](params) { body }</code>. <code>[&amp;]</code> captures surrounding variables by reference, <code>[=]</code> by copy, <code>[limit]</code> just one.</p><p>A comparator must be a <b>strict weak ordering</b> — use <code>&lt;</code>, never <code>&lt;=</code>, or <code>sort</code> has undefined behavior.</p>' },
+      { h: 'auto, range-for and const&amp;', html: '<pre>for (int x : v)            // copy each element (fine for ints)\nfor (const auto&amp; p : people)   // no copies, read-only — the default for objects\nfor (auto&amp; x : v) x *= 2;   // modify in place\n\nauto it = m.find(k);       // let the compiler spell the iterator type</pre><div class="callout pro"><b class="k">Professional default</b><code>const auto&amp;</code> when reading a container of objects. Copying a <code>vector&lt;string&gt;</code> element by value on every iteration is a silent performance bug.</div>' }
+    ],
+    cards: [
+      ['vector<T>', 'Default container: contiguous, growable, O(1) index.'], ['map<K,V>', 'Sorted key→value tree, O(log n).'], ['unordered_map<K,V>', 'Hash table key→value, avg O(1), no order.'], ['set<T>', 'Sorted unique values.'],
+      ['m[k]++', 'Counts — [] inserts a default value if the key is missing.'], ['m.find(k) != m.end()', 'Test for a key without inserting it.'], ['auto& [k, v] : m', 'Structured bindings over a map (C++17).'],
+      ['getline(cin, s)', 'Read a whole line, spaces included.'], ['istringstream', 'Parse values out of a string with >>.'], ['string::npos', 'find() result meaning "not found".'],
+      ['sort(b, e, cmp)', 'Sort a range with an optional comparator.'], ['accumulate', 'Sum (fold) a range — #include <numeric>.'], ['max_element', 'Iterator to the largest element.'], ['count_if', 'Count elements matching a predicate.'],
+      ['[&](int x){…}', 'Lambda capturing surrounding variables by reference.'], ['Strict weak ordering', 'Comparators must use < semantics, never <=.'], ['const auto&', 'Iterate objects without copying or modifying.']
+    ],
+    qs: [
+      Q('You need word → count, printed alphabetically. Best container?', 'map<string, int>', ['vector<string>', 'unordered_map<string, int>', 'set<string>'], 'map keeps keys sorted; unordered_map has no order.', 0),
+      Q('What does reading m["missing"] on a std::map do?', 'Inserts "missing" with a default value (0) and returns it', ['Throws an exception', 'Returns null', 'Is a compile error'], 'operator[] inserts. Use find/count to test.', 0),
+      Q('Fastest average lookup by key, order irrelevant:', 'unordered_map', ['map', 'vector', 'list'], 'Hash table, average O(1).', 0),
+      Q('Which reads a whole line including spaces?', 'getline(cin, line)', ['cin >> line', 'cin.get(line)', 'scanf("%s")'], '>> stops at whitespace.', 0),
+      Q('s.find("x") when "x" is not in s returns:', 'string::npos', ['-1 as int always', '0', 'nullptr'], 'npos is the "not found" sentinel.', 0),
+      Q('Sort a vector<int> v descending:', 'sort(v.begin(), v.end(), greater<int>())', ['sort(v, desc)', 'v.sort(-1)', 'reverse(v.begin(), v.end()) on an unsorted vector'], 'Pass a comparator.', 0),
+      Q('Why is a comparator using <= dangerous in std::sort?', 'It breaks strict weak ordering → undefined behavior', ['It is slower', 'It sorts descending', 'It does not compile'], 'comp(a, a) must be false.', 0),
+      Q('In [&](int x){ return x > limit; }, the [&] means:', 'Capture surrounding variables (like limit) by reference', ['Take x by reference', 'Return a reference', 'Make the lambda const'], 'The capture list.', 0),
+      Q('Which header gives you accumulate?', '<numeric>', ['<algorithm>', '<vector>', '<iostream>'], 'accumulate, iota, partial_sum live in <numeric>.', 0),
+      Q('Iterating a vector<string> with for (string s : v) …', 'Copies every string — use const string& (or const auto&)', ['Is the fastest form', 'Modifies the vector', 'Does not compile'], 'Copies by value each iteration.', 0),
+      Q('set<int> s = {3, 1, 3, 2}; s.size() is:', '3', ['4', '2', '1'], 'Duplicates are dropped.', 0),
+      Q('After cin >> n; a following getline(cin, line) returns an empty line. Fix?', 'Call cin.ignore() after the >> to consume the newline', ['Use cin >> line instead always', 'Call getline twice randomly', 'Use endl'], 'The leftover \\n ends the getline immediately.', 0),
+      P('vector<int> v = {5, 3, 9, 1};\nsort(v.begin(), v.end());\nfor (int x : v) cout << x;', '1359', ['5391', '9531', '1 3 5 9'], 'Ascending, no separators.', 'C++'),
+      P('map<string, int> m;\nm["b"] = 2; m["a"] = 1; m["c"] = 3;\nfor (auto& [k, v] : m) cout << k;', 'abc', ['bac', 'cba', '123'], 'map iterates in key order.', 'C++'),
+      P('vector<int> v = {1, 2, 3, 4, 5, 6};\ncout << count_if(v.begin(), v.end(), [](int x){ return x % 2 == 0; });', '3', ['6', '2', '12'], '2, 4, 6.', 'C++'),
+      P('vector<int> v = {4, 8, 15};\ncout << accumulate(v.begin(), v.end(), 0);', '27', ['15', '4815', '0'], 'Sum with initial 0.', 'C++'),
+      P('string s = "hello world";\ncout << s.substr(6) << s.size();', 'world11', ['hello11', 'world10', 'world 11'], 'substr from index 6; size counts the space.', 'C++'),
+      T('Type the declaration of a map named counts from string to int.', [/^\s*(std::)?map\s*<\s*(std::)?string\s*,\s*int\s*>\s*counts\s*;?\s*$/], 'map<string, int> counts;', 0, 'map<...> counts;')
+    ],
+    labs: ['cp-wordfreq', 'cp-leader']
+  });
+
+  // ======================= cpp4 — Modern C++ =======================
+  S.push({
+    id: 'cpp4', track: 'cpp', tier: 'cpp-adv', title: 'Modern C++: RAII, smart pointers, move & templates', code: 'auto p = make_unique<T>();', gateN: 12,
+    goal: 'The ideas that make modern C++ safe and fast: RAII and object lifetime, unique_ptr/shared_ptr instead of new/delete, move semantics, the Rule of Zero, templates, and const-correctness.',
+    lesson: [
+      { h: 'RAII: resources tied to lifetime', html: '<p><b>R</b>esource <b>A</b>cquisition <b>I</b>s <b>I</b>nitialization: an object acquires a resource in its <b>constructor</b> and releases it in its <b>destructor</b>. Destructors run automatically when the object goes out of scope — even if an exception is thrown.</p><pre>{\n    ifstream f("data.txt");     // opens the file\n    lock_guard&lt;mutex&gt; g(m);     // locks the mutex\n    auto buf = make_unique&lt;char[]&gt;(4096);  // allocates\n    …\n}   // ← leaving scope: buf freed, mutex unlocked, file closed. In reverse order.</pre><p>Objects are destroyed in the <b>reverse order</b> they were constructed. This is why idiomatic C++ almost never calls <code>delete</code>, <code>close()</code> or <code>unlock()</code> by hand.</p>' },
+      { h: 'Smart pointers', html: '<pre>#include &lt;memory&gt;\nauto p = make_unique&lt;Widget&gt;(42);   // sole owner; freed automatically\np-&gt;run();\nauto q = std::move(p);                // ownership MOVES to q; p is now null\n// auto r = q;                         // ✗ compile error: unique_ptr can\'t be copied\n\nauto s1 = make_shared&lt;Widget&gt;(7);    // shared ownership, reference counted\nauto s2 = s1;                         // use_count() == 2\n// freed when the LAST shared_ptr goes away\n\nweak_ptr&lt;Widget&gt; w = s1;              // observes without owning (breaks cycles)</pre><table><tr><th>Use</th><th>When</th></tr><tr><td><code>unique_ptr</code></td><td>The default. One clear owner.</td></tr><tr><td><code>shared_ptr</code></td><td>Genuinely shared lifetime (rarer than you think).</td></tr><tr><td>raw <code>T*</code> / <code>T&amp;</code></td><td>Non-owning access only — "I use it, I don\'t free it."</td></tr></table>' },
+      { h: 'Move semantics', html: '<p>Copying a big object (a vector of a million strings) is expensive. <b>Moving</b> steals its internals instead — O(1).</p><pre>vector&lt;string&gt; a(1000000, "x");\nvector&lt;string&gt; b = a;            // COPY: a is unchanged, b is a full duplicate\nvector&lt;string&gt; c = std::move(a); // MOVE: c takes a\'s buffer; a is left valid-but-empty\n\nvector&lt;string&gt; make() { vector&lt;string&gt; v; …; return v; }  // returned efficiently (move / copy elision)</pre><p><code>std::move</code> doesn\'t move anything by itself — it <b>casts</b> to an rvalue ("you may steal from me"). After moving from an object, only assign to it or destroy it; don\'t rely on its value.</p>' },
+      { h: 'Rule of Zero / Three / Five', html: '<p>If your class manages a raw resource, you must write the destructor, copy constructor, copy assignment (Rule of <b>Three</b>) and usually the move constructor and move assignment (Rule of <b>Five</b>). Forget one and you get double-frees or leaks.</p><p><b>Rule of Zero</b> (the modern answer): don\'t manage raw resources in your classes at all. Hold <code>vector</code>, <code>string</code>, <code>unique_ptr</code> members and let the compiler generate correct copy/move/destroy for you.</p><pre>struct Bad  { int* data; Bad(){ data = new int[100]; } ~Bad(){ delete[] data; } };\n// Bad a; Bad b = a;  → both delete the same memory → double free!\n\nstruct Good { vector&lt;int&gt; data = vector&lt;int&gt;(100); };   // Rule of Zero: nothing to write</pre>' },
+      { h: 'Templates & const-correctness', html: '<pre>template &lt;typename T&gt;\nT biggest(const vector&lt;T&gt;&amp; v) {      // works for int, double, string…\n    T best = v[0];\n    for (const T&amp; x : v) if (x &gt; best) best = x;\n    return best;\n}\nbiggest(vector&lt;int&gt;{3, 9, 2});          // T deduced as int\n\ntemplate &lt;typename T&gt;\nstruct Box { T value; T get() const { return value; } };</pre><p>The compiler generates a separate version for each type you use. Errors appear when a type lacks what the template needs (e.g. no <code>&gt;</code>); C++20 <b>concepts</b> (<code>template &lt;std::totally_ordered T&gt;</code>) make those errors readable.</p><p><b>const-correctness:</b> mark parameters <code>const T&amp;</code> when you only read them and member functions <code>const</code> when they don\'t change the object. The compiler then enforces your intent — a whole class of bugs disappears.</p>' }
+    ],
+    cards: [
+      ['RAII', 'Acquire in the constructor, release in the destructor — cleanup is automatic.'], ['Destruction order', 'Reverse of construction when leaving scope.'],
+      ['unique_ptr', 'Sole owner; cannot be copied, only moved.'], ['make_unique<T>(args)', 'Create a unique_ptr safely.'], ['shared_ptr', 'Reference-counted shared ownership.'], ['weak_ptr', 'Non-owning observer of a shared_ptr; breaks cycles.'],
+      ['std::move(x)', 'Cast x to an rvalue so it can be moved from.'], ['Moved-from state', 'Valid but unspecified — assign or destroy only.'], ['Copy elision', 'Returning a local by value is cheap.'],
+      ['Rule of Three/Five', 'Manage a raw resource? Write dtor, copy/move ctor and assignments.'], ['Rule of Zero', 'Use members that manage themselves; write none of them.'], ['Double free', 'Two owners deleting the same memory — UB.'],
+      ['template <typename T>', 'Generic code instantiated per type.'], ['Concepts (C++20)', 'Constrain template parameters with readable errors.'], ['const member function', 'Promises not to modify the object.'], ['const T&', 'Read-only, no-copy parameter.']
+    ],
+    qs: [
+      Q('In RAII, when is a resource released?', 'In the destructor, automatically when the object leaves scope', ['When you call free()', 'At program exit only', 'When the garbage collector runs'], 'C++ has no GC; scope ends lifetime.', 0),
+      Q('Two objects created in order A then B in one scope are destroyed in what order?', 'B, then A', ['A, then B', 'Random order', 'Only A is destroyed'], 'Reverse order of construction.', 0),
+      Q('auto q = p; where p is a unique_ptr. Result?', 'Compile error — unique_ptr cannot be copied', ['q and p share ownership', 'A deep copy is made', 'p becomes null'], 'Use std::move(p) to transfer.', 0),
+      Q('After auto q = std::move(p); with unique_ptrs, p is:', 'Null (empty)', ['Still owning the object', 'Dangling', 'A copy'], 'Ownership transferred.', 0),
+      Q('Default smart pointer to reach for:', 'unique_ptr', ['shared_ptr', 'auto_ptr', 'A raw pointer with new'], 'One clear owner; zero overhead.', 0),
+      Q('What does std::move actually do?', 'Casts to an rvalue, allowing a move to happen', ['Copies memory faster', 'Deletes the source', 'Moves the object to the heap'], 'It is just a cast.', 0),
+      Q('A class holds int* data = new int[100] and only has a destructor. Copying it causes:', 'Two objects deleting the same array (double free)', ['A deep copy', 'A compile error', 'A memory leak only'], 'Rule of Three violated.', 0),
+      Q('The Rule of Zero says:', 'Use self-managing members (vector, string, unique_ptr) so you write no special members', ['Never use classes', 'Always write all five special members', 'Avoid templates'], 'Let the compiler generate correct behavior.', 0),
+      Q('Two shared_ptrs pointing at each other (A→B, B→A) cause:', 'A leak — counts never reach zero; use weak_ptr for one side', ['Immediate crash', 'A compile error', 'Nothing'], 'Reference cycles.', 0),
+      Q('template <typename T> T biggest(const vector<T>&) called with vector<string> works because:', 'string supports > so the template instantiates for string', ['Templates only accept int', 'It converts strings to numbers', 'Strings are pointers'], 'Instantiated per type.', 0),
+      Q('A member function declared int size() const; promises:', 'Not to modify the object', ['To return a constant', 'To run at compile time', 'To be static'], 'const member functions.', 0),
+      Q('Non-owning access to an object owned elsewhere is best expressed with:', 'A reference or raw pointer (T& / T*)', ['A unique_ptr copy', 'A new shared_ptr from the raw pointer', 'delete after use'], 'Raw = non-owning in modern C++.', 0),
+      Q('Which header provides unique_ptr and shared_ptr?', '<memory>', ['<pointer>', '<smart>', '<utility>'], '<memory>.', 0),
+      P('auto p = make_unique<int>(5);\nauto q = std::move(p);\ncout << (p ? "p" : "null") << *q;', 'null5', ['p5', 'null', 'p'], 'p is empty after the move; q owns the 5.', 'C++'),
+      P('auto a = make_shared<int>(1);\nauto b = a;\nauto c = a;\ncout << a.use_count();', '3', ['1', '2', '0'], 'Three owners.', 'C++'),
+      P('struct T { string n; T(string s):n(s){ cout << "+" << n; } ~T(){ cout << "-" << n; } };\n{ T a("A"); T b("B"); }', '+A+B-B-A', ['+A+B-A-B', '+A-A+B-B', '+B+A-A-B'], 'Constructed A,B; destroyed in reverse.', 'C++'),
+      P('vector<int> a = {1, 2, 3};\nvector<int> b = std::move(a);\ncout << b.size() << a.size();', '30', ['33', '03', '00'], 'b took the buffer; a is left empty (in practice, for vector).', 'C++'),
+      T('Type the line that creates a unique_ptr to a new int holding 7, named p (use auto).', [/^\s*auto\s+p\s*=\s*(std::)?make_unique\s*<\s*int\s*>\s*\(\s*7\s*\)\s*;?\s*$/], 'auto p = make_unique<int>(7);', 0, 'auto p = ...')
+    ],
+    labs: ['cp-raii', 'cp-template']
+  });
+
+  // ======================= cpp5 — Expert: safety, UB, review =======================
+  S.push({
+    id: 'cpp5', track: 'cpp', tier: 'cpp-exp', title: 'Expert: undefined behavior, debugging & code review', code: '-fsanitize=address', gateN: 12,
+    goal: 'Think like a senior C++ reviewer: recognize undefined behavior, memory-safety bugs and numeric traps on sight, know the tools that catch them, and build a small robust program end-to-end.',
+    lesson: [
+      { h: 'Undefined behavior (UB)', html: '<p>Some mistakes aren\'t errors the compiler must report — the program is simply <b>undefined</b>: it may work, crash, or silently corrupt data, and it may change with the optimization level. Learn the usual suspects:</p><table><tr><th>Bug</th><th>Example</th></tr><tr><td>Out-of-bounds access</td><td><code>for (i = 0; i &lt;= v.size(); i++) v[i]</code></td></tr><tr><td>Uninitialized variable</td><td><code>int sum; sum += x;</code></td></tr><tr><td>Use-after-free / dangling</td><td>returning a reference or pointer to a local</td></tr><tr><td>Signed overflow</td><td><code>int x = INT_MAX; x + 1</code></td></tr><tr><td>Iterator invalidation</td><td><code>push_back</code> while holding an iterator/reference into the same vector</td></tr><tr><td>Data race</td><td>two threads writing the same variable without a lock</td></tr></table><div class="callout pro"><b class="k">Why it matters for security</b>Most serious C/C++ CVEs — buffer overflows, use-after-free — are exactly these bugs. Finding them in review is how you prevent them.</div>' },
+      { h: 'Tools that catch bugs for you', html: '<pre>g++ -std=c++20 -Wall -Wextra -Werror main.cpp   # turn warnings on and make them fatal\ng++ -g -fsanitize=address,undefined main.cpp      # ASan + UBSan: crash loudly at the bug\ng++ -g main.cpp &amp;&amp; gdb ./a.out                     # step, break, inspect (bt = backtrace)\nvalgrind ./a.out                                  # leak and invalid-access checker</pre><ul><li><code>v.at(i)</code> instead of <code>v[i]</code> throws <code>out_of_range</code> rather than corrupting memory — great while debugging.</li><li><b>AddressSanitizer</b> reports the exact line of an out-of-bounds or use-after-free.</li><li>Static analysis (<code>clang-tidy</code>, <code>cppcheck</code>) finds bugs without running the code.</li></ul>' },
+      { h: 'Numeric traps', html: '<pre>int a = 7, b = 2;\ndouble avg = a / b;            // 3.0 — integer division happened FIRST\ndouble ok  = (double)a / b;    // 3.5\n\nunsigned n = 0;  n - 1;        // 4294967295 — unsigned wraps around\nfor (size_t i = v.size() - 1; i &gt;= 0; i--)   // infinite loop: size_t is never &lt; 0\n\nif (0.1 + 0.2 == 0.3)          // false! compare floats with a tolerance\n\nint big = 50000 * 50000;       // signed overflow → UB; use long long</pre><p>Print fixed decimals with <code>#include &lt;iomanip&gt;</code>: <code>cout &lt;&lt; fixed &lt;&lt; setprecision(2) &lt;&lt; avg;</code></p>' },
+      { h: 'Lifetime bugs: dangling references', html: '<pre>const string&amp; name() { string s = "temp"; return s; }  // ✗ s dies at return → dangling\nstring name() { return "temp"; }                        // ✓ return by value\n\nint* p = new int(5); delete p; *p = 6;                  // ✗ use-after-free\n\nvector&lt;int&gt; v = {1, 2, 3};\nint&amp; first = v[0];\nv.push_back(4);         // may reallocate → first now dangles ✗\n\nstring_view sv = string("hi") + "!";   // ✗ the temporary string is destroyed</pre><p>Rule: a reference/pointer/view must never <b>outlive</b> what it refers to. When in doubt, return and store <b>by value</b> — moves make it cheap.</p>' },
+      { h: 'A reviewer\'s checklist', html: '<ol><li><b>Bounds:</b> every index &lt; size? <code>&lt;=</code> in a loop condition is a red flag.</li><li><b>Initialization:</b> every variable given a value before use?</li><li><b>Ownership:</b> any raw <code>new</code>/<code>delete</code>? Replace with containers or <code>unique_ptr</code>.</li><li><b>Lifetimes:</b> references, pointers, iterators, <code>string_view</code>s outliving their target?</li><li><b>Arithmetic:</b> integer division, unsigned wrap, overflow, float equality.</li><li><b>Input:</b> what if the input is empty, negative, huge, or malformed? (<code>if (!(cin &gt;&gt; x))</code>)</li><li><b>Errors:</b> are failures reported, not silently ignored?</li></ol><p>Apply this list to AI-generated C++ too: it often compiles cleanly and still hides #1, #2 and #6.</p>' }
+    ],
+    cards: [
+      ['Undefined behavior', 'The standard places no requirements — may work, crash, or corrupt silently.'], ['i <= v.size()', 'Classic off-by-one: reads one past the end.'], ['Uninitialized local', 'Holds garbage; reading it is UB.'],
+      ['Use-after-free', 'Accessing memory after delete — a top source of CVEs.'], ['Dangling reference', 'Refers to an object that no longer exists.'], ['Iterator invalidation', 'push_back may reallocate and invalidate references.'],
+      ['Signed overflow', 'UB in C++; use a wider type (long long).'], ['Unsigned wrap', '0u - 1 becomes the maximum value.'], ['(double)a / b', 'Convert before dividing to avoid integer division.'],
+      ['fixed << setprecision(2)', 'Print exactly two decimals (<iomanip>).'], ['v.at(i)', 'Bounds-checked access; throws out_of_range.'], ['-Wall -Wextra -Werror', 'Enable warnings and make them errors.'],
+      ['-fsanitize=address,undefined', 'ASan/UBSan: catch memory errors and UB at runtime.'], ['gdb / bt', 'Debugger; bt prints the call stack.'], ['valgrind', 'Detects leaks and invalid memory access.'], ['if (!(cin >> x))', 'Detect malformed or missing input.']
+    ],
+    qs: [
+      Q('for (int i = 0; i <= v.size(); i++) sum += v[i]; — the bug?', 'Off-by-one: reads v[v.size()], past the end (UB)', ['sum is not declared', 'Should use while', 'Nothing'], 'Use < not <=.', 0),
+      Q('int total; for (int x : v) total += x; — the bug?', 'total is uninitialized — reading it is UB', ['The loop is backwards', 'x should be a reference', 'It is fine'], 'Initialize: int total = 0;', 0),
+      Q('double avg = sum / n; with int sum and int n gives 3.0 instead of 3.5 because:', 'Integer division happens before the conversion to double', ['double cannot hold 3.5', 'n is zero', 'avg needs to be float'], 'Cast first: (double)sum / n.', 0),
+      Q('const string& f() { string s = "x"; return s; } — problem?', 'Returns a dangling reference to a destroyed local', ['Nothing', 'string cannot be returned', 'It leaks memory'], 'Return by value instead.', 0),
+      Q('Which compiler flags catch out-of-bounds and UB at runtime?', '-fsanitize=address,undefined', ['-O3', '-static', '-DNDEBUG'], 'AddressSanitizer + UBSan.', 0),
+      Q('Why can a program with UB "work" in testing and fail in production?', 'UB has no guaranteed behavior — results change with compiler, flags, data and memory layout', ['Production uses a different C++ standard', 'Tests always disable UB', 'UB only affects Windows'], 'Never rely on UB.', 0),
+      Q('for (size_t i = v.size() - 1; i >= 0; i--) — what happens?', 'Infinite loop: an unsigned value is always >= 0 and wraps around', ['Prints in reverse correctly', 'Compile error', 'Skips index 0 only'], 'Unsigned wrap.', 0),
+      Q('int& r = v[0]; v.push_back(9); cout << r; — risk?', 'r may dangle because push_back can reallocate the vector', ['None', 'push_back is const', 'r is copied'], 'Iterator/reference invalidation.', 0),
+      Q('Safest way to compare two doubles for equality?', 'abs(a - b) < a small tolerance', ['a == b', '(int)a == (int)b', 'a - b == 0'], 'Floating point is inexact.', 0),
+      Q('Buffer overflows and use-after-free are important because:', 'They are the root cause of many serious security vulnerabilities', ['They only waste memory', 'They are caught by every compiler', 'They make code slower'], 'Memory-safety bugs → exploitable CVEs.', 0),
+      Q('Reviewing AI-generated C++ that compiles with no warnings, you should still check:', 'Bounds, initialization, lifetimes and malformed-input handling', ['Nothing — it compiled', 'Only the formatting', 'Only the variable names'], 'Compiling is not correctness.', 0),
+      Q('How do you detect that reading a number from cin failed (e.g. the user typed "abc")?', 'if (!(cin >> x)) { … }', ['if (x == NULL)', 'try { cin >> x; } always throws', 'if (cin.size() == 0)'], 'The stream goes into a fail state.', 0),
+      Q('v.at(i) differs from v[i] because:', 'at() checks bounds and throws out_of_range', ['at() is faster', 'at() returns a copy', 'There is no difference'], 'Bounds-checked access.', 0),
+      Q('int big = 50000 * 50000; is a problem because:', 'Signed int overflow is undefined behavior', ['It is a syntax error', 'The result is negative by definition', '50000 is too small'], '2.5e9 exceeds INT_MAX; use long long.', 0),
+      P('int a = 7, b = 2;\ndouble d = a / b;\ncout << d;', '3', ['3.5', '4', '3.0'], 'Integer division gives 3; cout prints a whole double without decimals.', 'C++'),
+      P('double x = 2.0 / 3;\ncout << fixed << setprecision(2) << x;', '0.67', ['0.66', '0.666667', '0.6'], 'Rounded to two decimals.', 'C++'),
+      P('unsigned int n = 0;\nn = n - 1;\ncout << (n > 1000);', '1', ['0', '-1', 'error'], 'Wraps to 4294967295.', 'C++'),
+      T('Type the g++ flag that enables AddressSanitizer.', ['-fsanitize=address', '-fsanitize=address,undefined'], '-fsanitize=address', 0, '-f...')
+    ],
+    labs: ['cp-fixstats', 'cp-inventory']
+  });
+
+  // ======================= labs =======================
+  clab({ id: 'cp-wordfreq', title: 'Word frequency with map',
+    brief: 'Read words from input until it ends. Print each distinct word and how many times it appeared, as <code>word count</code>, one per line, in <b>alphabetical</b> order.',
+    stdin: 'the cat and the dog and the end',
+    starter: '#include <iostream>\n#include <map>\n#include <string>\nusing namespace std;\n\nint main() {\n    map<string, int> counts;\n    string w;\n    // read every word, count it, then print "word count" lines\n    return 0;\n}\n',
+    tests: [
+      { name: 'Counts and orders a sentence', stdin: 'the cat and the dog and the end', expect: 'and 2\ncat 1\ndog 1\nend 1\nthe 3' },
+      { name: 'Multiple lines of input', stdin: 'b a\nb\nc b', expect: 'a 1\nb 3\nc 1' },
+      { name: 'Single word', stdin: 'solo', expect: 'solo 1' }
+    ],
+    hints: ['<code>while (cin &gt;&gt; w) counts[w]++;</code> reads until input ends.', 'std::map keeps keys sorted, so iterating it is already alphabetical.', '<code>for (const auto&amp; [word, n] : counts) cout &lt;&lt; word &lt;&lt; " " &lt;&lt; n &lt;&lt; "\\n";</code>'],
+    solution: '#include <iostream>\n#include <map>\n#include <string>\nusing namespace std;\n\nint main() {\n    map<string, int> counts;\n    string w;\n    while (cin >> w) counts[w]++;\n    for (const auto& [word, n] : counts)\n        cout << word << " " << n << "\\n";\n    return 0;\n}',
+    debrief: 'while (cin >> w) is the idiomatic read-until-EOF loop, and map gave you counting plus sorted output for free. Swap in unordered_map when order does not matter and the data is large.' });
+
+  clab({ id: 'cp-leader', title: 'Leaderboard: sort structs with a lambda',
+    brief: 'Input: an integer <code>n</code>, then <code>n</code> lines of <code>name score</code>. Print the <b>top 3</b> as <code>name score</code>: highest score first; on a tie, alphabetical by name. If there are fewer than 3 players, print them all.',
+    stdin: '5\nzoe 90\namy 95\nbob 90\ncal 70\ndee 95',
+    starter: '#include <iostream>\n#include <vector>\n#include <string>\n#include <algorithm>\nusing namespace std;\n\nstruct Player { string name; int score; };\n\nint main() {\n    int n; cin >> n;\n    vector<Player> ps(n);\n    for (auto& p : ps) cin >> p.name >> p.score;\n    // sort with a lambda: score high→low, then name A→Z\n    // print at most the first 3\n    return 0;\n}\n',
+    tests: [
+      { name: 'Ties broken alphabetically', stdin: '5\nzoe 90\namy 95\nbob 90\ncal 70\ndee 95', expect: 'amy 95\ndee 95\nbob 90' },
+      { name: 'Fewer than three players', stdin: '2\nkim 10\nal 20', expect: 'al 20\nkim 10' },
+      { name: 'Already sorted input stays correct', stdin: '4\na 4\nb 3\nc 2\nd 1', expect: 'a 4\nb 3\nc 2' }
+    ],
+    hints: ['<code>sort(ps.begin(), ps.end(), [](const Player&amp; a, const Player&amp; b) { … });</code>', 'Inside: <code>if (a.score != b.score) return a.score &gt; b.score; return a.name &lt; b.name;</code>', 'Print <code>min(3, n)</code> entries: <code>for (int i = 0; i &lt; min(3, n); i++)</code>.'],
+    solution: '#include <iostream>\n#include <vector>\n#include <string>\n#include <algorithm>\nusing namespace std;\n\nstruct Player { string name; int score; };\n\nint main() {\n    int n; cin >> n;\n    vector<Player> ps(n);\n    for (auto& p : ps) cin >> p.name >> p.score;\n    sort(ps.begin(), ps.end(), [](const Player& a, const Player& b) {\n        if (a.score != b.score) return a.score > b.score;\n        return a.name < b.name;\n    });\n    for (int i = 0; i < min(3, n); i++)\n        cout << ps[i].name << " " << ps[i].score << "\\n";\n    return 0;\n}',
+    debrief: 'A two-key comparator in a lambda is the pattern for every "rank these records" task. Note the strict < / > — never <= in a comparator.' });
+
+  clab({ id: 'cp-raii', title: 'RAII & ownership you can see',
+    brief: 'Make object lifetime visible. Complete <code>Tracer</code> so its constructor prints <code>open NAME</code> and its destructor prints <code>close NAME</code> (each on its own line). Then, in <code>main</code>, the provided code will show scope-based cleanup and a <code>unique_ptr</code> ownership transfer. The expected output is:<pre>open A\nopen B\nclose B\nopen C\nmoved\nclose C\nclose A</pre>',
+    starter: '#include <iostream>\n#include <memory>\n#include <string>\nusing namespace std;\n\nstruct Tracer {\n    string name;\n    Tracer(string n) : name(n) {\n        // print "open " + name\n    }\n    ~Tracer() {\n        // print "close " + name\n    }\n};\n\nint main() {\n    Tracer a("A");\n    {\n        Tracer b("B");\n    }                                   // b leaves scope here\n    auto p = make_unique<Tracer>("C");\n    auto q = std::move(p);              // ownership moves to q\n    if (!p) cout << "moved" << "\\n";\n    q.reset();                          // release C now\n    return 0;                           // a is destroyed last\n}\n',
+    tests: [{ name: 'Lifetimes print in the right order', expect: 'open A\nopen B\nclose B\nopen C\nmoved\nclose C\nclose A' }],
+    hints: ['Constructor body: <code>cout &lt;&lt; "open " &lt;&lt; name &lt;&lt; "\\n";</code>', 'Destructor body: <code>cout &lt;&lt; "close " &lt;&lt; name &lt;&lt; "\\n";</code>', 'Notice nobody calls delete — scope and unique_ptr do it.'],
+    solution: '#include <iostream>\n#include <memory>\n#include <string>\nusing namespace std;\n\nstruct Tracer {\n    string name;\n    Tracer(string n) : name(n) { cout << "open " << name << "\\n"; }\n    ~Tracer() { cout << "close " << name << "\\n"; }\n};\n\nint main() {\n    Tracer a("A");\n    {\n        Tracer b("B");\n    }\n    auto p = make_unique<Tracer>("C");\n    auto q = std::move(p);\n    if (!p) cout << "moved" << "\\n";\n    q.reset();\n    return 0;\n}',
+    debrief: 'B closed at its closing brace, C closed when its single owner released it, and A closed last as main returned. That determinism is RAII — files, locks, sockets and memory all clean themselves up this way.' });
+
+  clab({ id: 'cp-template', title: 'Write a generic function template',
+    brief: 'Implement the template <code>biggest</code> that returns the largest element of a non-empty <code>vector&lt;T&gt;</code>, and <code>countAbove</code> that returns how many elements are strictly greater than a threshold. <code>main</code> is provided and uses them with <code>int</code>, <code>double</code> and <code>string</code>.',
+    starter: '#include <iostream>\n#include <vector>\n#include <string>\nusing namespace std;\n\ntemplate <typename T>\nT biggest(const vector<T>& v) {\n    return T{};          // TODO: return the largest element\n}\n\ntemplate <typename T>\nint countAbove(const vector<T>& v, const T& limit) {\n    return 0;            // TODO: count elements > limit\n}\n\nint main() {\n    vector<int> a = {3, 9, 2, 7};\n    vector<double> b = {1.5, 0.25, 4.75};\n    vector<string> c = {"pear", "apple", "zucchini", "kiwi"};\n    cout << biggest(a) << "\\n" << biggest(b) << "\\n" << biggest(c) << "\\n";\n    cout << countAbove(a, 5) << " " << countAbove(b, 1.0) << " " << countAbove(c, string("kiwi")) << "\\n";\n    return 0;\n}\n',
+    tests: [{ name: 'biggest works for int, double, string', expect: '9\n4.75\nzucchini' }, { name: 'countAbove works for all three types', expect: '2 2 2' }],
+    hints: ['<code>T best = v[0]; for (const T&amp; x : v) if (x &gt; best) best = x; return best;</code>', 'countAbove: <code>int n = 0; for (const T&amp; x : v) if (x &gt; limit) n++; return n;</code>', 'Strings compare alphabetically with &gt;, so "zucchini" is the biggest.'],
+    solution: '#include <iostream>\n#include <vector>\n#include <string>\nusing namespace std;\n\ntemplate <typename T>\nT biggest(const vector<T>& v) {\n    T best = v[0];\n    for (const T& x : v) if (x > best) best = x;\n    return best;\n}\n\ntemplate <typename T>\nint countAbove(const vector<T>& v, const T& limit) {\n    int n = 0;\n    for (const T& x : v) if (x > limit) n++;\n    return n;\n}\n\nint main() {\n    vector<int> a = {3, 9, 2, 7};\n    vector<double> b = {1.5, 0.25, 4.75};\n    vector<string> c = {"pear", "apple", "zucchini", "kiwi"};\n    cout << biggest(a) << "\\n" << biggest(b) << "\\n" << biggest(c) << "\\n";\n    cout << countAbove(a, 5) << " " << countAbove(b, 1.0) << " " << countAbove(c, string("kiwi")) << "\\n";\n    return 0;\n}',
+    debrief: 'One definition, three instantiations — the compiler wrote biggest<int>, biggest<double> and biggest<string> for you. const T& parameters keep it efficient for heavy types like string. (These are exactly std::max_element and std::count_if — now you know how they work.)' });
+
+  clab({ id: 'cp-fixstats', title: 'Review & fix: a buggy statistics program',
+    brief: 'This program "works on my machine" but is wrong. It reads <code>n</code> and then <code>n</code> integers and should print three lines: the <b>sum</b>, the <b>average to 2 decimals</b>, and the <b>minimum</b>. It contains several classic C++ bugs (out-of-bounds, uninitialized, integer division, a bad starting value). Find and fix them all.',
+    stdin: '4\n7 2 9 4',
+    starter: '#include <iostream>\n#include <vector>\n#include <iomanip>\nusing namespace std;\n\nint main() {\n    int n;\n    cin >> n;\n    vector<int> v(n);\n    for (int i = 0; i < n; i++) cin >> v[i];\n\n    int sum;\n    int smallest = 0;\n    for (int i = 0; i <= n; i++) {\n        sum += v[i];\n        if (v[i] < smallest) smallest = v[i];\n    }\n    double avg = sum / n;\n\n    cout << sum << "\\n";\n    cout << fixed << setprecision(2) << avg << "\\n";\n    cout << smallest << "\\n";\n    return 0;\n}\n',
+    tests: [
+      { name: '7 2 9 4 → 22 / 5.50 / 2', stdin: '4\n7 2 9 4', expect: '22\n5.50\n2' },
+      { name: 'All values positive (min is not 0)', stdin: '3\n10 20 15', expect: '45\n15.00\n10' },
+      { name: 'Negative values', stdin: '3\n-4 -1 -7', expect: '-12\n-4.00\n-7' },
+      { name: 'Average that is not a whole number', stdin: '2\n1 2', expect: '3\n1.50\n1' }
+    ],
+    hints: ['Loop bound: <code>i &lt; n</code>, not <code>i &lt;= n</code> — v[n] is past the end.', '<code>int sum = 0;</code> — an uninitialized local holds garbage.', 'Start <code>smallest</code> at <code>v[0]</code>, not 0 (otherwise all-positive input reports 0).', 'Divide as doubles: <code>double avg = (double)sum / n;</code>'],
+    solution: '#include <iostream>\n#include <vector>\n#include <iomanip>\nusing namespace std;\n\nint main() {\n    int n;\n    cin >> n;\n    vector<int> v(n);\n    for (int i = 0; i < n; i++) cin >> v[i];\n\n    int sum = 0;\n    int smallest = v[0];\n    for (int i = 0; i < n; i++) {\n        sum += v[i];\n        if (v[i] < smallest) smallest = v[i];\n    }\n    double avg = static_cast<double>(sum) / n;\n\n    cout << sum << "\\n";\n    cout << fixed << setprecision(2) << avg << "\\n";\n    cout << smallest << "\\n";\n    return 0;\n}',
+    debrief: 'Four bugs, four lessons: < not <= for bounds, always initialize, pick a starting value from the data, convert before dividing. Compiling with -Wall -fsanitize=address,undefined would have flagged two of them instantly.' });
+
+  clab({ id: 'cp-inventory', title: 'Capstone: an inventory command processor', project: true,
+    brief: 'Build a small, robust command processor. Each input line is one command:<ul><li><code>add ITEM QTY</code> — add stock</li><li><code>remove ITEM QTY</code> — remove stock; if there is not enough (or the item is unknown) print <code>error: not enough ITEM</code> and change nothing</li><li><code>show</code> — print every item with stock &gt; 0 as <code>ITEM QTY</code>, alphabetically, then a line <code>--</code></li></ul>Ignore blank lines. Items that reach 0 disappear from <code>show</code>.',
+    stdin: 'add apple 5\nadd pear 2\nremove apple 2\nshow\nremove pear 3\nremove pear 2\nadd kiwi 4\nshow',
+    starter: '#include <iostream>\n#include <map>\n#include <sstream>\n#include <string>\nusing namespace std;\n\nint main() {\n    map<string, int> stock;\n    string line;\n    while (getline(cin, line)) {\n        // parse the command with an istringstream and handle add / remove / show\n    }\n    return 0;\n}\n',
+    tests: [
+      { name: 'Example session', stdin: 'add apple 5\nadd pear 2\nremove apple 2\nshow\nremove pear 3\nremove pear 2\nadd kiwi 4\nshow', expect: 'apple 3\npear 2\n--\nerror: not enough pear\napple 3\nkiwi 4\n--' },
+      { name: 'Unknown item is an error and changes nothing', stdin: 'remove ghost 1\nadd a 1\nshow', expect: 'error: not enough ghost\na 1\n--' },
+      { name: 'Blank lines ignored; adds accumulate', stdin: 'add x 2\n\nadd x 3\nshow\n', expect: 'x 5\n--' },
+      { name: 'Empty inventory shows just the separator', stdin: 'add a 1\nremove a 1\nshow', expect: '--' }
+    ],
+    hints: ['<code>istringstream in(line); string cmd; in &gt;&gt; cmd; if (cmd.empty()) continue;</code>', 'add: <code>string item; int q; in &gt;&gt; item &gt;&gt; q; stock[item] += q;</code>', 'remove: look it up with <code>find</code> first so a missing item is not inserted; if <code>it == stock.end() || it-&gt;second &lt; q</code> print the error.', 'show: <code>for (const auto&amp; [k, v] : stock) if (v &gt; 0) cout &lt;&lt; k &lt;&lt; " " &lt;&lt; v &lt;&lt; "\\n"; cout &lt;&lt; "--\\n";</code>'],
+    solution: '#include <iostream>\n#include <map>\n#include <sstream>\n#include <string>\nusing namespace std;\n\nint main() {\n    map<string, int> stock;\n    string line;\n    while (getline(cin, line)) {\n        istringstream in(line);\n        string cmd;\n        if (!(in >> cmd)) continue;\n        if (cmd == "add") {\n            string item; int q;\n            if (in >> item >> q) stock[item] += q;\n        } else if (cmd == "remove") {\n            string item; int q;\n            if (!(in >> item >> q)) continue;\n            auto it = stock.find(item);\n            if (it == stock.end() || it->second < q) cout << "error: not enough " << item << "\\n";\n            else it->second -= q;\n        } else if (cmd == "show") {\n            for (const auto& [k, v] : stock)\n                if (v > 0) cout << k << " " << v << "\\n";\n            cout << "--\\n";\n        }\n    }\n    return 0;\n}',
+    debrief: 'Line-based parsing with getline + istringstream, a map as the data model, find() to avoid accidental inserts, and validated input — the skeleton of every CLI tool and protocol parser. You just wrote one that rejects bad commands instead of corrupting state.' });
+})();
+
+;
 /* AI Prompting track */
 (function () {
   var S = COURSE.stages, Q = window.Q, T = window.TYPE, L = COURSE.labs;
@@ -4422,11 +4626,12 @@ COURSE.tools = [];
 
   // ---------- questions ----------
   function letter(i) { return 'ABCDEFG'.charAt(i); }
-  function normAns(s) { return String(s).trim().toLowerCase().replace(/\s+/g, ' ').replace(/;$/, ''); }
+  function smartQ(s) { return String(s).replace(/[\u2018\u2019\u201B\u2032]/g, "'").replace(/[\u201C\u201D\u201F\u2033]/g, '"').replace(/[\u2013\u2014]/g, '--'); }
+  function normAns(s) { return smartQ(s).trim().toLowerCase().replace(/\s+/g, ' ').replace(/;$/, ''); }
   function checkInput(q, val) {
     var v = normAns(val);
     return (q.accept || []).some(function (a) {
-      if (a instanceof RegExp) return a.test(val.trim());
+      if (a instanceof RegExp) return a.test(smartQ(val).trim());
       return normAns(a) === v;
     });
   }
