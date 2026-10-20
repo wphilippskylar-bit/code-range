@@ -245,7 +245,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build 55943f9a72 */
+/* build 4ae586a150 */
 /* AwkCore — a small but real awk interpreter for the bash sandbox.
    Supports: BEGIN/END, pattern-only rules, /regex/ patterns, expressions with
    fields ($0, $n, $NF), NR, NF, FS/OFS, variables, associative arrays,
@@ -2042,6 +2042,402 @@ body.pc .editor{min-height:300px}
   var api = { Repo: Repo };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.GitSim = api;
 })(this);
+
+;
+/* GitPlus — extends the GitSim teaching engine with the rest of everyday Git:
+   fetch / pull (merge or --rebase) / rejected pushes / force-with-lease, remote-tracking refs (origin/main),
+   revert, cherry-pick, rebase (with conflicts, --continue, --abort), merge --abort / --no-ff, proper merge commits,
+   reflog + HEAD@{n}, show, log -n, branch -a, bisect, .gitignore, rm, nano editor hook,
+   and a hidden ":teammate" command labs use to simulate a colleague pushing to origin. */
+(function (root) {
+  'use strict';
+  var G = root.GitSim || (typeof require !== 'undefined' ? require('./gitsim.js') : null);
+  var R = G.Repo.prototype;
+  function hash() { return Math.random().toString(16).slice(2, 9); }
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  var origRun = R.run, origStatus = R.status, origAdd = R.git_add, origCommit = R.git_commit, origResolve = R.resolveRef, origLog = R.git_log, origBranch = R.git_branch, origCheckout = R.checkoutBranch;
+
+  // ---------- helpers ----------
+  function lineDiff(a, b) {
+    var A = (a || '').split('\n'), B = (b || '').split('\n'); if (A[A.length - 1] === '') A.pop(); if (B[B.length - 1] === '') B.pop();
+    var n = A.length, m = B.length, dp = [];
+    for (var i = 0; i <= n; i++) { dp.push(new Array(m + 1).fill(0)); }
+    for (i = n - 1; i >= 0; i--) for (var j = m - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    var out = []; i = 0; j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && A[i] === B[j]) { out.push(' ' + A[i]); i++; j++; }
+      else if (i < n && (j >= m || dp[i + 1][j] >= dp[i][j + 1])) { out.push('-' + A[i]); i++; }
+      else { out.push('+' + B[j]); j++; }
+    }
+    return out;
+  }
+  function fileDiff(f, a, b) {
+    if (a === b) return '';
+    var head = 'diff --git a/' + f + ' b/' + f + '\n' + (a === undefined ? 'new file\n--- /dev/null\n' : '--- a/' + f + '\n') + (b === undefined ? '+++ /dev/null\n' : '+++ b/' + f + '\n');
+    return head + lineDiff(a, b).filter(function (l, k, arr) { return l[0] !== ' ' || arr.length < 12; }).join('\n') + '\n';
+  }
+  function treeDiff(t1, t2) { var files = {}, out = ''; Object.keys(t1).forEach(function (f) { files[f] = 1; }); Object.keys(t2).forEach(function (f) { files[f] = 1; }); Object.keys(files).sort().forEach(function (f) { out += fileDiff(f, t1[f], t2[f]); }); return out; }
+  // three-way apply: take the change base→theirs and apply it on ours
+  function threeWay(base, ours, theirs, label) {
+    var merged = clone(ours), conflicts = [], files = {};
+    [base, ours, theirs].forEach(function (t) { Object.keys(t).forEach(function (f) { files[f] = 1; }); });
+    Object.keys(files).forEach(function (f) {
+      var b = base[f], o = ours[f], t = theirs[f];
+      if (o === t || t === b) return;
+      if (o === b) { if (t === undefined) delete merged[f]; else merged[f] = t; return; }
+      conflicts.push(f);
+      merged[f] = '<<<<<<< HEAD\n' + (o || '') + '=======\n' + (t || '') + '>>>>>>> ' + label + '\n';
+    });
+    return { tree: merged, conflicts: conflicts };
+  }
+  R.mergeBase = function (a, b) {
+    if (!a || !b) return null;
+    var anc = this.ancestors(b), q = [a], seen = {};
+    while (q.length) { var c = q.shift(); if (!c || seen[c]) continue; seen[c] = 1; if (anc[c]) return c; var k = this.commits[c]; if (k) { q.push(k.parent); if (k.parent2) q.push(k.parent2); } }
+    return null;
+  };
+  R.short = function (id) { return id ? id.slice(0, 7) : '0000000'; };
+  R.setHeadTo = function (id) { if (this.detached) this.HEAD = id; else this.branches[this.HEAD] = id; };
+  R.newCommit = function (msg, parent, tree, parent2, author) {
+    var id = hash(); this.commits[id] = { id: id, msg: msg, parent: parent, parent2: parent2 || null, tree: tree, branch: this.HEAD, author: author || this.user.name || 'you' }; return id;
+  };
+
+  // ---------- refs ----------
+  R.resolveRef = function (ref) {
+    if (ref === undefined || ref === null) return undefined;
+    var m;
+    if ((m = /^HEAD@\{(\d+)\}$/.exec(ref))) { var rl = this.reflog || [], k = rl.length - 1 - (+m[1]); return k >= 0 ? rl[k].id : undefined; }
+    if ((m = /^(.+?)(~(\d*)|\^+)$/.exec(ref)) && m[1] !== 'HEAD') { var base = this.resolveRef(m[1]); var steps = m[2][0] === '~' ? (+(m[3] || 1)) : m[2].length; for (var i = 0; i < steps && base; i++) base = this.commits[base] ? this.commits[base].parent : null; return base; }
+    if ((m = /^(?:origin|remotes\/origin)\/(.+)$/.exec(ref))) { return this.tracking && this.tracking[m[1]] !== undefined ? this.tracking[m[1]] : undefined; }
+    if (this.tags && this.tags[ref] !== undefined && this.branches[ref] === undefined) return this.tags[ref];
+    return origResolve.call(this, ref);
+  };
+
+  // ---------- .gitignore ----------
+  R.ignored = function (f) {
+    var gi = this.work['.gitignore']; if (!gi) return false;
+    return gi.split('\n').map(function (s) { return s.trim(); }).filter(function (s) { return s && s[0] !== '#'; }).some(function (p) {
+      if (/\/$/.test(p)) return f.indexOf(p) === 0 || f.indexOf('/' + p) >= 0;
+      var re = new RegExp('^' + p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]') + '$');
+      return re.test(f) || re.test(f.split('/').pop());
+    });
+  };
+  R.status = function () {
+    var s = origStatus.call(this), self = this, tree = this.tree(this.head());
+    s.untracked = s.untracked.filter(function (f) { return !self.ignored(f); });
+    s.ignored = Object.keys(this.work).filter(function (f) { return self.ignored(f) && tree[f] === undefined && self.index[f] === undefined; });
+    return s;
+  };
+  R.git_add = function (a, line) {
+    var self = this, tree = this.tree(this.head()), force = a.indexOf('-f') >= 0 || a.indexOf('--force') >= 0, files = a.filter(function (x) { return x[0] !== '-'; });
+    var all = a[0] === '-A' || a[0] === '--all' || files[0] === '.';
+    var before = clone(this.index);
+    if (!all && !force) { var ign = files.filter(function (f) { return self.ignored(f) && tree[f] === undefined; }); if (ign.length) return 'The following paths are ignored by one of your .gitignore files:\n' + ign.join('\n') + '\nhint: Use -f if you really want to add them.\n'; }
+    var out = origAdd.call(this, a, line);
+    if (all && !force) Object.keys(this.index).forEach(function (f) { if (self.ignored(f) && tree[f] === undefined && before[f] === undefined) delete self.index[f]; });
+    if (this.op && this.op.conflicts) { this.op.conflicts = this.op.conflicts.filter(function (f) { return !(all || files.indexOf(f) >= 0) || /^(<{7}|={7}|>{7})/m.test(self.work[f] || ''); }); }
+    return out;
+  };
+
+  // ---------- commit (merge commits, unmerged-path guard) ----------
+  R.git_commit = function (a, line) {
+    line = line.replace(/(\s-[a-z]*m)\s+([^"'\s-][\s\S]*)$/, function (_, f, msg) { return f + ' "' + msg.trim() + '"'; });
+    if (this.op && this.op.type === 'merge') {
+      if (this.op.conflicts.length) return 'error: Committing is not possible because you have unmerged files.\nhint: Fix them up in the work tree, and then use \'git add <file>\'\n' + this.op.conflicts.map(function (f) { return 'U\t' + f; }).join('\n') + '\n';
+      if (!this.user.name) return origCommit.call(this, a, line);
+      var mm = line.match(/-[a-z]*m\s+"([^"]*)"/) || line.match(/-[a-z]*m\s+'([^']*)'/);
+      var id = this.newCommit(mm ? mm[1] : "Merge branch '" + this.op.name + "'", this.head(), clone(this.index), this.op.target);
+      this.setHeadTo(id); this.op = null; this.mergeInProgress = null;
+      return '[' + this.HEAD + ' ' + this.short(id) + '] ' + this.commits[id].msg + '\n';
+    }
+    if (this.op && (this.op.type === 'rebase' || this.op.type === 'pick')) return 'error: a ' + (this.op.type === 'rebase' ? 'rebase' : 'cherry-pick/revert') + ' is in progress — resolve conflicts, git add, then git ' + (this.op.type === 'rebase' ? 'rebase' : this.op.cmd) + ' --continue\n';
+    return origCommit.call(this, a, line);
+  };
+
+  // ---------- merge ----------
+  R.git_merge = function (a, line) {
+    var self = this;
+    if (a[0] === '--abort') { if (!this.op || this.op.type !== 'merge') return 'fatal: There is no merge to abort (MERGE_HEAD missing).\n'; var t = this.tree(this.head()); this.work = clone(t); this.index = clone(t); this.op = null; this.mergeInProgress = null; return ''; }
+    if (this.op) return 'error: You have not concluded your ' + this.op.type + '. Resolve it first.\n';
+    var name = a.filter(function (x) { return x[0] !== '-' && !/^"/.test(x); })[0], noff = a.indexOf('--no-ff') >= 0;
+    var target = this.resolveRef(name); if (target === undefined || target === null) return 'merge: ' + name + ' - not something we can merge\n';
+    var head = this.head();
+    if (head && this.ancestors(head)[target]) return 'Already up to date.\n';
+    var mm = line.match(/-m\s+"([^"]*)"/), msg = mm ? mm[1] : "Merge branch '" + name + "'";
+    if ((!head || this.ancestors(target)[head]) && !noff) {
+      this.setHeadTo(target); var t2 = this.tree(target); this.work = clone(t2); this.index = clone(t2);
+      return 'Updating ' + this.short(head) + '..' + this.short(target) + '\nFast-forward\n';
+    }
+    var base = this.mergeBase(head, target), r = threeWay(this.tree(base), this.tree(head), this.tree(target), name);
+    if (r.conflicts.length) {
+      var idx = clone(r.tree); r.conflicts.forEach(function (f) { var o = self.tree(head)[f]; if (o === undefined) delete idx[f]; else idx[f] = o; });
+      this.work = r.tree; this.index = idx; this.op = { type: 'merge', name: name, target: target, conflicts: r.conflicts }; this.mergeInProgress = this.op;
+      return r.conflicts.map(function (f) { return 'Auto-merging ' + f + '\nCONFLICT (content): Merge conflict in ' + f; }).join('\n') + '\nAutomatic merge failed; fix conflicts and then commit the result.\n';
+    }
+    var id = this.newCommit(msg, head, r.tree, target); this.setHeadTo(id); this.work = clone(r.tree); this.index = clone(r.tree);
+    return "Merge made by the 'ort' strategy.\n";
+  };
+
+  // ---------- revert / cherry-pick ----------
+  function pickLike(self, cmd, a) {
+    if (a[0] === '--abort') { if (!self.op || self.op.type !== 'pick') return 'error: no ' + cmd + ' in progress\n'; var t = self.tree(self.head()); self.work = clone(t); self.index = clone(t); self.op = null; return ''; }
+    if (a[0] === '--continue') {
+      if (!self.op || self.op.type !== 'pick') return 'error: no ' + cmd + ' in progress\n';
+      if (self.op.conflicts.length) return 'error: you need to resolve your conflicts first (git add the files)\n';
+      var id0 = self.newCommit(self.op.msg, self.head(), clone(self.index)); self.setHeadTo(id0); self.op = null;
+      return '[' + self.HEAD + ' ' + self.short(id0) + '] ' + self.commits[id0].msg + '\n';
+    }
+    if (self.op) return 'error: You have not concluded your ' + self.op.type + '.\n';
+    var ref = a.filter(function (x) { return x[0] !== '-'; })[0], id = self.resolveRef(ref);
+    if (!id || !self.commits[id]) return 'fatal: bad revision \'' + ref + '\'\n';
+    var c = self.commits[id], parentTree = self.tree(c.parent), r, msg;
+    if (cmd === 'revert') { r = threeWay(c.tree, self.tree(self.head()), parentTree, 'parent of ' + self.short(id)); msg = 'Revert "' + c.msg + '"'; }
+    else { r = threeWay(parentTree, self.tree(self.head()), c.tree, self.short(id) + ' (' + c.msg + ')'); msg = c.msg; }
+    if (r.conflicts.length) {
+      var idx = clone(r.tree), headTree = self.tree(self.head()); r.conflicts.forEach(function (f) { if (headTree[f] === undefined) delete idx[f]; else idx[f] = headTree[f]; });
+      self.work = r.tree; self.index = idx; self.op = { type: 'pick', cmd: cmd, msg: msg, conflicts: r.conflicts };
+      return 'CONFLICT (content): Merge conflict in ' + r.conflicts.join(', ') + '\nerror: could not ' + cmd + ' ' + self.short(id) + '\nhint: resolve the conflicts, git add them, then run "git ' + cmd + ' --continue"\n';
+    }
+    var nid = self.newCommit(msg, self.head(), r.tree); self.setHeadTo(nid); self.work = clone(r.tree); self.index = clone(r.tree);
+    return '[' + (self.detached ? 'detached HEAD' : self.HEAD) + ' ' + self.short(nid) + '] ' + msg + '\n';
+  }
+  R.git_revert = function (a) { return pickLike(this, 'revert', a); };
+  R.git_cherry_pick = function (a) { return pickLike(this, 'cherry-pick', a); };
+
+  // ---------- rebase ----------
+  R.rebaseStep = function () {
+    var op = this.op, self = this, out = '';
+    while (op.todo.length) {
+      var id = op.todo.shift(), c = this.commits[id];
+      var r = threeWay(this.tree(c.parent), this.tree(op.cur), c.tree, this.short(id) + ' (' + c.msg + ')');
+      if (r.conflicts.length) {
+        var idx = clone(r.tree), curTree = this.tree(op.cur); r.conflicts.forEach(function (f) { if (curTree[f] === undefined) delete idx[f]; else idx[f] = curTree[f]; });
+        this.work = r.tree; this.index = idx; op.conflicts = r.conflicts; op.msg = c.msg; op.author = c.author;
+        this.detached = true; this.HEAD = op.cur;
+        return out + 'CONFLICT (content): Merge conflict in ' + r.conflicts.join(', ') + '\nerror: could not apply ' + this.short(id) + '... ' + c.msg + '\nhint: Resolve all conflicts manually, mark them as resolved with "git add <file>", then run "git rebase --continue".\nhint: To abort and get back to the state before "git rebase", run "git rebase --abort".\n';
+      }
+      op.cur = this.newCommit(c.msg, op.cur, r.tree, null, c.author);
+    }
+    this.branches[op.branch] = op.cur; this.detached = false; this.HEAD = op.branch;
+    var t = this.tree(op.cur); this.work = clone(t); this.index = clone(t); this.op = null;
+    return out + 'Successfully rebased and updated refs/heads/' + op.branch + '.\n';
+  };
+  R.git_rebase = function (a) {
+    var self = this;
+    if (a[0] === '--abort') { if (!this.op || this.op.type !== 'rebase') return 'fatal: No rebase in progress?\n'; var o = this.op; this.branches[o.branch] = o.orig; this.detached = false; this.HEAD = o.branch; var t = this.tree(o.orig); this.work = clone(t); this.index = clone(t); this.op = null; return ''; }
+    if (a[0] === '--continue') {
+      if (!this.op || this.op.type !== 'rebase') return 'fatal: No rebase in progress?\n';
+      if (this.op.conflicts && this.op.conflicts.length) return 'error: you must edit all merge conflicts and then mark them as resolved using git add\n' + this.op.conflicts.join('\n') + '\n';
+      this.op.cur = this.newCommit(this.op.msg, this.op.cur, clone(this.index), null, this.op.author); this.op.conflicts = [];
+      return this.rebaseStep();
+    }
+    if (a[0] === '-i' || a[0] === '--interactive') return 'Interactive rebase opens an editor to reorder/squash/edit commits. This sandbox teaches plain "git rebase <branch>"; the -i concepts are in the lesson.\n';
+    if (this.op) return 'error: You have not concluded your ' + this.op.type + '.\n';
+    if (this.detached) return 'fatal: you are not on a branch\n';
+    var ontoName = a.filter(function (x) { return x[0] !== '-'; })[0], onto = this.resolveRef(ontoName), head = this.head();
+    if (!onto) return 'fatal: invalid upstream \'' + ontoName + '\'\n';
+    var s = this.status(); if (s.staged.length || s.notStaged.length) return 'error: cannot rebase: You have unstaged changes.\nerror: Please commit or stash them.\n';
+    if (this.ancestors(onto)[head]) { this.branches[this.HEAD] = onto; var t2 = this.tree(onto); this.work = clone(t2); this.index = clone(t2); return 'Successfully rebased and updated refs/heads/' + this.HEAD + ' (fast-forward).\n'; }
+    var ontoAnc = this.ancestors(onto), todo = [], cur = head;
+    while (cur && !ontoAnc[cur]) { var c = this.commits[cur]; if (!c.parent2) todo.unshift(cur); cur = c.parent; }
+    if (!todo.length) return 'Current branch ' + this.HEAD + ' is up to date.\n';
+    this.op = { type: 'rebase', branch: this.HEAD, orig: head, onto: onto, cur: onto, todo: todo, conflicts: [] };
+    return this.rebaseStep();
+  };
+
+  // ---------- remotes: fetch / pull / push ----------
+  R.git_fetch = function () {
+    if (!this.remote) return 'fatal: \'origin\' does not appear to be a git repository\n';
+    var self = this, out = '', old = this.tracking || {};
+    Object.keys(this.remote.commits).forEach(function (id) { if (!self.commits[id]) self.commits[id] = clone(self.remote.commits[id]); });
+    Object.keys(this.remote.branches).forEach(function (b) { var nid = self.remote.branches[b]; if (old[b] !== nid) out += '   ' + self.short(old[b]) + '..' + self.short(nid) + '  ' + b + ' -> origin/' + b + '\n'; });
+    this.tracking = clone(this.remote.branches);
+    return out ? 'From ' + (this.remoteUrl || 'origin') + '\n' + out : '';
+  };
+  R.git_pull = function (a, line) {
+    if (!this.remote) return 'fatal: no remote configured\n';
+    var f = this.git_fetch(), b = this.HEAD;
+    if (!this.tracking || this.tracking[b] === undefined) return f + 'There is no tracking information for the current branch.\n';
+    if (a.indexOf('--rebase') >= 0) return f + this.git_rebase(['origin/' + b], 'git rebase origin/' + b);
+    return f + this.git_merge(['origin/' + b], 'git merge origin/' + b + ' -m "Merge branch \'' + b + '\' of origin"');
+  };
+  R.git_push = function (a, line) {
+    if (!this.remote) return 'fatal: No configured push destination.\nRun git remote add origin <url> first.\n';
+    var self = this, pos = a.filter(function (x) { return x[0] !== '-'; }), branch = pos[1] || (this.detached ? null : this.HEAD);
+    var force = a.indexOf('--force') >= 0 || a.indexOf('-f') >= 0, lease = a.some(function (x) { return x.indexOf('--force-with-lease') === 0; });
+    if (pos[1] && pos[1][0] === ':') { delete this.remote.branches[pos[1].slice(1)]; if (this.tracking) delete this.tracking[pos[1].slice(1)]; return 'To ' + (this.remoteUrl || 'origin') + '\n - [deleted]         ' + pos[1].slice(1) + '\n'; }
+    if (a.indexOf('--tags') >= 0) { this.remote.tags = clone(this.tags || {}); return 'To ' + (this.remoteUrl || 'origin') + '\n * [new tag]  ' + Object.keys(this.tags || {}).join(', ') + '\n'; }
+    if (this.tags && this.tags[branch] !== undefined && this.branches[branch] === undefined) { this.remote.tags = this.remote.tags || {}; this.remote.tags[branch] = this.tags[branch]; return 'To ' + (this.remoteUrl || 'origin') + '\n * [new tag]         ' + branch + ' -> ' + branch + '\n'; }
+    var local = this.branches[branch]; if (local === undefined) return 'error: src refspec ' + branch + ' does not match any\n';
+    var remoteId = this.remote.branches[branch];
+    if (remoteId && !this.ancestors(local)[remoteId]) {
+      var known = this.tracking ? this.tracking[branch] : undefined;
+      if (lease && known !== remoteId) return 'To ' + (this.remoteUrl || 'origin') + '\n ! [rejected]        ' + branch + ' -> ' + branch + ' (stale info)\nerror: failed to push — someone pushed since your last fetch. Fetch and review first.\n';
+      if (!force && !lease) return 'To ' + (this.remoteUrl || 'origin') + '\n ! [rejected]        ' + branch + ' -> ' + branch + ' (fetch first)\nerror: failed to push some refs\nhint: Updates were rejected because the remote contains work that you do not\nhint: have locally. Integrate the remote changes (e.g. git pull ...) before pushing again.\n';
+    }
+    this.remote.branches[branch] = local; this.tracking = this.tracking || {}; this.tracking[branch] = local;
+    Object.keys(this.ancestors(local)).forEach(function (id) { self.remote.commits[id] = clone(self.commits[id]); });
+    var setUp = a.indexOf('-u') >= 0 || a.indexOf('--set-upstream') >= 0;
+    return 'To ' + (this.remoteUrl || 'github.com/phil/project.git') + '\n   ' + (remoteId ? this.short(remoteId) + '..' + this.short(local) : '* [new branch]') + '  ' + branch + ' -> ' + branch + (force || lease ? ' (forced update)' : '') + (setUp ? '\nbranch \'' + branch + '\' set up to track \'origin/' + branch + '\'.' : '') + '\n';
+  };
+
+  // ---------- inspection: show, log -n, branch -a, reflog ----------
+  R.git_show = function (a) {
+    var ref = a.filter(function (x) { return x[0] !== '-'; })[0] || 'HEAD', id = this.resolveRef(ref);
+    if (!id || !this.commits[id]) return 'fatal: bad revision \'' + ref + '\'\n';
+    var c = this.commits[id];
+    return 'commit ' + id + '\nAuthor: ' + c.author + '\n' + (c.parent2 ? 'Merge: ' + this.short(c.parent) + ' ' + this.short(c.parent2) + '\n' : '') + '\n    ' + c.msg + '\n\n' + (c.parent2 ? '' : treeDiff(this.tree(c.parent), c.tree));
+  };
+  R.git_log = function (a, line) {
+    var self = this, head = this.head();
+    if (!head) return "fatal: your current branch '" + this.HEAD + "' does not have any commits yet\n";
+    var all = /--all/.test(line), oneline = /--oneline/.test(line), graph = /--graph/.test(line);
+    var m = /(?:^|\s)-n\s*(\d+)|(?:^|\s)-(\d+)(?:\s|$)/.exec(line), lim = m ? +(m[1] || m[2]) : Infinity;
+    var refArg = a.filter(function (x) { return x[0] !== '-' && !/^\d+$/.test(x); })[0];
+    var starts = all ? Object.keys(this.branches).map(function (b) { return self.branches[b]; }).concat(Object.keys(this.tracking || {}).map(function (b) { return self.tracking[b]; })) : [refArg ? this.resolveRef(refArg) : head];
+    var seen = {}, list = [], stack = starts.filter(Boolean);
+    while (stack.length) { var id = stack.pop(); if (!id || seen[id] || !this.commits[id]) continue; seen[id] = 1; list.push(this.commits[id]); stack.push(this.commits[id].parent); if (this.commits[id].parent2) stack.push(this.commits[id].parent2); }
+    list.sort(function (x, y) { return (y.seq || 0) - (x.seq || 0); });
+    list = list.slice(0, lim);
+    function refs(id) {
+      var r = [];
+      Object.keys(self.branches).sort().forEach(function (b) { if (self.branches[b] === id) r.push(!self.detached && b === self.HEAD ? 'HEAD -> ' + b : b); });
+      if (self.detached && self.HEAD === id) r.unshift('HEAD');
+      r.sort(function (x, y) { return (/^HEAD/.test(y) ? 1 : 0) - (/^HEAD/.test(x) ? 1 : 0); });
+      Object.keys(self.tracking || {}).forEach(function (b) { if (self.tracking[b] === id) r.push('origin/' + b); });
+      Object.keys(self.tags || {}).forEach(function (t) { if (self.tags[t] === id) r.push('tag: ' + t); });
+      return r.length ? ' (' + r.join(', ') + ')' : '';
+    }
+    if (oneline) return list.map(function (c) { return (graph ? (c.parent2 ? '*   ' : '* ') : '') + self.short(c.id) + refs(c.id) + ' ' + c.msg; }).join('\n') + '\n';
+    return list.map(function (c) { return 'commit ' + c.id + refs(c.id) + (c.parent2 ? '\nMerge: ' + self.short(c.parent) + ' ' + self.short(c.parent2) : '') + '\nAuthor: ' + c.author + '\n\n    ' + c.msg + '\n'; }).join('\n') + '\n';
+  };
+  R.git_status = (function (orig) {
+    return function (a) {
+      var out = orig.call(this, a);
+      if (this.op) {
+        var what = { merge: 'You have unmerged paths.\n  (fix conflicts and run "git commit")\n  (use "git merge --abort" to abort the merge)', rebase: 'You are currently rebasing.\n  (fix conflicts and then run "git rebase --continue")\n  (use "git rebase --abort" to check out the original branch)', pick: 'You are currently ' + (this.op.cmd === 'revert' ? 'reverting' : 'cherry-picking') + ' a commit.\n  (fix conflicts and run "git ' + this.op.cmd + ' --continue")\n  (use "git ' + this.op.cmd + ' --abort" to cancel)' }[this.op.type];
+        out = out.replace(/\n/, '\n' + what + '\n' + (this.op.conflicts && this.op.conflicts.length ? '\nUnmerged paths:\n' + this.op.conflicts.map(function (f) { return '\tboth modified:   ' + f; }).join('\n') + '\n' : '') + '\n');
+      }
+      if (this.bisectState) out = out.replace(/\n/, '\nYou are currently bisecting.\n  (use "git bisect reset" to get back to the original branch)\n');
+      return out;
+    };
+  })(R.git_status);
+  R.git_branch = function (a, line) {
+    var self = this;
+    if (a[0] === '-a' || a[0] === '-r') { var loc = a[0] === '-a' ? origBranch.call(this, [], 'git branch') : ''; return loc + Object.keys(this.tracking || {}).sort().map(function (b) { return '  remotes/origin/' + b; }).join('\n') + (this.tracking ? '\n' : ''); }
+    if ((a[0] === '-d' || a[0] === '-D') && a[1]) {
+      var nm = a[1], tip = this.branches[nm];
+      if (nm === this.HEAD && !this.detached) return "error: cannot delete branch '" + nm + "' — you are on it\n";
+      if (tip === undefined) return "error: branch '" + nm + "' not found\n";
+      if (a[0] === '-d' && tip && !this.ancestors(this.head())[tip]) return "error: the branch '" + nm + "' is not fully merged.\nhint: If you are sure you want to delete it, run 'git branch -D " + nm + "'\n";
+      delete this.branches[nm]; return 'Deleted branch ' + nm + ' (was ' + this.short(tip) + ').\n';
+    }
+    if (a[0] === '-m' && a[1]) { var from = a[2] ? a[1] : this.HEAD, to = a[2] || a[1]; this.branches[to] = this.branches[from]; delete this.branches[from]; if (this.HEAD === from) this.HEAD = to; return ''; }
+    return origBranch.call(this, a, line);
+  };
+  R.checkoutBranch = function (name, create) {
+    if (this.op) return 'error: you are in the middle of a ' + this.op.type + ' — finish it or --abort first\n';
+    var s = this.status(), dirty = s.notStaged.length || s.staged.length;
+    if (!create && this.branches[name] === undefined && this.tracking && this.tracking[name] !== undefined) { this.branches[name] = this.tracking[name]; var r0 = origCheckout.call(this, name, false); return r0.replace(/\n$/, '') + "\nbranch '" + name + "' set up to track 'origin/" + name + "'.\n"; }
+    if (dirty && !create && this.branches[name] !== undefined) {
+      var target = this.tree(this.branches[name]), cur = this.tree(this.head()), self = this, clash = [];
+      Object.keys(this.work).forEach(function (f) { if (self.work[f] !== cur[f] && target[f] !== cur[f]) clash.push(f); });
+      if (clash.length) return 'error: Your local changes to the following files would be overwritten by checkout:\n\t' + clash.join('\n\t') + '\nPlease commit your changes or stash them before you switch branches.\n';
+      var keepW = {}, keepI = {}; Object.keys(this.work).forEach(function (f) { if (self.work[f] !== cur[f]) keepW[f] = self.work[f]; }); Object.keys(this.index).forEach(function (f) { if (self.index[f] !== cur[f]) keepI[f] = self.index[f]; });
+      var r = origCheckout.call(this, name, false); Object.keys(keepW).forEach(function (f) { self.work[f] = keepW[f]; }); Object.keys(keepI).forEach(function (f) { self.index[f] = keepI[f]; }); return r;
+    }
+    if (create && dirty) { var w = clone(this.work), ix = clone(this.index), r2 = origCheckout.call(this, name, true); this.work = w; this.index = ix; return r2; }
+    return origCheckout.call(this, name, create);
+  };
+  R.git_reset = (function (orig) {
+    return function (a, line) {
+      if (line.indexOf('--soft') >= 0) { var keep = JSON.parse(JSON.stringify(this.index)), w = JSON.parse(JSON.stringify(this.work)), o = orig.call(this, a, line); this.index = keep; this.work = w; return o; }
+      if (line.indexOf('--hard') >= 0 && this.op) this.op = null;
+      return orig.call(this, a, line);
+    };
+  })(R.git_reset);
+  R.git_reflog = function () {
+    this.__usedReflog = true;
+    var rl = this.reflog || [], self = this;
+    return rl.slice().reverse().map(function (e, i) { return self.short(e.id) + ' HEAD@{' + i + '}: ' + e.what; }).join('\n') + (rl.length ? '\n' : '');
+  };
+  R.git_stash = (function (orig) {
+    return function (a) {
+      if (a[0] === 'list') return this.stashes.map(function (s, i) { return 'stash@{' + (this.stashes.length - 1 - i) + '}: WIP on ' + this.HEAD; }, this).reverse().join('\n') + (this.stashes.length ? '\n' : '');
+      if (a[0] === 'drop') { if (!this.stashes.length) return 'No stash entries found.\n'; this.stashes.pop(); return 'Dropped stash@{0}\n'; }
+      if (!a.length || a[0] === 'push' || a[0] === 'save' || a[0] === '-u') { var s = this.status(); if (!s.staged.length && !s.notStaged.length && !(a[0] === '-u' && s.untracked.length)) return 'No local changes to save\n'; }
+      if (a[0] === 'pop' || a[0] === 'apply') {
+        if (!this.stashes.length) return 'No stash entries found.\n';
+        var st = a[0] === 'pop' ? this.stashes.pop() : this.stashes[this.stashes.length - 1], self = this, cur = this.tree(this.head());
+        Object.keys(st).forEach(function (f) { if (st[f] !== cur[f]) self.work[f] = st[f]; });
+        return (a[0] === 'pop' ? 'Dropped refs/stash@{0}\n' : '') + this.status().notStaged.map(function (x) { return '\t' + x; }).join('\n') + '\n';
+      }
+      return orig.call(this, a);
+    };
+  })(R.git_stash);
+
+  // ---------- bisect ----------
+  R.git_bisect = function (a) {
+    var sub = a[0], self = this, b = this.bisectState;
+    if (sub === 'start') { this.bisectState = { orig: this.detached ? null : this.HEAD, origId: this.head(), bad: null, goods: [], found: null }; return 'status: waiting for both good and bad commits\n'; }
+    if (!b) return 'You need to start by "git bisect start"\n';
+    if (sub === 'reset') { var o = b.orig; this.bisectState = null; this.bisect = b; if (o) return origCheckout.call(this, o, false); return ''; }
+    if (sub === 'bad' || sub === 'good') {
+      var id = a[1] ? this.resolveRef(a[1]) : this.head(); if (!id) return 'fatal: bad revision\n';
+      if (sub === 'bad') b.bad = id; else b.goods.push(id);
+      if (!b.bad || !b.goods.length) return 'status: waiting for ' + (b.bad ? 'good' : 'bad') + ' commit(s)\n';
+      var goodAnc = {}; b.goods.forEach(function (g) { var an = self.ancestors(g); Object.keys(an).forEach(function (k) { goodAnc[k] = 1; }); });
+      var cand = [], cur = b.bad; while (cur && !goodAnc[cur]) { cand.push(cur); cur = this.commits[cur].parent; }
+      if (cand.length <= 1) { b.found = cand[0] || b.bad; this.bisect = b; var c = this.commits[b.found]; return this.short(b.found) + ' is the first bad commit\ncommit ' + b.found + '\nAuthor: ' + c.author + '\n\n    ' + c.msg + '\n\n' + treeDiff(this.tree(c.parent), c.tree); }
+      var mid = cand[Math.floor(cand.length / 2)];
+      this.detached = true; this.HEAD = mid; var t = this.tree(mid); this.work = clone(t); this.index = clone(t);
+      var left = Math.floor(cand.length / 2), steps = Math.max(1, Math.ceil(Math.log(cand.length) / Math.log(2)) - 1);
+      return 'Bisecting: ' + left + ' revision' + (left === 1 ? '' : 's') + ' left to test after this (roughly ' + steps + ' step' + (steps === 1 ? '' : 's') + ')\n[' + mid + '] ' + this.commits[mid].msg + '\n';
+    }
+    if (sub === 'log') return 'bad: ' + this.short(b.bad) + '\ngood: ' + b.goods.map(this.short).join(' ') + '\n';
+    return 'usage: git bisect [start|bad|good|reset|log]\n';
+  };
+
+  // ---------- run wrapper: reflog, editor, extra shell commands, teammate sim ----------
+  R.readFile = function (f) { return this.work[f.replace(/^.*\/project\//, '').replace(/^\.\//, '')] || ''; };
+  R.writeFile = function (f, text) { this.work[f.replace(/^.*\/project\//, '').replace(/^\.\//, '')] = text; return true; };
+  R.run = function (line) {
+    var self = this, t = line.trim(), m;
+    if ((m = /^:teammate\s+(\S+)\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"(\s+append)?$/.exec(t))) {
+      if (!this.remote) return '';
+      var br = m[1], parent = this.remote.branches[br], tree = parent ? clone(this.remote.commits[parent].tree) : {};
+      var content = m[4].replace(/\\n/g, '\n') + '\n'; tree[m[2]] = m[5] && tree[m[2]] ? tree[m[2]] + content : content;
+      var id = hash(); this.remote.commits[id] = { id: id, msg: m[3], parent: parent || null, parent2: null, tree: tree, branch: br, author: 'Sam' }; this.remote.branches[br] = id;
+      return '';
+    }
+    if ((m = /^(nano|edit|vim|vi|code)\s+(\S+)$/.exec(t))) { this.pendingEdit = m[2]; return ''; }
+    if ((m = /^rm\s+(?:-f\s+)?(.+)$/.exec(t))) { var bad = ''; m[1].split(/\s+/).forEach(function (f) { if (self.work[f] === undefined) bad += 'rm: cannot remove \'' + f + '\': No such file\n'; else delete self.work[f]; }); return bad; }
+    if (/^cat\s+\S+\s+\S+/.test(t)) return t.split(/\s+/).slice(1).map(function (f) { return self.work[f] !== undefined ? self.work[f] : 'cat: ' + f + ': No such file\n'; }).join('');
+    if (/^cat\s+\S+$/.test(t) && this.work[t.split(/\s+/)[1]] === undefined) return 'cat: ' + t.split(/\s+/)[1] + ': No such file or directory\n';
+    if (/^ls(\s+-a)?$/.test(t) && /-a/.test(t)) return Object.keys(this.work).sort().join('  ') + '\n';
+    if (/^help$/.test(t)) return origRun.call(this, line) + 'More: git fetch/pull --rebase, revert, cherry-pick, rebase, reflog, show, bisect, branch -a, stash list/drop, .gitignore\nEdit files with nano FILE (or echo "text" > file). rm FILE deletes one.\n';
+    var before = this.head(), beforeBranch = this.detached ? this.short(this.HEAD) : this.HEAD, out = origRun.call(this, line);
+    this.stamp();
+    this.noteReflog(before, t, beforeBranch);
+    return out;
+  };
+  R.stamp = function () {
+    var self = this; this.seqN = this.seqN || 0;
+    var fresh = Object.keys(this.commits).filter(function (id) { return self.commits[id].seq === undefined; });
+    fresh.forEach(function (id) { self.commits[id].seq = ++self.seqN; });
+    if (this.remote) Object.keys(this.remote.commits).forEach(function (id) { var c = self.remote.commits[id]; if (c.seq === undefined) c.seq = self.commits[id] && self.commits[id].seq !== undefined ? self.commits[id].seq : ++self.seqN; if (self.commits[id] && self.commits[id].seq === undefined) self.commits[id].seq = c.seq; });
+  };
+  R.noteReflog = function (before, what, fromBranch) {
+    var after = this.head(); if (after === before || !after) return;
+    this.reflog = this.reflog || [];
+    var c = this.commits[after], label = what.replace(/^git\s+/, ''), words = label.split(/\s+/), cmd = words[0], txt;
+    if (cmd === 'commit') txt = 'commit' + (/--amend/.test(label) ? ' (amend)' : '') + ': ' + (c ? c.msg : '');
+    else if (cmd === 'checkout' || cmd === 'switch') txt = 'checkout: moving from ' + fromBranch + ' to ' + words[words.length - 1];
+    else if (cmd === 'reset') txt = 'reset: moving to ' + (words.filter(function (w) { return w[0] !== '-'; })[1] || 'HEAD');
+    else txt = cmd + ': ' + (c ? c.msg : label);
+    this.reflog.push({ id: after, what: txt });
+  };
+})(typeof window !== 'undefined' ? window : this);
 
 ;
 /* no cloud sim in Code Range */
@@ -5003,6 +5399,250 @@ window.X = {
 })();
 
 ;
+/* Git depth pack: deeper lessons, more questions, team-workflow labs with a simulated teammate, recovery labs, and a forensics stage */
+(function () {
+  var X = window.X, Q = window.Q, T = window.TYPE, L = COURSE.labs;
+  var SETUP = ['git init', 'git config user.name "Phil"', 'git config user.email "phil@example.com"'];
+  var REMOTE = ['git remote add origin https://github.com/phil/shop.git', 'git push -u origin main'];
+  function byMsg(r, msg) { var ids = Object.keys(r.commits).filter(function (id) { return r.commits[id].msg === msg; }); return ids[ids.length - 1]; }
+  function reach(r, id) { return id ? Object.keys(r.ancestors(id)) : []; }
+  function anyTreeHas(r, tip, f) { return reach(r, tip).some(function (id) { return r.commits[id] && r.commits[id].tree[f] !== undefined; }); }
+  function linear(r, tip) { return reach(r, tip).every(function (id) { return !r.commits[id].parent2; }); }
+  function clean(r) { var s = r.status(); return !s.staged.length && !s.notStaged.length; }
+  function noMarkers(r, f) { return !/^(<{7}|={7}|>{7})/m.test(r.work[f] || ''); }
+  function synced(r, b) { return !!r.remote && r.remote.branches[b] !== undefined && r.remote.branches[b] === r.branches[b]; }
+
+  // ---------------- git1 ----------------
+  X.add('git1', { gateN: 14,
+    lesson: [{ h: 'Deep dive: what a commit really is, and what never to commit', html: '<p>A commit is a <b>snapshot</b> of every tracked file + a pointer to its <b>parent</b> commit + author and message, all identified by a hash (e.g. <code>3f2a9c1</code>). A <b>branch</b> is just a movable label pointing at a commit; <code>HEAD</code> is "where you are".</p><pre>git log --oneline          # one line per commit\ngit show HEAD              # what the last commit changed\ngit diff                   # unstaged changes\ngit diff --staged          # what you are about to commit\n\n# .gitignore — never track these\n.env\n*.log\nnode_modules/\n__pycache__/</pre><ul><li><b>Never commit secrets</b> (<code>.env</code>, API keys, passwords, private keys). Once pushed, assume a secret is compromised: <b>rotate it</b> — deleting it in a later commit does not remove it from history.</li><li>Good messages: imperative, specific, ≤ ~50 chars for the title: "Fix rounding in invoice total", not "stuff".</li><li>Commit small, related changes together. One commit = one idea makes history readable and reverts safe.</li><li><code>git add -p</code> lets you stage only part of a file.</li></ul>' }],
+    qs: [
+      Q('What does a Git branch actually store?', 'A pointer (label) to one commit', ['A full copy of every file', 'A list of changed lines', 'A zip of the folder'], 'Branches are cheap labels.', 0),
+      Q('You committed .env with a live API key and pushed it. First action?', 'Rotate (revoke and replace) the key immediately', ['Delete .env in a new commit and move on', 'Make the repo private and forget it', 'Rename the file'], 'History keeps the old secret; treat it as leaked.', 0),
+      Q('Which line in .gitignore ignores the whole node_modules folder?', 'node_modules/', ['node_modules.txt', '*node', '#node_modules'], 'Trailing slash = directory.', 0),
+      Q('git diff --staged shows:', 'Changes that are staged and will go into the next commit', ['Unstaged changes', 'Remote changes', 'The last commit'], 'Review before committing.', 0),
+      Q('The best commit message:', 'Fix total rounding for multi-currency carts', ['update', 'fixed stuff', 'asdf'], 'Specific and imperative.', 0),
+      Q('HEAD refers to:', 'The commit (usually via a branch) you currently have checked out', ['The first commit', 'The remote server', 'The newest commit on any branch'], 'Where you are.', 0),
+      Q('A file is listed in .gitignore but was committed before. Git:', 'Keeps tracking it until you remove it from the index (git rm --cached file)', ['Deletes it automatically', 'Stops tracking it immediately', 'Refuses to run'], '.gitignore only affects untracked files.', 0),
+      Q('Stage only some of the changes inside one file:', 'git add -p file', ['git add --some file', 'git commit -p', 'git stage half'], 'Patch mode.', 0),
+      T('Type the command that shows exactly what the most recent commit changed.', ['git show', 'git show HEAD'], 'git show', 0, 'git ...')
+    ],
+    labs: ['gt-ignore'] });
+
+  L['gt-ignore'] = {
+    kind: 'git', title: 'Start a project without leaking secrets',
+    brief: 'This new Node project has files you must <b>never</b> commit: <code>.env</code> (an API key), <code>debug.log</code> and <code>node_modules/</code>. Run <code>ls -a</code> and <code>git status</code>.<br>1) Create a <code>.gitignore</code> (try <code>nano .gitignore</code>) that ignores <code>.env</code>, all <code>*.log</code> files and <code>node_modules/</code>.<br>2) Stage everything with <code>git add .</code> and make the first commit.',
+    pre: SETUP.concat(['echo "console.log(\'shop\')" > app.js', 'echo "{}" > package.json', 'echo "API_KEY=sk-test-4242" > .env', 'echo "debug trace" > debug.log', 'echo "module.exports = 1" > node_modules/lib.js']),
+    tasks: [
+      { t: '.gitignore covers .env, *.log and node_modules/', c: function (r) { return ['.env', 'debug.log', 'other.log', 'node_modules/lib.js'].every(function (f) { return r.ignored(f); }) && !r.ignored('app.js'); } },
+      { t: 'A commit contains app.js, package.json and .gitignore', c: function (r) { var t = r.tree(r.head()); return !!r.head() && t['app.js'] !== undefined && t['package.json'] !== undefined && t['.gitignore'] !== undefined; } },
+      { t: 'No commit contains .env, debug.log or node_modules', c: function (r) { var h = r.head(); return !!h && !anyTreeHas(r, h, '.env') && !anyTreeHas(r, h, 'debug.log') && !anyTreeHas(r, h, 'node_modules/lib.js'); } },
+      { t: 'Working tree clean (ignored files don\'t count)', c: function (r) { var s = r.status(); return !!r.head() && clean(r) && !s.untracked.length; } }
+    ],
+    hints: ['<code>nano .gitignore</code> and put three lines: <code>.env</code>, <code>*.log</code>, <code>node_modules/</code> — or use <code>echo ".env" &gt; .gitignore</code> then <code>echo "*.log" &gt;&gt; .gitignore</code> …', 'Check with <code>git status</code>: only app.js, package.json and .gitignore should be untracked.', '<code>git add .</code> then <code>git commit -m "Initial commit"</code>'],
+    solutionFiles: { '.gitignore': '.env\n*.log\nnode_modules/\n' },
+    solution: ['ls -a', 'git status', 'nano .gitignore', 'git status', 'git add .', 'git commit -m "Initial commit"', 'git status'],
+    why: 'Untracked files matching .gitignore are invisible to git add . — the safest time to write it is before the first commit.',
+    debrief: 'Most leaked credentials on GitHub come from a missing .gitignore on day one. You just closed that door.'
+  };
+
+  // ---------------- git2 ----------------
+  X.add('git2', { gateN: 14,
+    lesson: [{ h: 'Deep dive: working with a team remote', html: '<pre>git fetch                 # download new commits; updates origin/main, touches nothing else\ngit log --oneline --all   # compare main with origin/main\ngit pull                  # fetch + merge origin/main into your branch\ngit pull --rebase         # fetch + replay your commits on top (linear history)\ngit push                  # upload; REJECTED if origin has commits you don\'t have</pre><ul><li><b>origin/main</b> is your local copy of where the remote\'s main was at your last fetch — a <i>remote-tracking</i> branch.</li><li>"<b>! [rejected] (fetch first)</b>" means a teammate pushed. Pull, resolve anything, run tests, push again. Never "fix" it with <code>--force</code> on a shared branch — that deletes their work.</li><li>Pull requests: push a feature branch, open a PR, get review + CI, then merge. Keep PRs small.</li><li>Merge conflicts on pull are normal: edit the file to the correct final content, <code>git add</code>, <code>git commit</code>.</li></ul>' }],
+    qs: [
+      Q('git push says "! [rejected] main -> main (fetch first)". What happened?', 'Someone pushed commits to origin/main that you don\'t have locally', ['Your password expired', 'Your branch was deleted', 'The repo is read-only'], 'Integrate their work first.', 0),
+      Q('The correct fix for that rejection:', 'git pull (resolve if needed), then git push', ['git push --force', 'Delete your commits', 'Clone the repo again'], 'Never force over teammates.', 0),
+      Q('git fetch does what?', 'Downloads remote commits and updates origin/* refs without changing your branch or files', ['Merges into your branch', 'Pushes your work', 'Deletes local branches'], 'Safe to run any time.', 0),
+      Q('git pull is equivalent to:', 'git fetch followed by git merge origin/<branch>', ['git push then fetch', 'git clone', 'git reset --hard origin'], 'Or fetch + rebase with --rebase.', 0),
+      Q('origin/main is:', 'Your local record of where the remote main pointed at the last fetch', ['The remote server itself', 'A backup branch you created', 'Always identical to main'], 'A remote-tracking branch.', 0),
+      Q('Why prefer small pull requests?', 'Faster, better reviews and fewer conflicts', ['GitHub limits PR size to 10 lines', 'They skip CI', 'They don\'t need approval'], 'Review quality drops with size.', 0),
+      Q('A conflict happens during git pull. Steps?', 'Edit the file to the correct content, git add it, git commit, then push', ['git push --force', 'git pull again until it works', 'Delete the file'], 'Resolve, stage, commit.', 0),
+      Q('git log --oneline --all helps because:', 'It shows your branches and origin/* together so you can see who is ahead', ['It deletes old commits', 'It only shows tags', 'It pushes'], 'Visualize divergence.', 0)
+    ],
+    labs: ['gt-sync', 'gt-pull-conflict'] });
+
+  L['gt-sync'] = {
+    kind: 'git', title: 'Your push is rejected — sync with a teammate',
+    brief: 'You and Sam share <code>origin/main</code>. Sam just pushed a commit you don\'t have.<br>1) Append the line <code>feature: login</code> to <code>app.txt</code> and commit it.<br>2) <code>git push</code> — it will be <b>rejected</b>. Read the message.<br>3) Integrate Sam\'s work with <code>git pull</code>, then push again. Don\'t force-push.',
+    pre: SETUP.concat(['echo "shop app" > app.txt', 'git add app.txt', 'git commit -m "Initial commit"']).concat(REMOTE).concat([':teammate main notes.txt "Add release notes" "v1 notes by Sam"']),
+    tasks: [
+      { t: 'Your commit adds "feature: login" to app.txt', c: function (r) { return /feature: login/.test(r.tree(r.head())['app.txt'] || ''); } },
+      { t: 'Sam\'s commit is part of your main (not lost)', c: function (r) { var s = byMsg(r, 'Add release notes'); return !!s && !!r.ancestors(r.head())[s]; } },
+      { t: 'origin/main matches your main', c: function (r) { return synced(r, 'main'); } },
+      { t: 'Origin still has Sam\'s commit (no force-push)', c: function (r) { var s = Object.keys(r.remote ? r.remote.commits : {}).filter(function (id) { return r.remote.commits[id].msg === 'Add release notes'; })[0]; return !!s && !!r.ancestors(r.remote.branches.main)[s]; } }
+    ],
+    hints: ['<code>echo "feature: login" &gt;&gt; app.txt</code> then <code>git commit -am "Add login"</code>', '<code>git push</code> → rejected (fetch first). That means origin has new work.', '<code>git pull</code> merges origin/main; then <code>git push</code>. Check with <code>git log --oneline --all</code>.'],
+    solution: ['echo "feature: login" >> app.txt', 'git commit -am "Add login"', 'git push', 'git pull', 'git log --oneline --all', 'git push'],
+    why: 'A rejected push protects a teammate\'s commits. Pull integrates them; force-pushing would have deleted them.',
+    debrief: 'Fetch/pull before you push is the rhythm of every team. You also saw why "just force it" is the wrong reflex.'
+  };
+
+  L['gt-pull-conflict'] = {
+    kind: 'git', title: 'Resolve a conflict with a teammate\'s push',
+    brief: 'You set <code>timeout=45</code> in <code>config.txt</code> and committed. Meanwhile Sam pushed <code>timeout=60</code>. The team agreed on <b>60</b>.<br>1) <code>git pull</code> — expect a CONFLICT.<br>2) Make config.txt contain exactly <code>timeout=60</code> (use <code>nano config.txt</code> or <code>echo</code>), stage it, commit the merge.<br>3) Push.',
+    pre: SETUP.concat(['echo "timeout=30" > config.txt', 'git add config.txt', 'git commit -m "Add config"']).concat(REMOTE).concat([':teammate main config.txt "Raise timeout to 60" "timeout=60"', 'echo "timeout=45" > config.txt', 'git commit -am "Raise timeout to 45"']),
+    tasks: [
+      { t: 'config.txt is exactly timeout=60 with no conflict markers', c: function (r) { return (r.work['config.txt'] || '').trim() === 'timeout=60' && noMarkers(r, 'config.txt'); } },
+      { t: 'The merge is committed (both histories joined)', c: function (r) { var s = byMsg(r, 'Raise timeout to 60'), y = byMsg(r, 'Raise timeout to 45'), a = r.ancestors(r.head()); return !!s && !!y && !!a[s] && !!a[y] && (r.tree(r.head())['config.txt'] || '').trim() === 'timeout=60' && clean(r); } },
+      { t: 'Pushed: origin/main matches main', c: function (r) { return synced(r, 'main'); } }
+    ],
+    hints: ['<code>git pull</code> → CONFLICT in config.txt. <code>cat config.txt</code> shows both versions between the markers.', 'Replace it: <code>echo "timeout=60" &gt; config.txt</code>, then <code>git add config.txt</code>', '<code>git commit -m "Merge origin/main"</code> then <code>git push</code>'],
+    solution: ['git pull', 'cat config.txt', 'git status', 'echo "timeout=60" > config.txt', 'git add config.txt', 'git commit -m "Merge origin/main: keep timeout=60"', 'git push', 'git log --oneline --all'],
+    debrief: 'Conflicts are a conversation captured in a file. You chose the agreed value, recorded the merge, and shared it.'
+  };
+
+  // ---------------- git3 ----------------
+  X.add('git3', { gateN: 14,
+    lesson: [{ h: 'Deep dive: recovery tools that save careers', html: '<pre>git reflog                    # every place HEAD has been — even "lost" commits\ngit reset --hard HEAD@{2}     # jump back to where you were two moves ago\ngit revert &lt;id&gt;               # new commit that undoes &lt;id&gt; — safe on shared branches\ngit cherry-pick &lt;id&gt;          # copy one commit onto the current branch\ngit stash / git stash pop     # park and restore uncommitted work\ngit restore --source=HEAD~1 file   # bring back an old version of one file</pre><table><tr><th>Already pushed?</th><th>Use</th></tr><tr><td>No (local only)</td><td>reset, amend, rebase — rewriting is fine</td></tr><tr><td>Yes (shared)</td><td><b>revert</b> — add an undo commit, never rewrite</td></tr></table><ul><li>Commits are almost never truly lost: the reflog keeps them for ~90 days. <code>reset --hard</code> panic is solved with <code>git reflog</code>.</li><li>Uncommitted changes <i>can</i> be lost by <code>reset --hard</code> or <code>restore</code> — commit or stash first.</li><li>Cherry-pick is for moving a specific fix (e.g. a hotfix onto a release branch), not for routine merging.</li></ul>' }],
+    qs: [
+      Q('You ran git reset --hard HEAD~3 by mistake. How do you get the commits back?', 'git reflog, then git reset --hard to the entry before the reset', ['They are gone forever', 'git revert HEAD~3', 'git pull'], 'The reflog remembers.', 0),
+      Q('A bad commit is already on the shared main. Undo it how?', 'git revert <id> and push', ['git reset --hard and force-push', 'Delete the repo', 'git commit --amend'], 'Don\'t rewrite shared history.', 0),
+      Q('git cherry-pick <id> does what?', 'Applies the changes of that one commit as a new commit on your current branch', ['Deletes the commit', 'Merges the whole branch', 'Moves HEAD to it'], 'Copy one commit.', 0),
+      Q('What can reset --hard destroy permanently?', 'Uncommitted changes in the working tree', ['Pushed commits', 'Commits in the reflog', 'Remote branches'], 'Commit or stash first.', 0),
+      Q('HEAD@{1} means:', 'Where HEAD pointed one move ago (from the reflog)', ['The first commit', 'The parent commit', 'The remote HEAD'], 'Reflog syntax.', 0),
+      Q('An urgent bug report arrives mid-feature with uncommitted edits. Fastest clean switch?', 'git stash, switch to main, fix, then come back and git stash pop', ['Commit half-done work to main', 'Delete your changes', 'Clone a new copy'], 'Park the work.', 0),
+      Q('git revert creates:', 'A new commit whose changes are the inverse of the target commit', ['A deleted commit', 'A new branch', 'A tag'], 'History stays intact.', 0),
+      Q('Bring back yesterday\'s version of just one file:', 'git restore --source=<commit> file', ['git reset --hard <commit>', 'git revert file', 'git stash file'], 'Restore one path from a commit.', 0)
+    ],
+    labs: ['gt-reflog', 'gt-revert', 'gt-cherry'] });
+
+  L['gt-reflog'] = {
+    kind: 'git', title: 'Recover "lost" commits with reflog',
+    brief: 'Disaster: someone ran <code>git reset --hard HEAD~2</code> and two finished commits ("Add checkout" and "Add receipts") vanished from <code>git log</code>. Use <code>git reflog</code> to find them and put main back where it was.',
+    pre: SETUP.concat(['echo "cart" > shop.txt', 'git add shop.txt', 'git commit -m "Add cart"', 'echo "checkout" >> shop.txt', 'git commit -am "Add checkout"', 'echo "receipts" >> shop.txt', 'git commit -am "Add receipts"', 'git reset --hard HEAD~2']),
+    tasks: [
+      { t: 'main points at the "Add receipts" commit again', c: function (r) { var h = r.head(); return !!h && r.commits[h].msg === 'Add receipts' && !r.detached; } },
+      { t: 'shop.txt has cart, checkout and receipts lines', c: function (r) { return /cart\ncheckout\nreceipts/.test(r.work['shop.txt'] || ''); } },
+      { t: 'You used the reflog', c: function (r) { return (r.reflog || []).length > 0 && (r.__usedReflog || false); } }
+    ],
+    hints: ['<code>git log --oneline</code> shows only "Add cart". Now run <code>git reflog</code>.', 'Look for the entry just before the reset — it says "commit: Add receipts".', '<code>git reset --hard HEAD@{1}</code> (or the hash shown in the reflog).'],
+    solution: ['git log --oneline', 'git reflog', 'git reset --hard HEAD@{1}', 'git log --oneline'],
+    debrief: 'reset --hard moved the label, not the commits. The reflog is your undo history for HEAD itself — the most underrated command in Git.'
+  };
+
+  L['gt-revert'] = {
+    kind: 'git', title: 'Undo a bad commit that is already pushed',
+    brief: 'The commit <b>"Change pricing"</b> set <code>price=0</code> in prices.txt and it is already on <code>origin/main</code> — teammates have pulled it. Undo it <b>without rewriting history</b>, then push the fix.',
+    pre: SETUP.concat(['echo "price=19" > prices.txt', 'git add prices.txt', 'git commit -m "Add prices"']).concat(REMOTE).concat(['echo "price=0" > prices.txt', 'git commit -am "Change pricing"', 'git push']),
+    tasks: [
+      { t: 'prices.txt is back to price=19 on main', c: function (r) { return (r.tree(r.head())['prices.txt'] || '').trim() === 'price=19'; } },
+      { t: 'The bad commit is still in history (no rewrite)', c: function (r) { var b = byMsg(r, 'Change pricing'); return !!b && !!r.ancestors(r.head())[b]; } },
+      { t: 'A Revert commit was added', c: function (r) { return /^Revert "Change pricing"/.test(r.commits[r.head()].msg); } },
+      { t: 'The fix is pushed (normal push)', c: function (r) { return synced(r, 'main'); } }
+    ],
+    hints: ['Find the commit: <code>git log --oneline</code>', '<code>git revert HEAD</code> (it is the latest commit) — or use its hash.', 'Then <code>git push</code>. No --force needed because you only added a commit.'],
+    solution: ['git log --oneline', 'git revert HEAD', 'cat prices.txt', 'git push', 'git log --oneline'],
+    debrief: 'revert adds history instead of erasing it, so everyone who pulled the bad commit just pulls the fix. That is why it is the default on shared branches.'
+  };
+
+  L['gt-cherry'] = {
+    kind: 'git', title: 'Ship one hotfix with cherry-pick',
+    brief: 'Branch <code>feature</code> has two commits: an unfinished <b>"WIP: wishlist"</b> and a finished <b>"Fix crash on empty cart"</b>. Production needs the fix <b>today</b>, but the wishlist must not ship. Get only the fix onto <code>main</code>.',
+    pre: SETUP.concat(['echo "cart v1" > cart.txt', 'git add cart.txt', 'git commit -m "Add cart"', 'git switch -c feature', 'echo "wishlist draft" > wishlist.txt', 'git add wishlist.txt', 'git commit -m "WIP: wishlist"', 'echo "cart v1 + empty-cart guard" > cart.txt', 'git commit -am "Fix crash on empty cart"']),
+    tasks: [
+      { t: 'main has the empty-cart fix', c: function (r) { return /empty-cart guard/.test(r.tree(r.branches.main)['cart.txt'] || ''); } },
+      { t: 'main does NOT have wishlist.txt', c: function (r) { return r.tree(r.branches.main)['wishlist.txt'] === undefined; } },
+      { t: 'The fix arrived as a single new commit (no merge)', c: function (r) { var h = r.branches.main, c = r.commits[h]; return !!c && c.msg === 'Fix crash on empty cart' && !c.parent2; } }
+    ],
+    hints: ['<code>git switch main</code>, then <code>git log --oneline feature</code> to find the fix\'s hash.', 'The fix is the tip of feature, so <code>git cherry-pick feature</code> works (or use its hash).', 'Check with <code>ls</code> and <code>cat cart.txt</code>.'],
+    solution: ['git switch main', 'git log --oneline feature', 'git cherry-pick feature', 'ls', 'cat cart.txt'],
+    debrief: 'cherry-pick copies exactly one change. It is the standard way to move a hotfix to a release branch without dragging unfinished work along.'
+  };
+
+  // ---------------- git4 ----------------
+  X.add('git4', { gateN: 14,
+    lesson: [{ h: 'Deep dive: rebase vs merge, and release hygiene', html: '<pre>git switch feature\ngit rebase main             # replay feature\'s commits on top of main → linear history\n# conflict? fix the file, git add it, then:\ngit rebase --continue       # or git rebase --abort to go back\ngit switch main\ngit merge feature           # now a fast-forward\n\ngit push --force-with-lease # after rebasing YOUR OWN pushed feature branch — refuses if someone else pushed</pre><ul><li><b>Merge</b> preserves exactly what happened (merge commits). <b>Rebase</b> rewrites your commits into a straight line — cleaner, but it changes their hashes, so only rebase commits nobody else has built on.</li><li><code>git rebase -i HEAD~3</code> (interactive) lets you squash "fix typo" commits, reword messages and reorder before opening a PR.</li><li>Tags mark releases: <code>git tag v1.4.0</code> + <code>git push origin v1.4.0</code>. Semantic versioning: MAJOR (breaking).MINOR (features).PATCH (fixes).</li><li>Protect <code>main</code>: required reviews, passing CI, no force-pushes.</li></ul>' }],
+    qs: [
+      Q('After git rebase main on your feature branch, merging into main is usually:', 'A fast-forward (no merge commit)', ['Impossible', 'Always a conflict', 'A force-push'], 'Feature now sits on top of main.', 0),
+      Q('Why is rebasing a shared branch dangerous?', 'It rewrites commit hashes that others have built on', ['It deletes the remote', 'It is slower than merge', 'It cannot handle conflicts'], 'Only rebase your own work.', 0),
+      Q('You rebased your own already-pushed feature branch. Safest push?', 'git push --force-with-lease', ['git push --force', 'git push --delete', 'git push --tags'], 'Fails if someone else pushed meanwhile.', 0),
+      Q('During a rebase conflict, after fixing and staging the file you run:', 'git rebase --continue', ['git commit --amend', 'git merge --continue', 'git push'], 'Then it replays the next commit.', 0),
+      Q('Version 2.3.1 → a backwards-compatible bug fix gives:', '2.3.2', ['3.0.0', '2.4.0', '2.3.1.1'], 'PATCH bump.', 0),
+      Q('Combine five "wip" commits into one before a PR:', 'git rebase -i and squash them', ['git merge --squash main', 'git revert all five', 'git tag them'], 'Interactive rebase.', 0),
+      Q('Branch protection on main typically requires:', 'Pull requests with reviews and passing CI; no force-push', ['Daily force-pushes', 'Direct commits only', 'No tests'], 'Guardrails for the shared branch.', 0)
+    ],
+    labs: ['gt-rebase'] });
+
+  L['gt-rebase'] = {
+    kind: 'git', title: 'Rebase a feature branch (with a conflict)',
+    brief: 'Your <code>feature</code> branch (2 commits) is behind <code>main</code>, which changed the same README line. Make the history <b>linear</b>:<br>1) On feature, <code>git rebase main</code> — expect a conflict in README.md.<br>2) Resolve README.md to exactly <code>Shop v2 + login docs</code>, <code>git add</code> it, <code>git rebase --continue</code>.<br>3) Switch to main and <code>git merge feature</code> (it should fast-forward).',
+    pre: SETUP.concat(['echo "Shop v1" > README.md', 'git add README.md', 'git commit -m "Add README"', 'git switch -c feature', 'echo "login()" > login.js', 'git add login.js', 'git commit -m "Add login"', 'echo "Shop v1 + login docs" > README.md', 'git commit -am "Document login"', 'git switch main', 'echo "Shop v2" > README.md', 'git commit -am "Release v2 readme"', 'git switch feature']),
+    tasks: [
+      { t: 'README.md on main is exactly "Shop v2 + login docs"', c: function (r) { return (r.tree(r.branches.main)['README.md'] || '').trim() === 'Shop v2 + login docs'; } },
+      { t: 'main contains login.js and the v2 release commit', c: function (r) { var v = byMsg(r, 'Release v2 readme'); return r.tree(r.branches.main)['login.js'] !== undefined && !!v && !!r.ancestors(r.branches.main)[v]; } },
+      { t: 'History is linear (no merge commits)', c: function (r) { return !!r.branches.main && linear(r, r.branches.main); } },
+      { t: 'main and feature point at the same commit; rebase finished', c: function (r) { return r.branches.main === r.branches.feature && !r.op && !r.detached; } }
+    ],
+    hints: ['<code>git rebase main</code> → CONFLICT in README.md. <code>git status</code> tells you what to do next.', '<code>echo "Shop v2 + login docs" &gt; README.md</code> then <code>git add README.md</code> and <code>git rebase --continue</code>', '<code>git switch main</code> then <code>git merge feature</code> → Fast-forward. Check <code>git log --oneline</code>.'],
+    solution: ['git rebase main', 'git status', 'echo "Shop v2 + login docs" > README.md', 'git add README.md', 'git rebase --continue', 'git switch main', 'git merge feature', 'git log --oneline'],
+    debrief: 'Rebase replayed your commits on the new main one at a time and paused for the one that conflicted. The result reads like the feature was written today — a clean, reviewable line.'
+  };
+
+  // ---------------- new stage: forensics ----------------
+  X.insertAfter('git4', {
+    id: 'git5', track: 'git', tier: 'git-x', title: 'Git forensics: bisect, blame & secrets in history', code: 'git bisect start', gateN: 12,
+    goal: 'Use history as a debugging tool: find the exact commit that broke something with bisect, inspect changes with show/log, understand blame, and handle secrets that slipped into commits.',
+    lesson: [
+      { h: 'Find the breaking commit with bisect', html: '<pre>git bisect start\ngit bisect bad              # the current commit is broken\ngit bisect good v1.0        # this older one worked\n# Git checks out the middle commit. Test it (run the app / cat the file / run tests), then:\ngit bisect good             # or: git bisect bad\n# …repeat until: "abc1234 is the first bad commit"\ngit bisect reset            # back to your branch</pre><p>Binary search: 1,000 commits take about <b>10</b> tests. With a test script, <code>git bisect run ./test.sh</code> does it automatically.</p>' },
+      { h: 'Reading history', html: '<pre>git log --oneline --graph --all   # the shape of history\ngit log -p file.txt               # every change to one file, with diffs\ngit log --author="Sam" --since="2 weeks ago"\ngit log -S "API_KEY"              # commits that added/removed a string ("pickaxe")\ngit show abc1234                  # one commit in full\ngit blame app.js                  # who last changed each line, and in which commit</pre><p><code>blame</code> is for finding context (the commit and its message/PR), not for blaming people.</p>' },
+      { h: 'A secret got committed', html: '<table><tr><th>Situation</th><th>Response</th></tr><tr><td>Committed, <b>not pushed</b></td><td>Remove it from the commit (<code>git reset --soft HEAD~1</code> or <code>--amend</code>), add it to <code>.gitignore</code>, recommit.</td></tr><tr><td><b>Pushed</b></td><td><b>Rotate the secret first.</b> Then purge history with <code>git filter-repo</code> or BFG, force-push, and have everyone re-clone. Check provider logs for misuse.</td></tr></table><p>Prevention: <code>.gitignore</code>, pre-commit secret scanners (gitleaks, GitHub push protection), secrets in a vault or CI secret store — never in code.</p>' }
+    ],
+    cards: [['git bisect start / good / bad', 'Binary-search history for the first bad commit.'], ['git bisect run CMD', 'Automate bisect with a test that exits 0 (good) or 1 (bad).'], ['git bisect reset', 'End bisect and return to your branch.'], ['git log -p FILE', 'Full change history of one file.'], ['git log -S "text"', 'Find commits that added or removed a string.'], ['git blame FILE', 'Last commit to touch each line.'], ['git show ID', 'One commit\'s message and diff.'], ['Secret pushed', 'Rotate first, then purge history and force-push.'], ['git filter-repo / BFG', 'Tools that rewrite history to remove files.'], ['Push protection / gitleaks', 'Block secrets before they reach the remote.']],
+    qs: [
+      Q('A bug appeared somewhere in the last 512 commits. Roughly how many tests does bisect need?', 'About 9', ['512', '256', '50'], 'log2(512) = 9.', 0),
+      Q('During bisect the app works at the checked-out commit. You type:', 'git bisect good', ['git bisect bad', 'git bisect reset', 'git commit'], 'Mark it and move on.', 0),
+      Q('Automate bisect with a test script:', 'git bisect run ./test.sh', ['git bisect auto', 'git test bisect', 'git bisect --all'], 'Exit code decides good/bad.', 0),
+      Q('Find every commit that added or removed the string "API_KEY":', 'git log -S "API_KEY"', ['git grep API_KEY', 'git blame API_KEY', 'git show API_KEY'], 'Pickaxe search.', 0),
+      Q('git blame app.js is best used to:', 'Find the commit (and its context) that last changed a line', ['Punish the author', 'Delete lines', 'Revert a file'], 'Context, not blame.', 0),
+      Q('A password was committed AND pushed to a public repo. Correct order?', 'Rotate the password, then purge it from history and force-push', ['Purge history only', 'Add a commit deleting it', 'Make the repo private and stop'], 'Assume it was copied the moment it was pushed.', 0),
+      Q('You committed .env locally (not pushed). Quick fix?', 'git reset --soft HEAD~1, unstage .env, add it to .gitignore, recommit', ['git push then delete', 'git revert', 'Rename .env'], 'Rewrite local history before sharing.', 0),
+      Q('Which control stops a secret before it even reaches GitHub?', 'A pre-commit scanner / push protection', ['Branch names', 'Tags', 'git log'], 'Shift left.', 0),
+      Q('git show HEAD~2 displays:', 'The commit two before HEAD with its diff', ['The last two commits', 'Two files', 'The second branch'], 'Inspect any commit.', 0),
+      Q('git log --oneline --graph --all is used to:', 'See the shape of history across all branches', ['Delete branches', 'Push all branches', 'Count lines'], 'Visualize.', 0),
+      Q('After purging a pushed secret with filter-repo, teammates should:', 'Re-clone (or hard-reset to the rewritten history) so the old commits are not pushed back', ['Keep working normally', 'Merge their old branches back in', 'Nothing — history is fixed'], 'Old clones still contain the secret.', 0),
+      Q('Show every change ever made to config.yml, with diffs:', 'git log -p config.yml', ['git blame config.yml', 'git diff config.yml', 'git show config.yml'], 'Patch output for one path.', 0)
+    ],
+    labs: ['gt-bisect', 'gt-secret']
+  });
+
+  var CALC = function (rate, extra) { return 'tax_rate=' + rate + '\n' + (extra || ''); };
+  L['gt-bisect'] = {
+    kind: 'git', title: 'Find the commit that broke the tax rate',
+    brief: '<code>calc.txt</code> should contain <code>tax_rate=0.08</code>. At <code>v1.0</code> it was correct; on <code>main</code> today it is wrong, and there are 7 commits in between. Use <code>git bisect</code> to find the <b>first bad commit</b>: start, mark <code>bad</code> (current) and <code>good v1.0</code>, then at each step run <code>cat calc.txt</code> and mark it good or bad. Finish with <code>git bisect reset</code>.',
+    pre: SETUP.concat(['echo "tax_rate=0.08" > calc.txt', 'git add calc.txt', 'git commit -m "Add tax calc"', 'git tag v1.0',
+      'echo "rounding=2" > fmt.txt', 'git add fmt.txt', 'git commit -m "Add formatting"',
+      'echo "currency=USD" >> fmt.txt', 'git commit -am "Add currency"',
+      'echo "lang=en" > i18n.txt', 'git add i18n.txt', 'git commit -m "Add i18n"',
+      'echo "tax_rate=0.8" > calc.txt', 'git commit -am "Refactor tax config"',
+      'echo "lang=en,es" > i18n.txt', 'git commit -am "Add Spanish"',
+      'echo "currency=USD,EUR" >> fmt.txt', 'git commit -am "Add euro"',
+      'echo "theme=dark" > ui.txt', 'git add ui.txt', 'git commit -m "Dark theme"']),
+    tasks: [
+      { t: 'Bisect identified the first bad commit', c: function (r) { var b = byMsg(r, 'Refactor tax config'); return !!r.bisect && r.bisect.found === b; } },
+      { t: 'Bisect was reset — you are back on main', c: function (r) { return !r.bisectState && !r.detached && r.HEAD === 'main'; } }
+    ],
+    hints: ['<code>git bisect start</code>, <code>git bisect bad</code>, <code>git bisect good v1.0</code>', 'Git checks out a middle commit. <code>cat calc.txt</code>: 0.08 → <code>git bisect good</code>; anything else → <code>git bisect bad</code>.', 'Repeat until it prints "is the first bad commit", then <code>git bisect reset</code>.'],
+    solution: ['git bisect start', 'git bisect bad', 'git bisect good v1.0', 'cat calc.txt', 'git bisect bad', 'cat calc.txt', 'git bisect good', 'cat calc.txt', 'git bisect good', 'git bisect reset'],
+    debrief: '"Refactor tax config" turned 0.08 into 0.8 — a typo hidden in a commit with an innocent name. Bisect found it in three tests instead of reading seven diffs.'
+  };
+
+  L['gt-secret'] = {
+    kind: 'git', title: 'Pull a secret out before it is pushed',
+    brief: 'Your last commit <b>"Add payment config"</b> accidentally included <code>.env</code> with a live key — it is <b>not pushed yet</b>. Fix it before anyone sees it:<br>1) Undo the commit but keep the changes (<code>git reset --soft HEAD~1</code>).<br>2) Unstage <code>.env</code>, add it to <code>.gitignore</code>.<br>3) Recommit the real change (app.js and .gitignore) and push. Keep <code>.env</code> on disk — the app still needs it locally.',
+    pre: SETUP.concat(['echo "app v1" > app.js', 'git add app.js', 'git commit -m "Initial commit"']).concat(REMOTE).concat(['echo "pay = require(\'./pay\')" >> app.js', 'echo "PAY_KEY=sk_live_51Hx" > .env', 'git add .', 'git commit -m "Add payment config"']),
+    tasks: [
+      { t: 'No commit on main contains .env', c: function (r) { return !anyTreeHas(r, r.branches.main, '.env'); } },
+      { t: 'The app.js change is committed', c: function (r) { return /pay = require/.test(r.tree(r.branches.main)['app.js'] || ''); } },
+      { t: '.gitignore ignores .env and is committed', c: function (r) { return r.ignored('.env') && r.tree(r.branches.main)['.gitignore'] !== undefined; } },
+      { t: 'Pushed — origin has no .env anywhere', c: function (r) { return synced(r, 'main') && !Object.keys(r.remote.commits).some(function (id) { return r.remote.commits[id].tree['.env'] !== undefined; }); } },
+      { t: '.env still exists locally', c: function (r) { return r.work['.env'] !== undefined; } }
+    ],
+    hints: ['<code>git reset --soft HEAD~1</code> — the commit is gone, its changes stay staged.', '<code>git restore --staged .env</code>, then <code>echo ".env" &gt; .gitignore</code>', '<code>git add app.js .gitignore</code>, <code>git commit -m "Add payment config"</code>, <code>git push</code>. Check <code>git status</code>: .env should not appear.'],
+    solution: ['git show --stat', 'git reset --soft HEAD~1', 'git restore --staged .env', 'echo ".env" > .gitignore', 'git add app.js .gitignore', 'git commit -m "Add payment config"', 'git status', 'git push'],
+    debrief: 'Because it never left your machine, rewriting local history was enough. Had it been pushed, the first step would have been rotating the key — history cleanup comes second.'
+  };
+})();
+
+;
 /* Windows track — CMD + PowerShell (concept + read-the-command, no sandbox) */
 (function () {
   var S = COURSE.stages, Q = window.Q, T = window.TYPE, L = COURSE.labs;
@@ -6027,7 +6667,7 @@ COURSE.tools = [];
       var outBuf = log.length ? '' : '';
       log.forEach(function (c) { runRaw(c); if (c.indexOf('#EDIT ') !== 0) hist.push(c); });
       hpos = hist.length;
-      function runRaw(c) { if (kind !== 'git' && c.indexOf('#EDIT ') === 0) { try { var ed = JSON.parse(c.slice(6)); eng.writeFile(ed[0], ed[1]); } catch (e) { } return ''; } return kind === 'git' ? eng.run(c) : eng.run(c).out; }
+      function runRaw(c) { if (c.indexOf('#EDIT ') === 0) { try { var ed = JSON.parse(c.slice(6)); eng.writeFile(ed[0], ed[1]); } catch (e) { } return ''; } return kind === 'git' ? eng.run(c) : eng.run(c).out; }
       function openEditor(path) {
         var old = eng.readFile ? eng.readFile(path) : '';
         var ov = document.createElement('div'); ov.className = 'edov';
@@ -6058,9 +6698,9 @@ COURSE.tools = [];
         '</div>' +
         '<div class="termwrap"><div class="term"><div class="out" id="out"></div>' +
         '<div class="inl"><span class="pr" id="pr"></span><input id="cin" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="send" aria-label="command"></div>' +
-        '<div class="keys" id="keys">' + (kind === 'git' ? ['git ', 'status', 'add ', 'commit -m "', 'log --oneline', 'branch ', 'checkout -b ', 'merge ', 'push ', '↑']
+        '<div class="keys" id="keys">' + (kind === 'git' ? ['git ', 'status', 'add ', 'commit -m "', 'log --oneline', 'branch ', 'switch ', 'merge ', 'push ', 'pull', 'nano ', '↑']
           : ['ls', 'ls -la', 'cd ', 'cat ', 'grep ', '|', '>', '$', 'nano ', 'bash ', '↑', 'Tab']).map(function (k) { return '<button data-k="' + esc(k) + '">' + esc(k.trim() || k) + '</button>'; }).join('') + '</div></div>' +
-        '<p class="dim small">' + (kind === 'git' ? 'A real Git engine: commits, branches, merges, conflicts and a simulated origin. Edit files with <code>echo "text" &gt; file</code>.' : 'A Linux sandbox with a real filesystem, pipes, redirection, globs, text tools and bash scripting. <code>nano FILE</code> opens an editor; <code>bash FILE</code> runs a script; <code>help</code> lists everything.') + '</p></div></div>';
+        '<p class="dim small">' + (kind === 'git' ? 'A real Git engine: commits, branches, merges, conflicts and a simulated origin. Edit files with <code>nano FILE</code> or <code>echo "text" &gt; file</code>.' : 'A Linux sandbox with a real filesystem, pipes, redirection, globs, text tools and bash scripting. <code>nano FILE</code> opens an editor; <code>bash FILE</code> runs a script; <code>help</code> lists everything.') + '</p></div></div>';
 
       var out = $('#out', m), cin = $('#cin', m);
       function draw() {
@@ -6091,7 +6731,7 @@ COURSE.tools = [];
       }
       function run(cmd) {
         var editPath = null;
-        var o = kind === 'git' ? eng.run(cmd) : (function () { var r = eng.run(cmd); if (r.edit) editPath = r.edit; if (r.clear) { outBuf = ''; return null; } return r.out; })();
+        var o = kind === 'git' ? (function () { var go = eng.run(cmd); if (eng.pendingEdit) { editPath = eng.pendingEdit; eng.pendingEdit = null; } return go; })() : (function () { var r = eng.run(cmd); if (r.edit) editPath = r.edit; if (r.clear) { outBuf = ''; return null; } return r.out; })();
         log.push(cmd); api.save({ log: log }); hist.push(cmd); hpos = hist.length;
         if (o !== null) { if (outBuf.length > 60000) outBuf = outBuf.slice(-40000); outBuf += '<span class="cmd">' + esc($('#pr', m).textContent + cmd) + '</span>\n' + (o ? esc(o).replace(/(CONFLICT|fatal:|error:|not a git)/g, '<span style="color:var(--bad)">$1</span>') + (/\n$/.test(o) ? '' : '\n') : ''); }
         draw();

@@ -1,5 +1,5 @@
 /* Cache-first service worker: the whole app works offline after the first visit. */
-var CACHE = 'coderange-55943f9a72';
+var CACHE = 'coderange-4ae586a150';
 var CORE = ['./', './index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(CORE); }).then(function () { return self.skipWaiting(); }));
