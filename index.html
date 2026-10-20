@@ -242,7 +242,461 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build 1d656a7fdf */
+/* build d2a16d91ef */
+/* AwkCore — a small but real awk interpreter for the bash sandbox.
+   Supports: BEGIN/END, pattern-only rules, /regex/ patterns, expressions with
+   fields ($0, $n, $NF), NR, NF, FS/OFS, variables, associative arrays,
+   for (k in a), C-style for, if/else, next, print, printf, ++/--, assignment
+   operators, arithmetic, comparison, ~ !~, && || !, string concatenation,
+   and built-ins length, substr, index, split, toupper, tolower, int, sprintf. */
+(function (root) {
+  'use strict';
+  function AwkError(msg) { this.message = msg; }
+
+  // ---------- lexer ----------
+  function lex(src) {
+    var toks = [], i = 0, n = src.length;
+    function prevAllowsRegex() {
+      var p = toks[toks.length - 1];
+      if (!p) return true;
+      if (p.t === 'num' || p.t === 'str' || p.t === 'name' || p.t === 'regex') return false;
+      if (p.t === 'op' && (p.v === ')' || p.v === ']' || p.v === '$' || p.v === '++' || p.v === '--')) return false;
+      return true;
+    }
+    while (i < n) {
+      var c = src[i];
+      if (c === '\\' && src[i + 1] === '\n') { i += 2; continue; }
+      if (c === ' ' || c === '\t' || c === '\r') { i++; continue; }
+      if (c === '#') { while (i < n && src[i] !== '\n') i++; continue; }
+      if (c === '\n') { toks.push({ t: 'nl' }); i++; continue; }
+      if (/[0-9.]/.test(c) && /[0-9.]/.test(src[i + 1] || c)) {
+        var m = /^(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?/.exec(src.slice(i));
+        if (m) { toks.push({ t: 'num', v: parseFloat(m[0]) }); i += m[0].length; continue; }
+      }
+      if (/[0-9]/.test(c)) { var m2 = /^\d+/.exec(src.slice(i)); toks.push({ t: 'num', v: parseFloat(m2[0]) }); i += m2[0].length; continue; }
+      if (c === '"') {
+        var s = '', j = i + 1;
+        while (j < n && src[j] !== '"') {
+          if (src[j] === '\\' && j + 1 < n) { var e = src[j + 1]; s += e === 'n' ? '\n' : e === 't' ? '\t' : e === '\\' ? '\\' : e === '"' ? '"' : e === '/' ? '/' : '\\' + e; j += 2; }
+          else s += src[j++];
+        }
+        if (j >= n) throw new AwkError('unterminated string');
+        toks.push({ t: 'str', v: s }); i = j + 1; continue;
+      }
+      if (c === '/' && prevAllowsRegex()) {
+        var r = '', k = i + 1;
+        while (k < n && src[k] !== '/') { if (src[k] === '\\' && k + 1 < n) { r += src[k] + src[k + 1]; k += 2; } else r += src[k++]; }
+        if (k >= n) throw new AwkError('unterminated regex');
+        toks.push({ t: 'regex', v: r }); i = k + 1; continue;
+      }
+      if (/[A-Za-z_]/.test(c)) { var w = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i))[0]; toks.push({ t: 'name', v: w }); i += w.length; continue; }
+      var three = src.substr(i, 2);
+      var ops2 = ['+=', '-=', '*=', '/=', '%=', '^=', '==', '!=', '<=', '>=', '&&', '||', '++', '--', '!~'];
+      if (ops2.indexOf(three) >= 0) { toks.push({ t: 'op', v: three }); i += 2; continue; }
+      if ('{}()[];,+-*/%^<>=!~$?:'.indexOf(c) >= 0) { toks.push({ t: 'op', v: c }); i++; continue; }
+      throw new AwkError('unexpected character ' + c);
+    }
+    toks.push({ t: 'eof' });
+    return toks;
+  }
+
+  // ---------- parser ----------
+  function Parser(toks) { this.toks = toks; this.p = 0; }
+  Parser.prototype.peek = function (o) { return this.toks[this.p + (o || 0)]; };
+  Parser.prototype.next = function () { return this.toks[this.p++]; };
+  Parser.prototype.isOp = function (v, o) { var t = this.peek(o); return t.t === 'op' && t.v === v; };
+  Parser.prototype.isName = function (v) { var t = this.peek(); return t.t === 'name' && t.v === v; };
+  Parser.prototype.expectOp = function (v) { if (!this.isOp(v)) throw new AwkError('syntax error: expected ' + v); return this.next(); };
+  Parser.prototype.skipNl = function () { while (this.peek().t === 'nl' || this.isOp(';')) this.next(); };
+  Parser.prototype.skipNlOnly = function () { while (this.peek().t === 'nl') this.next(); };
+
+  Parser.prototype.program = function () {
+    var rules = [];
+    this.skipNl();
+    while (this.peek().t !== 'eof') {
+      var rule = { begin: false, end: false, pattern: null, body: null };
+      if (this.isName('BEGIN')) { this.next(); rule.begin = true; }
+      else if (this.isName('END')) { this.next(); rule.end = true; }
+      else if (!this.isOp('{')) rule.pattern = this.expr(false);
+      this.skipNlOnly();
+      if (this.isOp('{')) rule.body = this.block();
+      rules.push(rule);
+      this.skipNl();
+    }
+    return rules;
+  };
+  Parser.prototype.block = function () {
+    this.expectOp('{');
+    var list = [];
+    this.skipNl();
+    while (!this.isOp('}')) {
+      if (this.peek().t === 'eof') throw new AwkError('syntax error: missing }');
+      list.push(this.stmt());
+      this.skipNl();
+    }
+    this.expectOp('}');
+    return { k: 'block', list: list };
+  };
+  Parser.prototype.simpleOrBlock = function () { this.skipNlOnly(); if (this.isOp('{')) return this.block(); var s = this.stmt(); return s; };
+  Parser.prototype.stmt = function () {
+    if (this.isOp('{')) return this.block();
+    if (this.isName('print') || this.isName('printf')) {
+      var kw = this.next().v, args = [];
+      var paren = false;
+      if (!this.isOp(';') && !this.isOp('}') && this.peek().t !== 'nl' && this.peek().t !== 'eof') {
+        args.push(this.expr(true));
+        while (this.isOp(',')) { this.next(); this.skipNlOnly(); args.push(this.expr(true)); }
+      }
+      return { k: kw, args: args };
+    }
+    if (this.isName('if')) {
+      this.next(); this.expectOp('('); var c = this.expr(false); this.expectOp(')');
+      var th = this.simpleOrBlock(), el = null;
+      var save = this.p; this.skipNl();
+      if (this.isName('else')) { this.next(); el = this.simpleOrBlock(); } else this.p = save;
+      return { k: 'if', c: c, th: th, el: el };
+    }
+    if (this.isName('while')) {
+      this.next(); this.expectOp('('); var wc = this.expr(false); this.expectOp(')');
+      return { k: 'while', c: wc, body: this.simpleOrBlock() };
+    }
+    if (this.isName('for')) {
+      this.next(); this.expectOp('(');
+      if (this.peek().t === 'name' && this.peek(1).t === 'name' && this.peek(1).v === 'in') {
+        var key = this.next().v; this.next(); var arr = this.next().v; this.expectOp(')');
+        return { k: 'forin', key: key, arr: arr, body: this.simpleOrBlock() };
+      }
+      var init = this.isOp(';') ? null : this.expr(false); this.expectOp(';');
+      var cond = this.isOp(';') ? null : this.expr(false); this.expectOp(';');
+      var step = this.isOp(')') ? null : this.expr(false); this.expectOp(')');
+      return { k: 'for', init: init, cond: cond, step: step, body: this.simpleOrBlock() };
+    }
+    if (this.isName('next')) { this.next(); return { k: 'next' }; }
+    if (this.isName('exit')) { this.next(); return { k: 'exit' }; }
+    return { k: 'expr', e: this.expr(false) };
+  };
+
+  // expressions
+  Parser.prototype.expr = function (inPrint) { return this.ternary(inPrint); };
+  Parser.prototype.ternary = function (ip) {
+    var c = this.assign(ip);
+    if (this.isOp('?')) { this.next(); var a = this.ternary(ip); this.expectOp(':'); var b = this.ternary(ip); return { k: 'tern', c: c, a: a, b: b }; }
+    return c;
+  };
+  Parser.prototype.assign = function (ip) {
+    var left = this.or(ip);
+    var t = this.peek();
+    if (t.t === 'op' && ['=', '+=', '-=', '*=', '/=', '%=', '^='].indexOf(t.v) >= 0) {
+      if (left.k !== 'var' && left.k !== 'idx' && left.k !== 'field') throw new AwkError('syntax error: bad assignment');
+      this.next(); var right = this.assign(ip);
+      return { k: 'assign', op: t.v, l: left, r: right };
+    }
+    return left;
+  };
+  Parser.prototype.or = function (ip) { var l = this.and(ip); while (this.isOp('||')) { this.next(); this.skipNlOnly(); l = { k: 'or', a: l, b: this.and(ip) }; } return l; };
+  Parser.prototype.and = function (ip) { var l = this.inop(ip); while (this.isOp('&&')) { this.next(); this.skipNlOnly(); l = { k: 'and', a: l, b: this.inop(ip) }; } return l; };
+  Parser.prototype.inop = function (ip) {
+    var l = this.match(ip);
+    while (this.isName('in')) { this.next(); var arr = this.next().v; l = { k: 'in', key: l, arr: arr }; }
+    return l;
+  };
+  Parser.prototype.match = function (ip) {
+    var l = this.cmp(ip);
+    while (this.isOp('~') || this.isOp('!~')) { var op = this.next().v; l = { k: 'match', neg: op === '!~', a: l, b: this.cmp(ip) }; }
+    return l;
+  };
+  Parser.prototype.cmp = function (ip) {
+    var l = this.concat(ip);
+    var t = this.peek();
+    if (t.t === 'op' && ['==', '!=', '<', '<=', '>=', '>'].indexOf(t.v) >= 0) {
+      if (ip && t.v === '>') return l; // print > file: redirection not supported, stop here
+      this.next(); return { k: 'cmp', op: t.v, a: l, b: this.concat(ip) };
+    }
+    return l;
+  };
+  Parser.prototype.startsOperand = function () {
+    var t = this.peek();
+    if (t.t === 'num' || t.t === 'str' || t.t === 'regex') return true;
+    if (t.t === 'name') return ['in', 'else'].indexOf(t.v) < 0;
+    if (t.t === 'op') return t.v === '$' || t.v === '(' || t.v === '!' || t.v === '++' || t.v === '--';
+    return false;
+  };
+  Parser.prototype.concat = function (ip) {
+    var l = this.add(ip);
+    while (this.startsOperand()) l = { k: 'cat', a: l, b: this.add(ip) };
+    return l;
+  };
+  Parser.prototype.add = function (ip) {
+    var l = this.mul(ip);
+    while (this.isOp('+') || this.isOp('-')) { var op = this.next().v; l = { k: 'bin', op: op, a: l, b: this.mul(ip) }; }
+    return l;
+  };
+  Parser.prototype.mul = function (ip) {
+    var l = this.pow(ip);
+    while (this.isOp('*') || this.isOp('/') || this.isOp('%')) { var op = this.next().v; l = { k: 'bin', op: op, a: l, b: this.pow(ip) }; }
+    return l;
+  };
+  Parser.prototype.pow = function (ip) {
+    var l = this.unary(ip);
+    if (this.isOp('^')) { this.next(); return { k: 'bin', op: '^', a: l, b: this.pow(ip) }; }
+    return l;
+  };
+  Parser.prototype.unary = function (ip) {
+    if (this.isOp('!')) { this.next(); return { k: 'not', a: this.unary(ip) }; }
+    if (this.isOp('-')) { this.next(); return { k: 'neg', a: this.unary(ip) }; }
+    if (this.isOp('+')) { this.next(); return { k: 'pos', a: this.unary(ip) }; }
+    if (this.isOp('++') || this.isOp('--')) { var op = this.next().v; var lv = this.postfix(ip); return { k: 'pre', op: op, l: lv }; }
+    return this.postfix(ip);
+  };
+  Parser.prototype.postfix = function (ip) {
+    var e = this.primary(ip);
+    if ((e.k === 'var' || e.k === 'idx' || e.k === 'field') && (this.isOp('++') || this.isOp('--'))) { var op = this.next().v; return { k: 'post', op: op, l: e }; }
+    return e;
+  };
+  Parser.prototype.primary = function (ip) {
+    var t = this.next();
+    if (t.t === 'num') return { k: 'num', v: t.v };
+    if (t.t === 'str') return { k: 'str', v: t.v };
+    if (t.t === 'regex') return { k: 'regex', v: t.v };
+    if (t.t === 'op' && t.v === '$') { var inner = this.unaryHigh(); return { k: 'field', e: inner }; }
+    if (t.t === 'op' && t.v === '(') { var e = this.expr(false); this.expectOp(')'); return { k: 'group', e: e }; }
+    if (t.t === 'name') {
+      if (this.isOp('(') && FUNCS[t.v]) {
+        this.next(); var args = [];
+        if (!this.isOp(')')) { args.push(this.expr(false)); while (this.isOp(',')) { this.next(); args.push(this.expr(false)); } }
+        this.expectOp(')');
+        return { k: 'call', f: t.v, args: args };
+      }
+      if (t.v === 'length' ) return { k: 'call', f: 'length', args: [] };
+      if (this.isOp('[')) { this.next(); var ix = this.expr(false); while (this.isOp(',')) { this.next(); ix = { k: 'cat', a: { k: 'cat', a: ix, b: { k: 'str', v: '\u001c' } }, b: this.expr(false) }; } this.expectOp(']'); return { k: 'idx', arr: t.v, e: ix }; }
+      return { k: 'var', v: t.v };
+    }
+    throw new AwkError('syntax error near ' + (t.v !== undefined ? t.v : t.t));
+  };
+  Parser.prototype.unaryHigh = function () {
+    // $ binds tighter than everything except grouping: $NF, $(i+1), $i
+    if (this.isOp('(')) { this.next(); var e = this.expr(false); this.expectOp(')'); return e; }
+    if (this.isOp('-')) { this.next(); return { k: 'neg', a: this.unaryHigh() }; }
+    var t = this.next();
+    if (t.t === 'num') return { k: 'num', v: t.v };
+    if (t.t === 'name') return { k: 'var', v: t.v };
+    if (t.t === 'op' && t.v === '$') return { k: 'field', e: this.unaryHigh() };
+    throw new AwkError('syntax error after $');
+  };
+
+  // ---------- runtime ----------
+  var NUMRX = /^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$/;
+  function toNum(v) { if (typeof v === 'number') return v; var m = /^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?/.exec(String(v)); return m ? parseFloat(m[0]) : 0; }
+  function fmtNum(x) {
+    if (Number.isInteger(x)) return String(x);
+    var s = x.toPrecision(6);
+    if (s.indexOf('e') < 0 && s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    return s;
+  }
+  function toStr(v) { return typeof v === 'number' ? fmtNum(v) : String(v); }
+  function looksNum(v) { return typeof v === 'number' || (v && v.strnum && NUMRX.test(v.s)); }
+  function sprintf(fmt, args) {
+    var ai = 0;
+    return String(fmt).replace(/%([-+ 0#]*)(\d+|\*)?(?:\.(\d+|\*))?([diouxXeEfgGcs%])/g, function (all, flags, width, prec, conv) {
+      if (conv === '%') return '%';
+      if (width === '*') width = String(toNum(args[ai++]));
+      if (prec === '*') prec = String(toNum(args[ai++]));
+      var a = args[ai++], s;
+      switch (conv) {
+        case 'd': case 'i': s = String(Math.trunc(toNum(a))); break;
+        case 'o': s = Math.trunc(toNum(a)).toString(8); break;
+        case 'x': s = Math.trunc(toNum(a)).toString(16); break;
+        case 'X': s = Math.trunc(toNum(a)).toString(16).toUpperCase(); break;
+        case 'u': s = String(Math.abs(Math.trunc(toNum(a)))); break;
+        case 'f': s = toNum(a).toFixed(prec === undefined ? 6 : +prec); break;
+        case 'e': case 'E': s = toNum(a).toExponential(prec === undefined ? 6 : +prec); if (conv === 'E') s = s.toUpperCase(); break;
+        case 'g': case 'G': s = fmtNum(toNum(a)); break;
+        case 'c': s = typeof a === 'number' ? String.fromCharCode(a) : String(a === undefined ? '' : toStr(a)).charAt(0); break;
+        default: s = a === undefined ? '' : toStr(a.strnum ? a.s : a); if (prec !== undefined) s = s.slice(0, +prec);
+      }
+      if (flags.indexOf('+') >= 0 && /[dif]/.test(conv) && toNum(a) >= 0) s = '+' + s;
+      if (width && s.length < +width) {
+        var pad = +width - s.length;
+        if (flags.indexOf('-') >= 0) s = s + Array(pad + 1).join(' ');
+        else if (flags.indexOf('0') >= 0 && /[dfie]/.test(conv)) s = (s[0] === '-' ? '-' + Array(pad + 1).join('0') + s.slice(1) : Array(pad + 1).join('0') + s);
+        else s = Array(pad + 1).join(' ') + s;
+      }
+      return s;
+    });
+  }
+  var FUNCS = {
+    length: function (env, a) { return a.length ? toStr(val(a[0])).length : env.fields[0].length; },
+    substr: function (env, a) { var s = toStr(val(a[0])), m = Math.round(toNum(a[1])), n = a.length > 2 ? Math.round(toNum(a[2])) : Infinity; var start = Math.max(m, 1), end = n === Infinity ? s.length + 1 : m + n; return s.slice(start - 1, Math.max(start - 1, end - 1)); },
+    index: function (env, a) { return toStr(val(a[0])).indexOf(toStr(val(a[1]))) + 1; },
+    toupper: function (env, a) { return toStr(val(a[0])).toUpperCase(); },
+    tolower: function (env, a) { return toStr(val(a[0])).toLowerCase(); },
+    int: function (env, a) { return Math.trunc(toNum(val(a[0]))); },
+    sqrt: function (env, a) { return Math.sqrt(toNum(val(a[0]))); },
+    sprintf: function (env, a) { return sprintf(toStr(val(a[0])), a.slice(1).map(val)); },
+    split: null // handled specially (needs array name)
+  };
+  FUNCS.split = true;
+  function val(v) { return v && v.strnum ? v.s : v; }
+
+  function Env(FS) { this.vars = { FS: FS, OFS: ' ', NR: 0, NF: 0 }; this.arrays = {}; this.fields = ['']; this.out = []; }
+  Env.prototype.setRecord = function (line) {
+    this.fields = [line];
+    var fs = this.vars.FS, parts;
+    if (line === '') parts = [];
+    else if (fs === ' ') parts = line.trim().split(/[ \t]+/);
+    else if (fs.length === 1) parts = line.split(fs);
+    else parts = line.split(new RegExp(fs));
+    if (fs === ' ' && line.trim() === '') parts = [];
+    for (var i = 0; i < parts.length; i++) this.fields[i + 1] = parts[i];
+    this.vars.NF = parts.length;
+  };
+  Env.prototype.getField = function (i) {
+    i = Math.trunc(i);
+    if (i < 0) throw new AwkError('attempt to access field ' + i);
+    var v = this.fields[i];
+    return { strnum: true, s: v === undefined ? '' : v };
+  };
+  Env.prototype.setField = function (i, v) {
+    i = Math.trunc(i);
+    if (i === 0) { this.setRecord(toStr(v)); return; }
+    for (var k = this.vars.NF + 1; k < i; k++) this.fields[k] = '';
+    this.fields[i] = toStr(v);
+    if (i > this.vars.NF) this.vars.NF = i;
+    this.fields[0] = this.fields.slice(1, this.vars.NF + 1).join(this.vars.OFS);
+  };
+  Env.prototype.arr = function (name) { return this.arrays[name] || (this.arrays[name] = new Map()); };
+
+  function NextSignal() {} function ExitSignal() {}
+
+  function ev(n, env) {
+    switch (n.k) {
+      case 'num': return n.v;
+      case 'str': return n.v;
+      case 'regex': return new RegExp(n.v).test(env.fields[0]) ? 1 : 0;
+      case 'group': return ev(n.e, env);
+      case 'field': return env.getField(toNum(val(ev(n.e, env))));
+      case 'var':
+        if (n.v === 'NF') return env.vars.NF;
+        if (n.v === 'NR') return env.vars.NR;
+        return env.vars[n.v] === undefined ? { strnum: true, s: '' } : env.vars[n.v];
+      case 'idx': { var a = env.arr(n.arr), key = toStr(val(ev(n.e, env))); if (!a.has(key)) a.set(key, { strnum: true, s: '' }); return a.get(key); }
+      case 'in': return env.arr(n.arr).has(toStr(val(ev(n.key, env)))) ? 1 : 0;
+      case 'cat': return toStr(val(ev(n.a, env))) + toStr(val(ev(n.b, env)));
+      case 'bin': {
+        var x = toNum(val(ev(n.a, env))), y = toNum(val(ev(n.b, env)));
+        if (n.op === '+') return x + y; if (n.op === '-') return x - y; if (n.op === '*') return x * y;
+        if (n.op === '/') { if (y === 0) throw new AwkError('division by zero'); return x / y; }
+        if (n.op === '%') { if (y === 0) throw new AwkError('division by zero in %'); return x % y; }
+        return Math.pow(x, y);
+      }
+      case 'neg': return -toNum(val(ev(n.a, env)));
+      case 'pos': return toNum(val(ev(n.a, env)));
+      case 'not': return truthy(ev(n.a, env)) ? 0 : 1;
+      case 'and': return truthy(ev(n.a, env)) && truthy(ev(n.b, env)) ? 1 : 0;
+      case 'or': return truthy(ev(n.a, env)) || truthy(ev(n.b, env)) ? 1 : 0;
+      case 'tern': return truthy(ev(n.c, env)) ? ev(n.a, env) : ev(n.b, env);
+      case 'match': {
+        var s = toStr(val(ev(n.a, env))), re = n.b.k === 'regex' ? n.b.v : toStr(val(ev(n.b, env)));
+        var hit = new RegExp(re).test(s); return (n.neg ? !hit : hit) ? 1 : 0;
+      }
+      case 'cmp': {
+        var A = ev(n.a, env), B = ev(n.b, env), r;
+        if (looksNum(A) && looksNum(B)) { var p = toNum(val(A)), q = toNum(val(B)); r = n.op === '==' ? p === q : n.op === '!=' ? p !== q : n.op === '<' ? p < q : n.op === '<=' ? p <= q : n.op === '>' ? p > q : p >= q; }
+        else { var u = toStr(val(A)), w = toStr(val(B)); r = n.op === '==' ? u === w : n.op === '!=' ? u !== w : n.op === '<' ? u < w : n.op === '<=' ? u <= w : n.op === '>' ? u > w : u >= w; }
+        return r ? 1 : 0;
+      }
+      case 'assign': {
+        var cur, nv, rv = ev(n.r, env);
+        if (n.op === '=') nv = (rv && rv.strnum) ? rv : rv;
+        else {
+          cur = toNum(val(ev(n.l, env))); var rn = toNum(val(rv));
+          nv = n.op === '+=' ? cur + rn : n.op === '-=' ? cur - rn : n.op === '*=' ? cur * rn : n.op === '/=' ? (rn === 0 ? (function () { throw new AwkError('division by zero'); })() : cur / rn) : n.op === '%=' ? cur % rn : Math.pow(cur, rn);
+        }
+        store(n.l, nv, env); return nv;
+      }
+      case 'pre': case 'post': {
+        var old = toNum(val(ev(n.l, env))), nw = n.op === '++' ? old + 1 : old - 1;
+        store(n.l, nw, env); return n.k === 'pre' ? nw : old;
+      }
+      case 'call': {
+        if (n.f === 'split') {
+          var str = toStr(val(ev(n.args[0], env))), arrName = n.args[1].v, sep = n.args.length > 2 ? toStr(val(ev(n.args[2], env))) : env.vars.FS;
+          var pieces = str === '' ? [] : (sep === ' ' ? str.trim().split(/[ \t]+/) : str.split(sep.length === 1 ? sep : new RegExp(sep)));
+          var m = new Map(); pieces.forEach(function (pc, i) { m.set(String(i + 1), { strnum: true, s: pc }); }); env.arrays[arrName] = m;
+          return pieces.length;
+        }
+        var evArgs = n.args.map(function (x) { return ev(x, env); });
+        return FUNCS[n.f](env, evArgs);
+      }
+    }
+    throw new AwkError('cannot evaluate ' + n.k);
+  }
+  function truthy(v) { if (v && v.strnum) return NUMRX.test(v.s) ? toNum(v.s) !== 0 : v.s !== ''; if (typeof v === 'number') return v !== 0; return String(v) !== ''; }
+  function store(l, v, env) {
+    if (l.k === 'var') { if (l.v === 'NF') { env.vars.NF = toNum(v); env.fields = env.fields.slice(0, env.vars.NF + 1); env.fields[0] = env.fields.slice(1).join(env.vars.OFS); return; } env.vars[l.v] = v; }
+    else if (l.k === 'idx') env.arr(l.arr).set(toStr(val(ev(l.e, env))), v);
+    else if (l.k === 'field') env.setField(toNum(val(ev(l.e, env))), val(v));
+  }
+  function exec(s, env) {
+    switch (s.k) {
+      case 'block': for (var i = 0; i < s.list.length; i++) exec(s.list[i], env); return;
+      case 'expr': ev(s.e, env); return;
+      case 'print': {
+        if (!s.args.length) { env.out.push(env.fields[0]); return; }
+        env.out.push(s.args.map(function (a) { return toStr(val(ev(a, env))); }).join(toStr(env.vars.OFS)));
+        return;
+      }
+      case 'printf': {
+        if (!s.args.length) throw new AwkError('printf: no format');
+        var vals = s.args.map(function (a) { return ev(a, env); });
+        env.out.push({ raw: sprintf(toStr(val(vals[0])), vals.slice(1)) });
+        return;
+      }
+      case 'if': if (truthy(ev(s.c, env))) exec(s.th, env); else if (s.el) exec(s.el, env); return;
+      case 'while': { var guard = 0; while (truthy(ev(s.c, env))) { exec(s.body, env); if (++guard > 100000) throw new AwkError('loop limit'); } return; }
+      case 'for': { if (s.init) ev(s.init, env); var g = 0; while (!s.cond || truthy(ev(s.cond, env))) { exec(s.body, env); if (s.step) ev(s.step, env); if (++g > 100000) throw new AwkError('loop limit'); } return; }
+      case 'forin': { var keys = Array.from(env.arr(s.arr).keys()); keys.forEach(function (k) { env.vars[s.key] = { strnum: true, s: k }; exec(s.body, env); }); return; }
+      case 'next': throw new NextSignal();
+      case 'exit': throw new ExitSignal();
+    }
+  }
+  function render(out) {
+    var s = '';
+    out.forEach(function (o) { s += typeof o === 'object' ? o.raw : o + '\n'; });
+    return s;
+  }
+
+  function run(prog, FS, text) {
+    var rules = new Parser(lex(prog)).program();
+    var env = new Env(FS);
+    var exited = false;
+    try {
+      rules.forEach(function (r) { if (r.begin && r.body) exec(r.body, env); });
+    } catch (e) { if (e instanceof ExitSignal) exited = true; else throw e; }
+    var main = rules.filter(function (r) { return !r.begin && !r.end; });
+    var hasEnd = rules.some(function (r) { return r.end; });
+    if (!exited && (main.length || hasEnd)) {
+      var lines = text.split('\n'); if (lines.length && lines[lines.length - 1] === '') lines.pop();
+      for (var li = 0; li < lines.length && !exited; li++) {
+        env.vars.NR = li + 1; env.setRecord(lines[li]);
+        try {
+          for (var ri = 0; ri < main.length; ri++) {
+            var r = main[ri];
+            if (r.pattern && !truthy(ev(r.pattern, env))) continue;
+            if (r.body) exec(r.body, env); else env.out.push(env.fields[0]);
+          }
+        } catch (e) { if (e instanceof NextSignal) continue; if (e instanceof ExitSignal) { exited = true; break; } throw e; }
+      }
+    }
+    try { rules.forEach(function (r) { if (r.end && r.body) exec(r.body, env); }); } catch (e) { if (!(e instanceof ExitSignal)) throw e; }
+    return render(env.out);
+  }
+
+  var api = { run: run, AwkError: AwkError };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.AwkCore = api;
+})(this);
+
+;
 /* ShSim — Linux bash learning simulator. A virtual filesystem for practicing commands:
    navigation, pipes, redirection, variables, globs, text tools (grep/sed/awk/cut/sort/uniq/wc/head/tail/tr),
    find, permissions (chmod/chown read as octal/symbolic), and small shell scripts (for/if/while/args).
@@ -278,6 +732,7 @@ body.pc .editor{min-height:300px}
       etc: D({ 'hostname': F('range01\n'), 'os-release': F('NAME="Ubuntu"\nVERSION="24.04 LTS"\nID=ubuntu\n'), 'hosts': F('127.0.0.1 localhost\n'), 'timezone': F('America/Chicago\n') }),
       var: D({ log: D({ 'app.log': F('INFO  08:00 service started\nWARN  08:01 cache miss\nERROR 08:02 connection refused\nINFO  08:03 retrying\nERROR 08:04 connection refused\nINFO  08:05 connected\n') }) }),
       tmp: D({}),
+      dev: D({ 'null': F('', 'rw-rw-rw-') }),
       usr: D({ bin: D({}), share: D({}) }),
       bin: D({})
     });
@@ -327,7 +782,7 @@ body.pc .editor{min-height:300px}
   // ---------- tokenizing ----------
   function splitPipes(line) {
     var segs = [], cur = '', q = null;
-    for (var i = 0; i < line.length; i++) { var ch = line[i]; if (q) { cur += ch; if (ch === q) q = null; continue; } if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; } if (ch === '|' && line[i + 1] !== '|') { segs.push(cur); cur = ''; continue; } cur += ch; }
+    for (var i = 0; i < line.length; i++) { var ch = line[i]; if (q) { cur += ch; if (ch === q) q = null; continue; } if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; } if (ch === '\\' && i + 1 < line.length) { cur += ch + line[++i]; continue; } if (ch === '|' && line[i + 1] === '|') { cur += '||'; i++; continue; } if (ch === '|') { segs.push(cur); cur = ''; continue; } cur += ch; }
     segs.push(cur); return segs;
   }
   Shell.prototype.expand = function (tok) {
@@ -341,7 +796,9 @@ body.pc .editor{min-height:300px}
     for (var i = 0; i < seg.length; i++) {
       var ch = seg[i];
       if (q) { if (ch === q) { q = null; } else cur += ch; had = true; continue; }
+      if (ch === '\\' && i + 1 < seg.length) { cur += seg[++i]; had = true; quoted = true; continue; }
       if (ch === '"' || ch === "'") { q = ch; had = true; quoted = true; if (ch === "'") singleQ = true; continue; }
+      if (ch === '>' && cur === '2' && !had) { cur = ''; var ef = ''; i++; if (seg[i] === '&') { i++; ef = '&' + (seg[i] || ''); } else { while (i < seg.length && seg[i] === ' ') i++; while (i < seg.length && seg[i] !== ' ' && seg[i] !== '|') ef += seg[i++]; i--; } redir.err = ef; continue; }
       if (ch === '>') { push(); var ap = seg[i + 1] === '>'; if (ap) i++; var fn = ''; i++; while (i < seg.length && seg[i] === ' ') i++; while (i < seg.length && seg[i] !== ' ' && seg[i] !== '|') fn += seg[i++]; i--; redir.out = fn; redir.append = ap; continue; }
       if (ch === '<') { push(); var fi = ''; i++; while (i < seg.length && seg[i] === ' ') i++; while (i < seg.length && seg[i] !== ' ') fi += seg[i++]; i--; redir.in = fi; continue; }
       if (ch === ' ') { push(); continue; }
@@ -351,6 +808,7 @@ body.pc .editor{min-height:300px}
     var out = [];
     toks.forEach(function (t, idx) {
       var e = t.sq ? t.s : self.expand(t.s); // single-quoted stays literal
+      if (!t.q && (e === '~' || e.indexOf('~/') === 0)) e = self.env.HOME + e.slice(1);
       if (idx === 0 || t.q) { out.push(e); return; }  // first word and quoted words are not globbed
       self.glob(e).forEach(function (g) { out.push(g); });
     });
@@ -383,7 +841,9 @@ body.pc .editor{min-height:300px}
     if (!argv.length || argv[0] === '') return OK('');
     var cmd = argv[0], a = argv.slice(1), flags = a.filter(function (x) { return x[0] === '-' && x !== '-'; }).join('').replace(/-/g, ''), args = a.filter(function (x) { return x[0] !== '-' || x === '-'; });
     var r = this.dispatch(cmd, a, args, flags, stdin);
-    if (r.code === 0 && redir.out) { var par = this.parent(redir.out); if (!par.dir || par.dir.t !== 'd') return ERR('bash: ' + redir.out + ': No such file or directory'); var ex = par.dir.c[par.name]; par.dir.c[par.name] = F((redir.append && ex && ex.t === 'f' ? ex.d : '') + r.out, ex && ex.mode); r = OK(''); }
+    if (redir.err) { if (redir.err === '&1') { r = { out: r.out + (r.err ? (r.err.slice(-1) === '\n' ? r.err : r.err + '\n') : ''), err: '', code: r.code }; } else { if (redir.err !== '/dev/null' && r.err) { var ep = this.parent(redir.err); if (ep.dir && ep.dir.t === 'd') ep.dir.c[ep.name] = F(r.err.slice(-1) === '\n' ? r.err : r.err + '\n'); } r = { out: r.out, err: '', code: r.code }; } }
+    if (redir.out === '/dev/null') { r = { out: '', err: r.err, code: r.code }; redir.out = null; }
+    if (redir.out) { var par = this.parent(redir.out); if (!par.dir || par.dir.t !== 'd') return ERR('bash: ' + redir.out + ': No such file or directory'); var ex = par.dir.c[par.name]; par.dir.c[par.name] = F((redir.append && ex && ex.t === 'f' ? ex.d : '') + r.out, ex && ex.mode); r = { out: '', err: r.err, code: r.code }; }
     return r;
   };
 
@@ -411,10 +871,60 @@ body.pc .editor{min-height:300px}
       }
       case 'tac': { var src = args.length ? (self.node(args[0]) || {}).d || '' : stdin; return OK(lines(src).reverse().join('\n') + '\n'); }
       case 'head': { var k = num(a, 10); var src = readSrc(self, args, stdin); if (src == null) return ERR('head: cannot open'); return OK(lines(src).slice(0, k).join('\n') + '\n'); }
-      case 'tail': { var k2 = num(a, 10); var s2 = readSrc(self, args, stdin); if (s2 == null) return ERR('tail: cannot open'); return OK(lines(s2).slice(-k2).join('\n') + '\n'); }
-      case 'wc': { var s3 = readSrc(self, args, stdin) || ''; var ls = lines(s3), words = s3.split(/\s+/).filter(Boolean).length, chars = s3.length; if (flags.indexOf('l') >= 0) return OK(ls.length + '\n'); if (flags.indexOf('w') >= 0) return OK(words + '\n'); if (flags.indexOf('c') >= 0) return OK(chars + '\n'); return OK('  ' + ls.length + '  ' + words + '  ' + chars + (args[0] ? ' ' + args[0] : '') + '\n'); }
+      case 'tail': {
+        var plus = null, ta = a.slice();
+        for (var ti = 0; ti < ta.length; ti++) { var pm = /^(?:-n)?\+(\d+)$/.exec(ta[ti]); if (pm) { plus = +pm[1]; ta.splice(ti, 1); break; } if (ta[ti] === '-n' && /^\+\d+$/.test(ta[ti + 1] || '')) { plus = +ta[ti + 1].slice(1); ta.splice(ti, 2); break; } }
+        var targs = args.filter(function (x) { return !/^\+\d+$/.test(x); });
+        var s2 = readSrc(self, targs, stdin); if (s2 == null) return ERR('tail: cannot open');
+        var tl = lines(s2), res = plus !== null ? tl.slice(Math.max(plus - 1, 0)) : tl.slice(-num(ta, 10));
+        return OK(res.length ? res.join('\n') + '\n' : '');
+      }
+      case 'wc': {
+        var wfiles = args.length ? args : [null], rows = [], tot = [0, 0, 0];
+        var wl = flags.indexOf('l') >= 0, ww = flags.indexOf('w') >= 0, wcf = flags.indexOf('c') >= 0, all = !wl && !ww && !wcf;
+        for (var wi = 0; wi < wfiles.length; wi++) {
+          var wsrc; if (wfiles[wi] === null) wsrc = stdin || ''; else { var wn = self.node(wfiles[wi]); if (!wn || wn.t !== 'f') return ERR('wc: ' + wfiles[wi] + ': No such file or directory'); wsrc = wn.d; }
+          var cnt = [(wsrc.match(/\n/g) || []).length, wsrc.split(/\s+/).filter(Boolean).length, wsrc.length];
+          tot = tot.map(function (v, k) { return v + cnt[k]; });
+          rows.push([cnt, wfiles[wi]]);
+        }
+        if (wfiles.length > 1) rows.push([tot, 'total']);
+        return OK(rows.map(function (r) { var c = r[0], parts = all ? ['  ' + c[0], ' ' + c[1], ' ' + c[2]] : [].concat(wl ? [c[0]] : [], ww ? [c[1]] : [], wcf ? [c[2]] : []); return (all ? parts.join(' ') : parts.join(' ')) + (r[1] ? ' ' + r[1] : ''); }).join('\n') + '\n');
+      }
       case 'grep': return this.grep(a, args, flags, stdin);
-      case 'sort': { var s4 = lines(readSrc(self, args, stdin) || ''); var nflag = flags.indexOf('n') >= 0, rflag = flags.indexOf('r') >= 0, uflag = flags.indexOf('u') >= 0; s4.sort(function (x, y) { return nflag ? (parseFloat(x) || 0) - (parseFloat(y) || 0) : (x < y ? -1 : x > y ? 1 : 0); }); if (rflag) s4.reverse(); if (uflag) s4 = s4.filter(function (v, i) { return i === 0 || v !== s4[i - 1]; }); return OK(s4.join('\n') + '\n'); }
+      case 'sort': {
+        var nflag = false, rflag = false, uflag = false, sep = null, key = null, sfiles = [];
+        for (var si = 0; si < a.length; si++) {
+          var sx = a[si];
+          if (sx === '-t') { sep = (a[++si] || '').replace(/^["']|["']$/g, ''); continue; }
+          if (/^-t./.test(sx)) { sep = sx.slice(2).replace(/^["']|["']$/g, ''); continue; }
+          if (sx === '-k') { key = a[++si]; continue; }
+          if (/^-k./.test(sx)) { key = sx.slice(2); continue; }
+          if (/^-[nruf]+$/.test(sx)) { if (sx.indexOf('n') >= 0) nflag = true; if (sx.indexOf('r') >= 0) rflag = true; if (sx.indexOf('u') >= 0) uflag = true; continue; }
+          sfiles.push(sx);
+        }
+        if (key) { var km = /^(\d+)(n|r|nr|rn)?(?:,(\d+))?/.exec(key); if (km && km[2]) { if (km[2].indexOf('n') >= 0) nflag = true; if (km[2].indexOf('r') >= 0) rflag = true; } }
+        var ssrc = readSrc(self, sfiles, stdin); if (ssrc == null) return ERR('sort: cannot read: No such file or directory');
+        var s4 = lines(ssrc);
+        var kf = key ? +(/^(\d+)/.exec(key) || [0, 1])[1] : 0, ke = key ? (/,(\d+)/.exec(key) || [])[1] : undefined;
+        function keyOf(line) {
+          if (!kf) return line;
+          var parts = sep !== null ? line.split(sep) : line.trim().split(/\s+/);
+          var end = ke !== undefined ? +ke : parts.length;
+          return parts.slice(kf - 1, end).join(sep !== null ? sep : ' ');
+        }
+        var idx = s4.map(function (l, i) { return { l: l, k: keyOf(l), i: i }; });
+        idx.sort(function (x, y) {
+          var c;
+          if (nflag) { var p = parseFloat(x.k), q = parseFloat(y.k); c = (isNaN(p) ? 0 : p) - (isNaN(q) ? 0 : q); }
+          else c = x.k < y.k ? -1 : x.k > y.k ? 1 : 0;
+          if (rflag) c = -c;
+          return c || (x.l < y.l ? -1 : x.l > y.l ? 1 : 0) * (rflag ? -1 : 1) || x.i - y.i;
+        });
+        var sorted = idx.map(function (o) { return o.l; });
+        if (uflag) sorted = sorted.filter(function (v, i) { return i === 0 || keyOf(v) !== keyOf(sorted[i - 1]); });
+        return OK(sorted.length ? sorted.join('\n') + '\n' : '');
+      }
       case 'uniq': { var s5 = lines(readSrc(self, args, stdin) || ''), cflag = flags.indexOf('c') >= 0, out5 = [], last = null, cnt = 0; s5.forEach(function (l) { if (l === last) cnt++; else { if (last !== null) out5.push(cflag ? ('      ' + cnt).slice(-7) + ' ' + last : last); last = l; cnt = 1; } }); if (last !== null) out5.push(cflag ? ('      ' + cnt).slice(-7) + ' ' + last : last); return OK(out5.join('\n') + '\n'); }
       case 'nl': { var s6 = lines(readSrc(self, args, stdin) || ''); return OK(s6.map(function (l, i) { return ('     ' + (i + 1)).slice(-6) + '\t' + l; }).join('\n') + '\n'); }
       case 'cut': return this.cut(a, args, stdin);
@@ -460,39 +970,175 @@ body.pc .editor{min-height:300px}
   function expandSet(s) { return s.replace(/a-z/g, 'abcdefghijklmnopqrstuvwxyz').replace(/A-Z/g, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ').replace(/0-9/g, '0123456789').split(''); }
 
   Shell.prototype.grep = function (a, args, flags, stdin) {
-    var self = this, iflag = flags.indexOf('i') >= 0, vflag = flags.indexOf('v') >= 0, cflag = flags.indexOf('c') >= 0, nflag = flags.indexOf('n') >= 0, Eflag = flags.indexOf('E') >= 0, oflag = flags.indexOf('o') >= 0, rflag = flags.indexOf('r') >= 0 || flags.indexOf('R') >= 0;
-    var pat = args[0]; if (pat == null) return ERR('usage: grep PATTERN [FILE]');
-    var re; try { re = new RegExp(Eflag ? pat : pat.replace(/([.*+?^${}()|[\]\\])/g, function (m2) { return '\\' + m2; }).replace(/\\\.\\\*/g, '.*'), iflag ? 'i' : ''); } catch (e) { return ERR('grep: invalid pattern'); }
-    // allow basic regex in default mode too
-    try { re = new RegExp(pat, iflag ? 'i' : ''); } catch (e) { }
-    var sources = [];
-    if (rflag && args[1]) { this.walk(args[1], function (path, node) { if (node.t === 'f') sources.push([path, node.d]); }); }
-    else if (args.length > 1) { for (var i = 1; i < args.length; i++) { var n = self.node(args[i]); if (n && n.t === 'f') sources.push([args[i], n.d]); else return ERR('grep: ' + args[i] + ': No such file or directory'); } }
+    var self = this, iflag = flags.indexOf('i') >= 0, vflag = flags.indexOf('v') >= 0, cflag = flags.indexOf('c') >= 0, nflag = flags.indexOf('n') >= 0, oflag = flags.indexOf('o') >= 0, rflag = flags.indexOf('r') >= 0 || flags.indexOf('R') >= 0, hflag = flags.indexOf('h') >= 0, lflag = flags.indexOf('l') >= 0, wflag = flags.indexOf('w') >= 0, xflag = flags.indexOf('x') >= 0;
+    var pat = args[0]; if (pat == null) return ERR('usage: grep [-icnvorhlwxE] PATTERN [FILE...]');
+    var Eflag = flags.indexOf('E') >= 0, Fflag = flags.indexOf('F') >= 0;
+    var src0 = Fflag ? pat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : (Eflag ? pat : breToJs(pat));
+    if (wflag) src0 = '\\b(?:' + src0 + ')\\b'; if (xflag) src0 = '^(?:' + src0 + ')$';
+    var re; try { re = new RegExp(src0, iflag ? 'i' : ''); } catch (e) { return ERR('grep: invalid pattern'); }
+    var sources = [], targets = args.slice(1);
+    if (rflag) {
+      if (!targets.length) targets = ['.'];
+      for (var t = 0; t < targets.length; t++) {
+        var tn = self.node(targets[t]); if (!tn) return ERR('grep: ' + targets[t] + ': No such file or directory');
+        if (tn.t === 'f') { sources.push([targets[t], tn.d]); continue; }
+        var base = targets[t] === '.' ? '.' : self.norm(targets[t]), shown = targets[t] === '/' ? '' : targets[t].replace(/\/+$/, '');
+        this.walk(targets[t], function (path, node) { if (node.t === 'f') sources.push([shown + path.slice(base.length), node.d]); });
+      }
+    } else if (targets.length) { for (var i = 0; i < targets.length; i++) { var n = self.node(targets[i]); if (n && n.t === 'f') sources.push([targets[i], n.d]); else if (n && n.t === 'd') return ERR('grep: ' + targets[i] + ': Is a directory'); else return ERR('grep: ' + targets[i] + ': No such file or directory'); } }
     else sources.push([null, stdin || '']);
-    var out = [], multi = sources.length > 1;
+    var out = [], multi = sources.length > 1 && !hflag, total = 0;
     sources.forEach(function (src) {
+      var cnt = 0;
       lines(src[1]).forEach(function (l, idx) {
         var m = re.test(l); if (vflag) m = !m;
-        if (m) { if (oflag) { var mm = l.match(new RegExp(re.source, 'g' + (iflag ? 'i' : ''))); (mm || []).forEach(function (x) { out.push(x); }); } else out.push((multi ? src[0] + ':' : '') + (nflag ? (idx + 1) + ':' : '') + l); }
+        if (!m) return; cnt++;
+        if (cflag || lflag) return;
+        var pre = (multi ? src[0] + ':' : '') + (nflag ? (idx + 1) + ':' : '');
+        if (oflag && !vflag) { (l.match(new RegExp(re.source, 'g' + (iflag ? 'i' : ''))) || []).forEach(function (x) { out.push(pre + x); }); }
+        else out.push(pre + l);
       });
+      total += cnt;
+      if (lflag && cnt) out.push(src[0] || '(standard input)');
+      if (cflag) out.push((multi ? src[0] + ':' : '') + cnt);
     });
-    if (cflag) return OK(out.length + '\n');
-    return out.length ? OK(out.join('\n') + '\n') : { out: '', err: '', code: 1 };
+    var res = out.length ? out.join('\n') + '\n' : '';
+    return total ? OK(res) : { out: cflag ? res : '', err: '', code: 1 };
   };
   Shell.prototype.cut = function (a, args, stdin) {
-    var self = this, delim = '\t', fieldSpec = null, charSpec = null;
-    for (var i = 0; i < a.length; i++) { if (a[i] === '-d') delim = a[++i]; else if (a[i].indexOf('-d') === 0) delim = a[i].slice(2); else if (a[i] === '-f') fieldSpec = a[++i]; else if (a[i].indexOf('-f') === 0) fieldSpec = a[i].slice(2); else if (a[i].indexOf('-c') === 0) charSpec = a[i].slice(2) || a[++i]; }
-    if (delim === '') delim = '\t'; delim = delim.replace(/^["']|["']$/g, '');
-    var files = args.filter(function (x) { return x[0] !== '-' && x !== delim && x !== fieldSpec; });
-    var src = files.length ? (self.node(files[0]) || { d: '' }).d : (stdin || '');
-    var want = parseRanges(fieldSpec || charSpec);
-    return OK(lines(src).map(function (l) {
-      if (charSpec) return want.map(function (i) { return l[i - 1] || ''; }).join('');
-      var parts = l.split(delim); return want.filter(function (i) { return i <= parts.length; }).map(function (i) { return parts[i - 1]; }).join(delim);
-    }).join('\n') + '\n');
+    var self = this, delim = '\t', fieldSpec = null, charSpec = null, files = [];
+    for (var i = 0; i < a.length; i++) {
+      var x = a[i];
+      if (x === '-d') delim = a[++i]; else if (x.indexOf('-d') === 0) delim = x.slice(2);
+      else if (x === '-f') fieldSpec = a[++i]; else if (x.indexOf('-f') === 0) fieldSpec = x.slice(2);
+      else if (x === '-c') charSpec = a[++i]; else if (x.indexOf('-c') === 0) charSpec = x.slice(2);
+      else files.push(x);
+    }
+    if (delim == null || delim === '') delim = '\t'; delim = delim.replace(/^["']|["']$/g, '') || ' ';
+    if (delim.length > 1) return ERR('cut: the delimiter must be a single character');
+    if (!fieldSpec && !charSpec) return ERR('cut: you must specify a list of bytes, characters, or fields');
+    var src = '';
+    if (files.length) { for (var f = 0; f < files.length; f++) { var nd = self.node(files[f]); if (!nd || nd.t !== 'f') return ERR('cut: ' + files[f] + ': No such file or directory'); src += nd.d; } }
+    else src = stdin || '';
+    var spec = fieldSpec || charSpec;
+    function pick(n) { var o = []; spec.split(',').forEach(function (p) { var m = /^(\d*)-(\d*)$/.exec(p); if (m) { var lo = m[1] ? +m[1] : 1, hi = m[2] ? +m[2] : n; for (var k = lo; k <= hi && k <= n; k++) o.push(k); } else if (/^\d+$/.test(p) && +p <= n) o.push(+p); }); return o; }
+    var ls = lines(src);
+    return OK(ls.length ? ls.map(function (l) {
+      if (charSpec) return pick(l.length).map(function (k) { return l[k - 1]; }).join('');
+      if (l.indexOf(delim) < 0) return l;
+      var parts = l.split(delim); return pick(parts.length).map(function (k) { return parts[k - 1]; }).join(delim);
+    }).join('\n') + '\n' : '');
   };
   function parseRanges(spec) { var out = []; (spec || '1').split(',').forEach(function (p) { var m = p.match(/^(\d+)-(\d+)$/); if (m) { for (var i = +m[1]; i <= +m[2]; i++) out.push(i); } else if (/^\d+$/.test(p)) out.push(+p); }); return out; }
+  // ---- real (small) sed: addresses N, $, /re/, ranges, !, commands s d p q = ; -n -e -i ----
+  function breToJs(p) {
+    var o = '', i = 0;
+    while (i < p.length) {
+      var ch = p[i];
+      if (ch === '\\' && i + 1 < p.length) { var nx = p[i + 1]; if ('(){}+?|'.indexOf(nx) >= 0) o += nx; else o += ch + nx; i += 2; continue; }
+      if ('(){}+?|'.indexOf(ch) >= 0) o += '\\' + ch; else o += ch;
+      i++;
+    }
+    return o;
+  }
+  function sedParse(src, ere) {
+    var cvt = ere ? function (x) { return x; } : breToJs;
+    var cmds = [], i = 0, n = src.length;
+    function readRe(delim) { var r = ''; while (i < n && src[i] !== delim) { if (src[i] === '\\' && i + 1 < n) { if (src[i + 1] === delim) { r += delim; i += 2; continue; } r += src[i] + src[i + 1]; i += 2; continue; } r += src[i++]; } if (i >= n) throw new Error('unterminated address regex'); i++; return r; }
+    function readAddr() {
+      if (i < n && /\d/.test(src[i])) { var d = ''; while (i < n && /\d/.test(src[i])) d += src[i++]; return { k: 'line', v: +d }; }
+      if (src[i] === '$') { i++; return { k: 'last' }; }
+      if (src[i] === '/') { i++; return { k: 're', v: new RegExp(cvt(readRe('/'))) }; }
+      return null;
+    }
+    while (i < n) {
+      while (i < n && /[\s;]/.test(src[i])) i++;
+      if (i >= n) break;
+      var c = { a1: readAddr(), a2: null, neg: false, on: false };
+      if (c.a1 && src[i] === ',') { i++; c.a2 = readAddr(); if (!c.a2) throw new Error('bad range'); }
+      while (src[i] === ' ') i++;
+      if (src[i] === '!') { c.neg = true; i++; while (src[i] === ' ') i++; }
+      var op = src[i++];
+      if (op === 's') {
+        var dl = src[i++], pat = readRe(dl), rep = '';
+        while (i < n && src[i] !== dl) { if (src[i] === '\\' && i + 1 < n) { rep += src[i] + src[i + 1]; i += 2; } else rep += src[i++]; }
+        if (i >= n) throw new Error('unterminated s command'); i++;
+        var fl = ''; while (i < n && /[gpiI0-9]/.test(src[i])) fl += src[i++];
+        c.op = 's'; c.flags = fl; c.rep = rep;
+        c.re = new RegExp(cvt(pat), (fl.indexOf('g') >= 0 ? 'g' : '') + (/[iI]/.test(fl) ? 'i' : ''));
+      } else if ('dpq='.indexOf(op) >= 0 && op) c.op = op;
+      else throw new Error('unknown command: ' + (op || '(none)'));
+      cmds.push(c);
+    }
+    return cmds;
+  }
+  function sedReplace(rep) {
+    return function (m) {
+      var groups = Array.prototype.slice.call(arguments, 1, arguments.length - 2), out = '';
+      for (var j = 0; j < rep.length; j++) {
+        var ch = rep[j];
+        if (ch === '\\' && j + 1 < rep.length) { var nx = rep[++j]; if (/[1-9]/.test(nx)) out += groups[+nx - 1] || ''; else if (nx === 'n') out += '\n'; else if (nx === 't') out += '\t'; else out += nx; }
+        else if (ch === '&') out += m;
+        else out += ch;
+      }
+      return out;
+    };
+  }
+  function sedRun(cmds, text, nflag) {
+    var ls = lines(text), out = [];
+    function hit(addr, ln, line, last) { return addr.k === 'line' ? ln === addr.v : addr.k === 'last' ? last : addr.v.test(line); }
+    for (var li = 0; li < ls.length; li++) {
+      var ps = ls[li], ln = li + 1, last = li === ls.length - 1, deleted = false, quit = false;
+      for (var ci = 0; ci < cmds.length; ci++) {
+        var c = cmds[ci], m;
+        if (!c.a1) m = true;
+        else if (!c.a2) m = hit(c.a1, ln, ps, last);
+        else if (c.on) { m = true; if (c.a2.k === 'line' ? ln >= c.a2.v : hit(c.a2, ln, ps, last)) c.on = false; }
+        else if (hit(c.a1, ln, ps, last)) { m = true; c.on = !(c.a2.k === 'line' && c.a2.v <= ln); }
+        else m = false;
+        if (c.neg) m = !m;
+        if (!m) continue;
+        if (c.op === 'd') { deleted = true; break; }
+        if (c.op === 'p') out.push(ps);
+        if (c.op === '=') out.push(String(ln));
+        if (c.op === 'q') { quit = true; break; }
+        if (c.op === 's') {
+          c.re.lastIndex = 0; var before = ps;
+          ps = ps.replace(c.re, sedReplace(c.rep));
+          if (ps !== before && c.flags.indexOf('p') >= 0) out.push(ps);
+        }
+      }
+      if (!deleted && !nflag) out.push(ps);
+      if (quit) break;
+    }
+    return out.length ? out.join('\n') + '\n' : '';
+  }
   Shell.prototype.sed = function (a, args, stdin) {
+    var self = this, nflag = false, inplace = false, ere = false, scripts = [], files = [], haveScript = false;
+    for (var i = 0; i < a.length; i++) {
+      var x = a[i];
+      if (x === '-e') { scripts.push(a[++i] || ''); haveScript = true; }
+      else if (/^-[nirE]+$/.test(x)) { if (x.indexOf('n') >= 0) nflag = true; if (x.indexOf('i') >= 0) inplace = true; if (/[rE]/.test(x)) ere = true; }
+      else if (!haveScript) { scripts.push(x); haveScript = true; }
+      else files.push(x);
+    }
+    if (!scripts.length) return ERR('usage: sed [-n] [-i] \'script\' [file...]');
+    var cmds; try { cmds = sedParse(scripts.join('\n'), ere); } catch (e) { return ERR('sed: -e expression #1: ' + e.message); }
+    if (inplace) {
+      if (!files.length) return ERR('sed: no input files');
+      for (var f = 0; f < files.length; f++) {
+        var nd = self.node(files[f]); if (!nd || nd.t !== 'f') return ERR('sed: can\'t read ' + files[f] + ': No such file or directory');
+        cmds.forEach(function (c) { c.on = false; });
+        nd.d = sedRun(cmds, nd.d, nflag);
+      }
+      return OK('');
+    }
+    var src = '';
+    if (files.length) { for (var g = 0; g < files.length; g++) { var fn = self.node(files[g]); if (!fn || fn.t !== 'f') return ERR('sed: can\'t read ' + files[g] + ': No such file or directory'); src += fn.d + (fn.d && !/\n$/.test(fn.d) ? '\n' : ''); } }
+    else src = stdin || '';
+    return OK(sedRun(cmds, src, nflag));
+  };
+  Shell.prototype.sedOld = function (a, args, stdin) {
     var self = this, script = null, files = [], nflag = false;
     a.forEach(function (x) { if (x === '-n') nflag = true; else if (!script && (x.indexOf('s') === 0 || /p$|d$/.test(x) || x.indexOf('s') >= 0)) script = x; else files.push(x); });
     if (!script) { script = args[0]; files = args.slice(1); }
@@ -507,9 +1153,18 @@ body.pc .editor{min-height:300px}
   Shell.prototype.awk = function (a, args, stdin) {
     var self = this, FS = ' ', prog = null, files = [];
     for (var i = 0; i < a.length; i++) { if (a[i] === '-F') FS = a[++i]; else if (a[i].indexOf('-F') === 0) FS = a[i].slice(2); else if (prog === null && a[i][0] !== '-') prog = a[i]; else files.push(a[i]); }
-    FS = FS.replace(/^["']|["']$/g, ''); if (FS === '') FS = ' ';
+    FS = FS.replace(/^["']|["']$/g, ''); if (FS === '') FS = ' '; if (FS === '\\t' || FS === 't' && a.join(' ').indexOf('\\t') >= 0) FS = '\t';
     if (prog === null) return ERR('usage: awk \'{...}\' file');
-    var src = files.length ? (self.node(files[0]) || { d: '' }).d : (stdin || '');
+    var src;
+    if (files.length) {
+      src = '';
+      for (var fi = 0; fi < files.length; fi++) { var fnode = self.node(files[fi]); if (!fnode || fnode.t !== 'f') return ERR('awk: cannot open ' + files[fi] + ' (No such file or directory)'); src += fnode.d + (fnode.d && !/\n$/.test(fnode.d) ? '\n' : ''); }
+    } else src = stdin || '';
+    var core = (typeof AwkCore !== 'undefined') ? AwkCore : (typeof require === 'function' ? require('./awkcore.js') : null);
+    if (core) {
+      try { return OK(core.run(prog, FS, src)); }
+      catch (e) { return ERR('awk: ' + (e && e.message ? e.message : 'syntax error')); }
+    }
     var cond = null, body = prog;
     var pm = prog.match(/^(.*?)\s*\{(.*)\}\s*$/); if (pm) { cond = pm[1].trim(); body = pm[2].trim(); } else { body = prog.trim(); }
     var out = [], sum = {}, self2 = this;
@@ -536,11 +1191,56 @@ body.pc .editor{min-height:300px}
     return OK(out.join('\n') + '\n');
   };
   Shell.prototype.find = function (args, a) {
-    var self = this, start = (args[0] && args[0][0] !== '-') ? args[0] : '.', out = [], namePat = null, typ = null;
-    for (var i = 0; i < a.length; i++) { if (a[i] === '-name') namePat = a[i + 1]; if (a[i] === '-type') typ = a[i + 1]; }
-    var rx = namePat ? new RegExp('^' + namePat.replace(/^["']|["']$/g, '').replace(/[.]/g, '\\.').replace(/\*/g, '.*').replace(/\?/g, '.') + '$') : null;
-    this.walk(start, function (path, node) { if (typ === 'f' && node.t !== 'f') return; if (typ === 'd' && node.t !== 'd') return; if (rx && !rx.test(base(path))) return; out.push(path); });
-    return OK(out.join('\n') + '\n');
+    var self = this, starts = [], i = 0;
+    while (i < a.length && a[i][0] !== '-' && a[i] !== '!' && a[i] !== '(') starts.push(a[i++]);
+    if (!starts.length) starts = ['.'];
+    var tests = [], maxd = Infinity, mind = 0, action = null, execCmd = null;
+    function glob2re(g, ci) { return new RegExp('^' + g.replace(/^["']|["']$/g, '').replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', ci ? 'i' : ''); }
+    var neg = false;
+    for (; i < a.length; i++) {
+      var x = a[i], t = null;
+      if (x === '!' || x === '-not') { neg = true; continue; }
+      if (x === '-name' || x === '-iname') { var r = glob2re(a[++i] || '', x === '-iname'); t = function (r) { return function (p, n) { return r.test(base(p)); }; }(r); }
+      else if (x === '-path') { var rp = glob2re(a[++i] || ''); t = function (r) { return function (p) { return r.test(p); }; }(rp); }
+      else if (x === '-type') { var ty = a[++i]; t = function (ty) { return function (p, n) { return ty === 'f' ? n.t === 'f' : ty === 'd' ? n.t === 'd' : false; }; }(ty); }
+      else if (x === '-empty') t = function (p, n) { return n.t === 'f' ? n.d.length === 0 : Object.keys(n.c).length === 0; };
+      else if (x === '-size') {
+        var sm = /^([+-]?)(\d+)([ckMG]?)$/.exec(a[++i] || ''); if (!sm) return ERR('find: invalid -size argument');
+        var unit = { c: 1, k: 1024, M: 1048576, G: 1073741824, '': 512 }[sm[3]], want = +sm[2], sign = sm[1];
+        t = function (sign, want, unit) { return function (p, n) { if (n.t !== 'f') return false; var sz = Math.ceil(n.d.length / unit); return sign === '+' ? sz > want : sign === '-' ? sz < want : sz === want; }; }(sign, want, unit);
+      }
+      else if (x === '-perm') { var pm = a[++i] || ''; t = function (pm) { return function (p, n) { return sym2oct(n.mode) === pm.replace(/^0/, ''); }; }(pm); }
+      else if (x === '-maxdepth') { maxd = +a[++i]; continue; }
+      else if (x === '-mindepth') { mind = +a[++i]; continue; }
+      else if (x === '-print') { continue; }
+      else if (x === '-delete') { action = 'delete'; continue; }
+      else if (x === '-exec') { var ec = []; i++; while (i < a.length && a[i] !== ';' && a[i] !== '\;' && a[i] !== '+') ec.push(a[i++]); if (i >= a.length) return ERR("find: missing argument to `-exec'"); execCmd = ec; action = 'exec'; continue; }
+      else if (x === '-a' || x === '-and') continue;
+      else return ERR('find: unknown predicate `' + x + "'");
+      if (neg) { var inner = t; t = function (p, n) { return !inner(p, n); }; neg = false; }
+      tests.push(t);
+    }
+    var hits = [];
+    for (var s0 = 0; s0 < starts.length; s0++) {
+      var st = starts[s0]; if (!self.node(st)) return ERR("find: '" + st + "': No such file or directory");
+      var baseP = st === '.' ? '.' : self.norm(st), depth0 = baseP === '/' ? 0 : baseP.split('/').length;
+      this.walk(st, function (path, node) {
+        var d = path === baseP ? 0 : path.split('/').length - depth0;
+        if (d > maxd || d < mind) return;
+        for (var k = 0; k < tests.length; k++) if (!tests[k](path, node)) return;
+        hits.push([path, node]);
+      });
+    }
+    if (action === 'delete') { hits.reverse().forEach(function (h) { var par = self.parent(h[0]); if (par.dir && par.dir.c[par.name] && (h[1].t === 'f' || !Object.keys(h[1].c).length)) delete par.dir.c[par.name]; }); return OK(''); }
+    if (action === 'exec') {
+      var outs = [];
+      for (var h = 0; h < hits.length; h++) {
+        var line = execCmd.map(function (w) { return w === '{}' ? "'" + hits[h][0] + "'" : (/[\s|;&<>]/.test(w) ? "'" + w + "'" : w); }).join(' ');
+        var r = self.run(line, true); if (r.out) outs.push(r.out.replace(/\n$/, '')); if (r.err) outs.push(r.err);
+      }
+      return OK(outs.length ? outs.join('\n') + '\n' : '');
+    }
+    return OK(hits.length ? hits.map(function (h) { return h[0]; }).join('\n') + '\n' : '');
   };
   Shell.prototype.walk = function (start, fn) {
     var self = this, s = this.norm(start), root = this.node(s); if (!root) return;
@@ -582,20 +1282,48 @@ body.pc .editor{min-height:300px}
   };
 
   // ---------- run a line (pipes, &&, ;) ----------
-  Shell.prototype.run = function (line) {
+  Shell.prototype.run = function (line, nohist) {
     var self = this;
-    this.history.push(line);
+    if (!nohist) this.history.push(line);
     // alias expansion of first word
     var first = line.trim().split(/\s+/)[0]; if (this.aliases[first]) line = line.replace(first, this.aliases[first]);
     var out = '', code = 0, clear = false;
-    line.split(/;/).forEach(function (stmt) {
-      stmt.split(/&&/).every(function (part) {
-        var segs = splitPipes(part), stdin = '', r = { out: '', err: '', code: 0 };
+    // split on a separator only when it is outside single/double quotes
+    function splitOutside(str, sep) {
+      var parts = [], cur = '', q = null;
+      for (var i = 0; i < str.length; i++) {
+        var ch = str[i];
+        if (q) { if (ch === q) q = null; cur += ch; continue; }
+        if (ch === '\\' && i + 1 < str.length) { cur += ch + str[i + 1]; i++; continue; }
+        if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; }
+        if (str.substr(i, sep.length) === sep) { parts.push(cur); cur = ''; i += sep.length - 1; continue; }
+        cur += ch;
+      }
+      parts.push(cur);
+      return parts;
+    }
+    splitOutside(line, ';').forEach(function (stmt) {
+      // split into && / || chain, outside quotes
+      var parts = [], ops = [], cur = '', q = null;
+      for (var ci = 0; ci < stmt.length; ci++) {
+        var ch = stmt[ci];
+        if (q) { if (ch === q) q = null; cur += ch; continue; }
+        if (ch === '\\' && ci + 1 < stmt.length) { cur += ch + stmt[++ci]; continue; }
+        if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; }
+        var two = stmt.substr(ci, 2);
+        if (two === '&&' || two === '||') { parts.push(cur); ops.push(two); cur = ''; ci++; continue; }
+        cur += ch;
+      }
+      parts.push(cur);
+      var last = 0;
+      for (var pi = 0; pi < parts.length; pi++) {
+        if (pi > 0) { var op = ops[pi - 1]; if ((op === '&&' && last !== 0) || (op === '||' && last === 0)) continue; }
+        if (!parts[pi].trim()) continue;
+        var segs = splitPipes(parts[pi]), stdin = '', r = { out: '', err: '', code: 0 };
         for (var i = 0; i < segs.length; i++) { r = self.exec1(segs[i], stdin); if (r.clear) clear = true; stdin = r.out; }
         out += r.out + (r.err ? (r.err.slice(-1) === '\n' ? r.err : r.err + '\n') : '');
-        code = r.code; self.env['?'] = String(code);
-        return code === 0;
-      });
+        code = last = r.code; self.env['?'] = String(code);
+      }
     });
     return { out: out, code: code, clear: clear };
   };
@@ -603,14 +1331,14 @@ body.pc .editor{min-height:300px}
   var CMDS = ['ls', 'cd', 'pwd', 'cat', 'echo', 'grep', 'sed', 'awk', 'cut', 'sort', 'uniq', 'wc', 'head', 'tail', 'tr', 'find', 'chmod', 'mkdir', 'rm', 'cp', 'mv', 'touch', 'man', 'export', 'env', 'which', 'tree', 'file', 'stat', 'nl', 'rev', 'history', 'seq'];
   var MAN = {
     ls: 'LS(1)\n  ls [-l -a -1] [FILE...]\n  List directory contents. -l long format, -a include hidden (dotfiles), -1 one per line.',
-    grep: 'GREP(1)\n  grep [-i -v -c -n -o -r -E] PATTERN [FILE...]\n  Print lines matching a pattern. -i ignore case, -v invert, -c count,\n  -n line numbers, -o only the match, -r recurse, -E extended regex. Reads stdin if no FILE.',
-    sed: 'SED(1)\n  sed \'s/old/new/g\' [FILE]   substitute (g = all on the line, i = ignore case)\n  sed \'/re/d\' [FILE]          delete matching lines\n  sed -n \'/re/p\'  or  -n \'2,5p\'   print only matches / a line range',
-    awk: 'AWK(1)\n  awk -F, \'$3 == "West" {print $4}\'  file\n  Fields are $1..$NF, whole line is $0, line number is NR.\n  pattern {action}; print a,b joins with a space. END {print sum} after a sum+=$n.',
-    cut: 'CUT(1)\n  cut -d DELIM -f LIST   select fields   (e.g. cut -d, -f1,3 sales.csv)\n  cut -c LIST            select characters',
-    sort: 'SORT(1)\n  sort [-n -r -u] [FILE]   -n numeric, -r reverse, -u unique.',
+    grep: 'GREP(1)\n  grep [-i -v -c -n -o -r -h -l -w -x -E -F] PATTERN [FILE...]\n  -i ignore case, -v invert, -c count, -n line numbers, -o only the match,\n  -r recurse into directories, -h hide filenames, -l list matching files,\n  -w whole word, -x whole line, -E extended regex (a|b, +, ?), -F fixed string.',
+    sed: 'SED(1)\n  sed [-n] [-E] [-i] [-e SCRIPT]... [FILE...]\n  Addresses: N  $  /re/  N,M  /a/,/b/   and ! to negate.\n  Commands:  s/re/rep/[g i p]   d (delete)   p (print)   q (quit)   = (line no.)\n  In rep: & = the match, \\1..\\9 = groups. BRE groups are \\( \\); with -E use ( ).\n  -n print only what p says. -i edit the file in place. Join commands with ;',
+    awk: 'AWK(1)\n  awk [-F SEP] \'PROGRAM\' [FILE...]\n  PROGRAM is pattern { action } rules, plus BEGIN{} and END{}.\n  $0 line, $1..$NF fields, NR line no., NF field count, FS/OFS separators.\n  Variables, arrays (c[$1]++), for (k in c), if/else, while, for(;;), next, exit,\n  print, printf "%s %.2f\\n", length substr index split toupper tolower int sprintf.',
+    cut: 'CUT(1)\n  cut -d DELIM -f LIST [FILE...]   select fields (cut -d, -f1,3   -f2-   -f-3)\n  cut -c LIST                      select characters (cut -c1-5)',
+    sort: 'SORT(1)\n  sort [-n -r -u] [-t SEP] [-k N[,M]] [FILE]\n  -n numeric, -r reverse, -u unique, -t field separator, -k sort by field N\n  e.g.  sort -t, -k4 -n sales.csv     sort -k3 -nr servers.txt',
     uniq: 'UNIQ(1)\n  uniq [-c]   collapse ADJACENT duplicate lines; -c prefix counts. Usually: sort | uniq.',
     chmod: 'CHMOD(1)\n  chmod 755 file        rwx r-x r-x (octal: r=4 w=2 x=1)\n  chmod u+x file        add execute for the owner\n  chmod go-w file       remove write for group and others',
-    find: 'FIND(1)\n  find PATH -name "*.txt" -type f\n  Recursively search. -name glob on the filename, -type f (file) or d (directory).',
+    find: 'FIND(1)\n  find [PATH...] [TESTS] [ACTION]\n  Tests: -name GLOB  -iname  -path  -type f|d  -size +N[ckM]/-N  -empty  -perm 644\n         -maxdepth N  -mindepth N   ! / -not to negate\n  Actions: -print (default)  -delete  -exec CMD {} \\;',
     cat: 'CAT(1)\n  cat [FILE...]   print file(s). cat a b > c concatenates into c.',
     echo: 'ECHO(1)\n  echo [-n] TEXT   print text and a newline (-n: no trailing newline). $VAR is expanded.',
     pipe: 'A pipe | sends the standard output of the command on the left to the standard input of the command on the right.'
@@ -1249,88 +1977,214 @@ window.COURSE = {
 })();
 
 ;
-/* Linux — Expert tier: awk/sed/find mastery + practical admin. */
+/* Linux / Bash track — Expert tier: awk programs, sed editing, find, and real admin pipelines */
 (function () {
-  var S = COURSE.stages, Q = window.Q, T = window.TYPE, L = COURSE.labs;
-  var F = window.ShSim.F, D = window.ShSim.D;
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs, F = window.ShSim.F, D = window.ShSim.D;
 
+  var ACCESS = '10.0.0.5 GET /index.html 200 512\n10.0.0.7 GET /login 200 1024\n10.0.0.5 POST /login 401 128\n10.0.0.9 GET /admin 403 64\n10.0.0.5 GET /index.html 200 512\n10.0.0.7 GET /missing 404 0\n10.0.0.9 POST /login 401 128\n10.0.0.9 POST /login 401 128\n10.0.0.7 GET /api/data 500 0\n10.0.0.5 GET /about 200 256\n';
+  var CONF = '# App configuration\nport=8080\nhost=0.0.0.0\n#debug=true\ndebug=false\nlog_level=info\n# end of file\n';
+  function srv() {
+    return D({
+      web: D({ 'access.log': F(ACCESS), 'index.html': F('<h1>hello</h1>\n') }),
+      api: D({ 'api.log': F('2026-01-05 INFO request ok\n2026-01-05 ERROR db timeout\n2026-01-05 WARN slow response\n2026-01-06 ERROR db timeout\n2026-01-06 ERROR auth token expired\n2026-01-06 INFO request ok\n'), old: D({ 'api-2025-12.log': F('2025-12-30 ERROR db timeout\n2025-12-31 INFO request ok\n') }) }),
+      db: D({ 'db.log': F('2026-01-06 ERROR disk nearly full\n2026-01-06 INFO checkpoint complete\n') }),
+      tmp: D({ 'cache1.tmp': F(''), 'cache2.tmp': F('keep me\n'), 'cache3.tmp': F('') }),
+      'app.conf': F(CONF),
+      'README.md': F('# srv\nService files for the practice range.\n')
+    });
+  }
+  function fileLines(e, p) { var n = e.node(p); return n && n.t === 'f' ? n.d.split('\n').map(function (l) { return l.trim(); }).filter(Boolean) : null; }
+  function ran(e, re) { return e.history.some(function (h) { return re.test(h); }); }
+
+  // ================= Stage 4: awk as a programming language =================
   S.push({
-    id: 'lnx4', track: 'linux', tier: 'lnx-x', title: 'awk, sed & find mastery', code: "awk -F, '{s+=$4} END{print s}'", gateN: 12,
-    goal: 'Turn raw text into answers: awk for columns and totals, sed for edits, find for locating files.',
+    id: 'lnx4', track: 'linux', tier: 'lnx-x', title: 'awk mastery: reports from raw data', code: 'awk END print sum', gateN: 12,
+    goal: 'Treat awk as a small programming language: fields, patterns, variables, associative arrays, BEGIN/END and printf — the tool admins reach for to turn logs and CSVs into answers.',
     lesson: [
-      { h: 'awk — columns and totals', html: '<p><code>awk</code> splits each line into fields (<code>$1</code>, <code>$2</code>…) and runs a program per line.</p><pre>awk -F, \'{print $3}\' sales.csv              # column 3 of a CSV\nawk -F, \'$2 == "West" {print $3}\' sales.csv  # filter then print\nawk -F, \'{s+=$4} END {print s}\' sales.csv    # sum column 4</pre><p><code>-F,</code> sets the field separator. <code>END { }</code> runs once after the last line — perfect for totals.</p>' },
-      { h: 'sed — stream edits', html: '<pre>sed \'s/old/new/\' file       # first match per line\nsed \'s/old/new/g\' file      # every match\nsed \'/^#/d\' file            # delete comment lines\nsed -n \'2,4p\' file          # print lines 2-4\nsed \'s/x/y/g\' in > out      # save the result</pre><p>sed prints the edited stream; redirect with <code>&gt;</code> to save it.</p>' },
-      { h: 'find — locate files', html: '<pre>find . -name "*.log"         # by name pattern\nfind ~/projects -type f      # only files\nfind / -type d -name conf    # only directories</pre>' },
-      { h: 'Put them together', html: '<div class="callout pro"><b class="k">The admin toolkit</b>find to locate, grep to filter, awk to compute, sed to transform, sort/uniq to rank, &gt; to save. Every real admin script is a combination of these.</div>' }
+      { h: 'The awk model: pattern { action }', html: '<p>awk reads input <b>one line (record) at a time</b>, splits it into <b>fields</b>, and runs every rule whose pattern matches.</p><pre>awk \'PATTERN { ACTION }\' file\n\nawk \'$4 == 404\' access.log            # pattern only → print matching lines\nawk \'{ print $1 }\' access.log          # action only → runs on every line\nawk \'$4 >= 400 { print $1, $3 }\' access.log</pre><ul><li><code>$0</code> is the whole line; <code>$1</code>…<code>$NF</code> are fields; <code>NF</code> = number of fields, so <code>$NF</code> is the last one.</li><li><code>NR</code> = current line number (record number) across all input.</li><li>Fields split on runs of whitespace by default. <code>-F,</code> (or <code>BEGIN{FS=","}</code>) splits on commas.</li><li>In <code>print a, b</code> the comma inserts <code>OFS</code> (a space by default). <code>print a b</code> with no comma <b>concatenates</b>.</li></ul><div class="callout pro"><b class="k">Always single-quote</b>the program. Inside double quotes the shell would expand <code>$1</code> before awk ever saw it.</div>' },
+      { h: 'Variables, BEGIN and END', html: '<p>Variables need no declaration; they start as 0 / empty string. <code>BEGIN</code> runs before any input, <code>END</code> after the last line — the place to print totals.</p><pre>awk \'{ bytes += $5 } END { print bytes }\' access.log\n\nawk \'BEGIN { print "ip,status" } { print $1 "," $4 }\' access.log\n\nawk -F, \'NR > 1 { units += $4 } END { print "units:", units }\' sales.csv</pre><p><code>NR &gt; 1</code> is the standard trick to <b>skip a CSV header</b>. Forget it and the header row sneaks into your report.</p><p>Averages: <code>END { print total / NR }</code> — or divide by your own counter when a pattern filtered lines.</p>' },
+      { h: 'Associative arrays = group-by', html: '<p>awk arrays are keyed by strings. That makes "count per X" and "sum per X" one-liners — the shell equivalent of SQL <code>GROUP BY</code>.</p><pre># requests per status code\nawk \'{ c[$4]++ } END { for (s in c) print s, c[s] }\' access.log\n\n# bytes per client IP\nawk \'{ b[$1] += $5 } END { for (ip in b) print ip, b[ip] }\' access.log\n\n# revenue per region (units × price), skipping the header\nawk -F, \'NR>1 { r[$2] += $4 * $5 } END { for (k in r) print k, r[k] }\' sales.csv</pre><p><code>for (k in arr)</code> visits keys in <b>no guaranteed order</b> — pipe into <code>sort</code> when order matters. <code>if (k in arr)</code> tests membership without creating the key.</p>' },
+      { h: 'Conditions, logic and printf', html: '<pre>awk \'$2 == "POST" &amp;&amp; $4 == 401 { fails[$1]++ }\n     END { for (ip in fails) if (fails[ip] &gt;= 2) print ip, fails[ip] }\' access.log\n\nawk \'{ if ($4 &gt;= 500) err++; else if ($4 &gt;= 400) warn++ }\n     END { print "5xx:", err+0, "4xx:", warn+0 }\' access.log\n\nawk -F, \'NR>1 { printf "%-8s %8.2f\\n", $2, $4*$5 }\' sales.csv</pre><ul><li>Operators: <code>== != &lt; &lt;= &gt; &gt;=</code>, <code>&amp;&amp; || !</code>, regex match <code>$3 ~ /login/</code> and <code>!~</code>.</li><li><code>printf</code> does not add a newline — write <code>\\n</code> yourself. <code>%s</code> string, <code>%d</code> integer, <code>%.2f</code> two decimals, <code>%-8s</code> left-pad to width 8.</li><li><code>err+0</code> forces a number, so an unset counter prints <code>0</code> instead of an empty string.</li><li>Built-ins: <code>length($0)</code>, <code>substr(s, start, len)</code>, <code>index(s, t)</code>, <code>split(s, arr, sep)</code>, <code>toupper()</code>, <code>tolower()</code>, <code>int()</code>, <code>sprintf()</code>.</li><li><code>next</code> skips to the next line; <code>exit</code> stops reading (END still runs).</li></ul>' },
+      { h: 'Reading the logs like a defender', html: '<p>These one-liners are how you answer incident questions fast, on any Linux box, with no extra tools installed:</p><table><tr><th>Question</th><th>Pipeline</th></tr><tr><td>Who is hitting us most?</td><td><code>awk \'{print $1}\' access.log | sort | uniq -c | sort -rn | head</code></td></tr><tr><td>Which IPs keep failing login?</td><td><code>awk \'$3=="/login" &amp;&amp; $4==401 {f[$1]++} END{for(i in f) print f[i], i}\' access.log | sort -rn</code></td></tr><tr><td>How much traffic did we serve?</td><td><code>awk \'{s+=$5} END{print s}\' access.log</code></td></tr><tr><td>Any server errors?</td><td><code>awk \'$4 &gt;= 500\' access.log</code></td></tr></table><div class="callout pro"><b class="k">Defender mindset</b>A burst of 401s from one IP is the signature of password guessing. Spotting it in your <b>own</b> logs is exactly the skill a SOC analyst uses; acting on it (block, alert, report) is the job.</div>' }
     ],
     cards: [
-      ['awk $N', 'Field N of the current line.'],
-      ['awk -F,', 'Set the field separator (comma for CSV).'],
-      ['awk END { }', 'Runs once after all lines — for totals.'],
-      ["awk '{s+=$4}'", 'Accumulate a column into a variable.'],
-      ['awk condition {action}', 'Only act on lines matching the condition.'],
-      ['sed s/a/b/g', 'Replace every match on each line.'],
-      ['sed /re/d', 'Delete lines matching a pattern.'],
-      ['sed -n N,Mp', 'Print only lines N through M.'],
-      ['find -name', 'Find files by name pattern.'],
-      ['find -type f|d', 'Restrict to files or directories.'],
-      ['> file', 'Save command output to a file.']
+      ['pattern { action }', 'awk runs the action on every line where the pattern is true. Either half can be omitted.'],
+      ['$0 / $1 / $NF', 'Whole line / first field / last field.'], ['NR', 'Current record (line) number across all input.'], ['NF', 'Number of fields on the current line.'],
+      ['-F,', 'Set the field separator to a comma (same as BEGIN{FS=","}).'], ['BEGIN { }', 'Runs once before any input is read.'], ['END { }', 'Runs once after all input — print totals here.'],
+      ['NR > 1', 'Skip the first (header) line.'], ['sum += $5', 'Accumulate a field into a variable.'], ['c[$1]++', 'Count occurrences per key with an associative array.'],
+      ['for (k in a)', 'Loop over array keys — order is not guaranteed; pipe to sort.'], ['print a, b vs print a b', 'Comma inserts OFS (space); no comma concatenates.'],
+      ['printf "%.2f\\n"', 'Formatted output; no automatic newline.'], ['$3 ~ /re/', 'True when field 3 matches the regex.'], ['x+0', 'Force numeric — prints 0 for an unset variable.'],
+      ['sort | uniq -c | sort -rn', 'The classic frequency-ranking pipeline.']
     ],
     qs: [
-      Q('Which prints the 3rd column of a comma-separated file?', "awk -F, '{print $3}' file", ["awk '{print 3}' file", 'cut -f3 file only', 'sed 3p file'], '-F, sets comma; $3 is field 3.', 0),
-      Q('In awk, the END block runs:', 'Once, after the last line is processed', ['Before the first line', 'On every line', 'Never'], 'END = after input.', 0),
-      Q('Sum column 4 of a CSV with awk:', "awk -F, '{s+=$4} END {print s}' file", ["awk '{print sum}' file", "awk -F, 'sum $4' file", 'awk END file'], 'Accumulate then print in END.', 0),
-      Q('sed s/cat/dog/g replaces:', 'Every occurrence of cat on each line', ['Only the first line', 'Only the first occurrence in the file', 'Nothing without -i'], 'g = global per line.', 0),
-      Q('Delete all lines starting with # using sed:', "sed '/^#/d' file", ["sed 's/#//' file", "sed -n '#p' file", "sed '#d'"], '/re/d deletes matches.', 0),
-      Q('Print only lines 2 through 4 with sed:', "sed -n '2,4p' file", ["sed '2,4d' file", "sed 's/2,4//' file", 'sed 2-4 file'], '-n plus N,Mp.', 0),
-      Q('Find every .log file under the current directory:', 'find . -name "*.log"', ['grep .log', 'ls *.log -r', 'locate log only'], 'find -name pattern.', 0),
-      Q('Restrict find to directories only:', 'find . -type d', ['find . -dir', 'find . -name d', 'find -d .'], '-type d.', 0),
-      Q("awk -F, '$2 == \"West\" {print $3}' does what?", 'Prints column 3 only for rows whose column 2 is West', ['Prints every row', 'Deletes West rows', 'Counts columns'], 'Condition + action.', 0),
-      Q('To save sed output to a new file:', "sed 's/a/b/' in > out", ["sed 's/a/b/' in out", 'sed save in', "sed 's/a/b/' >> in only"], 'Redirect with >.', 0),
-      Q('Which tool is best for summing a numeric column?', 'awk', ['sed', 'find', 'tr'], 'awk computes.', 0),
-      T("Type the awk block keyword that runs after all input (one word).", [/^end$/i], 'END', 0, 'keyword')
+      Q('In awk, what is $NF?', 'The last field on the line', ['The number of fields', 'The line number', 'The whole line'], 'NF is the count; $NF uses it as an index, so it is the last field.', 0),
+      Q('Which program prints the total of column 5?', 'awk \'{ s += $5 } END { print s }\'', ['awk \'{ print sum($5) }\'', 'awk \'END { s += $5; print s }\'', 'awk \'BEGIN { s += $5 } { print s }\''], 'Accumulate per line, print once in END.', 0),
+      Q('Your CSV revenue report shows an extra line "region 0". Most likely fix?', 'Add NR > 1 to skip the header row', ['Use -F" "', 'Move the code to BEGIN', 'Add exit'], 'The header line was processed as data.', 0),
+      Q('What does awk \'{ c[$4]++ } END { for (s in c) print s, c[s] }\' produce on a web log?', 'A count of requests per status code', ['The total of column 4', 'Only the last status code', 'The lines sorted by status'], 'Associative array used as group-by.', 0),
+      Q('Why must you usually pipe the output of for (k in arr) into sort?', 'awk does not guarantee key order', ['awk always prints in reverse', 'for-in only prints the first key', 'sort adds the totals'], 'Iteration order is implementation-defined.', 0),
+      Q('Why single-quote the awk program?', 'So the shell does not expand $1, $2 … before awk sees them', ['awk requires it for speed', 'Double quotes disable regex', 'It makes the program run in BEGIN'], 'Inside double quotes $1 is a shell variable.', 0),
+      Q('print $1 $2 (no comma) outputs:', 'The two fields joined with nothing between them', ['The fields separated by a space', 'An error', 'Only $1'], 'Juxtaposition is string concatenation.', 0),
+      Q('Which pattern selects lines whose 3rd field contains "login"?', '$3 ~ /login/', ['$3 == /login/', '$3 = "login"', '/login/ in $3'], '~ is regex match.', 0),
+      Q('printf "%.2f" 3.14159 prints:', '3.14', ['3.14159', '3', '3.1'], 'Two decimal places, and no newline.', 0),
+      Q('A counter that was never incremented prints blank. Easiest way to print 0?', 'Print count+0', ['Print int(count)', 'Declare it in BEGIN as var count', 'Use print -n'], 'Adding 0 forces numeric context.', 0),
+      Q('Which pipeline ranks client IPs by number of requests, busiest first?', 'awk \'{print $1}\' log | sort | uniq -c | sort -rn', ['awk \'{print $1}\' log | uniq -c | sort', 'sort log | awk \'{print $1}\' | head', 'uniq -c log | sort -n'], 'uniq only collapses ADJACENT duplicates, so sort first; then sort -rn by count.', 0),
+      Q('Many POST /login 401 responses from a single IP in a short time most likely indicate:', 'Password guessing (brute force) against the login', ['A healthy load balancer', 'A slow database', 'A cache miss'], 'Repeated auth failures from one source is the classic signature.', 0),
+      Q('Where do you print a final total in awk?', 'In the END block', ['In the BEGIN block', 'In every rule', 'After exit only'], 'END runs after all input is consumed.', 0),
+      Q('awk -F, \'{print NF}\' on the line a,b,,d prints:', '4', ['3', '2', '1'], 'Empty fields still count when the separator is a single character.', 0),
+      P('echo "web01 up 42" | awk \'{ print $NF * 2 }\'', '84', ['42', 'web01', '4242'], '$NF is 42; arithmetic converts it to a number.', 'awk command'),
+      P('printf "a 1\\nb 2\\na 3\\n" | awk \'{ s[$1] += $2 } END { print s["a"] }\'', '4', ['1', '3', '6'], 'Keys a get 1 + 3.', 'awk command'),
+      P('echo "alice,30" | awk -F, \'{ print toupper($1) " is " $2 }\'', 'ALICE is 30', ['alice is 30', 'ALICE,30', 'ALICE 30'], 'toupper, then concatenation with literal strings.', 'awk command'),
+      T('Type an awk program (with quotes) that prints only the 2nd field of every line.', ["awk '{print $2}'", "awk '{ print $2 }'", 'awk "{print \\$2}"'], "awk '{print $2}'", 0, "awk '...'"),
+      T('Type the awk condition that skips a CSV header line.', ['NR > 1', 'NR>1', 'NR >= 2', 'NR>=2'], 'NR > 1', 0, 'NR ...')
     ],
-    labs: ['lx-awk', 'lx-sed', 'lx-find']
+    labs: ['lx-weblog', 'lx-report']
   });
 
-  L['lx-awk'] = {
-    kind: 'sh', title: 'Total the units with awk',
-    brief: '<code>sales.csv</code> has columns date,region,product,units,price.<br>(1) Sum the <b>units</b> column (column 4) with awk and save the total to <code>~/total.txt</code>. (2) Print just the products sold in the <b>West</b> region.',
-    tasks: [
-      { t: 'Used awk with an END block to sum column 4', c: function (e) { return e.history.some(function (h) { return /awk/.test(h) && /\+=\s*\$4/.test(h) && /END/.test(h); }); } },
-      { t: '~/total.txt holds the correct units total', c: function (e) { var n = e.node('/home/phil/total.txt'), s = e.node('/home/phil/sales.csv'); if (!n || !s) return false; var tot = s.d.split('\n').filter(Boolean).slice(1).reduce(function (a, l) { return a + (parseFloat(l.split(',')[3]) || 0); }, 0); return parseFloat(n.d) === tot; } },
-      { t: 'Printed the West products with an awk condition', c: function (e) { return e.history.some(function (h) { return /awk/.test(h) && /West/.test(h) && /\$3/.test(h); }); } }
+  // ================= Stage 5: sed, find and admin pipelines =================
+  S.push({
+    id: 'lnx5', track: 'linux', tier: 'lnx-x', title: 'sed, find & real admin pipelines', code: "sed -i 's/8080/9090/'", gateN: 12,
+    goal: 'Edit files from the command line with sed, locate and act on files with find, and chain everything into the triage pipelines admins and analysts run every day.',
+    lesson: [
+      { h: 'sed: a stream editor', html: '<p><code>sed</code> reads lines, applies commands, and prints the result. Each command can have an <b>address</b> that limits which lines it touches.</p><pre>sed \'s/old/new/\'   file     # first match on each line\nsed \'s/old/new/g\'  file     # every match on each line\nsed \'s/error/ERR/gi\' file    # g = global, i = ignore case\nsed \'3d\'           file     # delete line 3\nsed \'/^#/d\'        file     # delete comment lines\nsed -n \'5,10p\'     file     # print only lines 5–10\nsed -n \'/ERROR/p\'  file     # grep-like\nsed \'2,/end/d\'     file     # range: line 2 through the first line matching end\nsed \'/keep/!d\'     file     # ! negates: delete everything EXCEPT keep\nsed \'10q\'          file     # print the first 10 lines then quit (like head)</pre><p>Join several commands with <code>;</code> or repeat <code>-e</code>: <code>sed -e \'/^#/d\' -e \'s/a/b/\'</code>.</p>' },
+      { h: 'Groups, & and in-place editing', html: '<pre>sed \'s/web/&amp;-server/\'                  # &amp; = whatever matched → web-server01\nsed \'s/^\\([a-z]*\\)\\([0-9]*\\)/\\2-\\1/\'    # BRE groups \\( \\) → 01-web\nsed -E \'s/^([a-z]+)([0-9]+)/\\2-\\1/\'      # -E: extended regex, plain ( ) +\nsed -E \'s/(up|down)/[\\1]/\'</pre><p><code>-i</code> rewrites the file <b>in place</b> — no output, the file just changes.</p><pre>cp app.conf app.conf.bak                 # ALWAYS back up first\nsed -i \'s/^port=8080$/port=9090/\' app.conf\nsed -i \'/^#/d\' app.conf\ndiff app.conf.bak app.conf               # review exactly what changed</pre><div class="callout pro"><b class="k">Pro habit</b>Run the sed <b>without</b> <code>-i</code> first and read the output. Anchor patterns (<code>^port=</code>) so you change only the line you mean — <code>s/8080/9090/</code> would also hit <code>proxy_port=18080</code>.</div>' },
+      { h: 'find: locate files by anything', html: '<pre>find /var/log -type f -name "*.log"       # files by name (quote the glob!)\nfind . -iname "readme*"                  # case-insensitive\nfind . -maxdepth 1 -type d               # only the top level\nfind /tmp -type f -empty                 # zero-byte files\nfind . -size +100M                       # bigger than 100 MB (k, M, G)\nfind . -type f ! -name "*.txt"           # ! negates a test\nfind . -perm 777                         # world-writable — a security red flag\nfind . -name "*.log" -exec grep -c ERROR {} \\;   # run a command per file\nfind /tmp -type f -empty -delete         # act on the results</pre><p>Tests are ANDed left to right. <code>{}</code> is replaced by each path; <code>\\;</code> ends the <code>-exec</code> command (the backslash stops the shell eating the <code>;</code>).</p><div class="callout pro"><b class="k">-delete safely</b>Run the exact find without <code>-delete</code> first, read the list, then add <code>-delete</code> at the <b>end</b>. Put it earlier and it deletes before your filters apply.</div>' },
+      { h: 'grep power flags & exit codes', html: '<pre>grep -r ERROR srv/            # search a whole tree (prefixes file names)\ngrep -rh ERROR srv/           # -h: hide file names (for piping)\ngrep -rl ERROR srv/           # -l: only list which files match\ngrep -c ERROR a.log b.log     # count per file\ngrep -w timeout log           # whole word only\ngrep -E "401|403" access.log  # extended regex alternation\ngrep -v INFO app.log          # invert: everything except INFO</pre><p>Every command returns an <b>exit status</b>: 0 = success, non-zero = failure (grep returns 1 when nothing matched). Chain on it:</p><pre>grep -q ERROR app.log &amp;&amp; echo "errors found"\ncd /srv/app || echo "missing dir"\ncommand 2&gt;/dev/null           # throw away error messages\ncommand &gt; out.txt 2&gt;&amp;1        # stdout AND stderr into one file</pre>' },
+      { h: 'Triage pipelines: put it together', html: '<p>Real questions, answered in one line each:</p><pre># Which log files exist under /srv?\nfind /srv -type f -name "*.log"\n\n# How many ERROR lines across all of them?\ngrep -rh ERROR /srv | wc -l\n\n# What is the most common error message?\ngrep -rh ERROR /srv | cut -d" " -f3- | sort | uniq -c | sort -rn | head -1\n\n# Skip a header, then the top 3 values of column 4\ntail -n +2 sales.csv | sort -t, -k4 -nr | head -3</pre><p>Read them left to right: <b>find</b> the data → <b>filter</b> (grep/awk) → <b>shape</b> (cut/sed) → <b>aggregate</b> (sort/uniq -c/awk arrays) → <b>rank &amp; trim</b> (sort -rn, head). That pattern covers most log questions you will ever be asked.</p>' }
     ],
-    hints: ["Sum: <code>awk -F, '{s+=$4} END {print s}' sales.csv</code>", 'Save it with <code>&gt; ~/total.txt</code>.', "West products: <code>awk -F, '$2 == \"West\" {print $3}' sales.csv</code>"],
-    solution: ["awk -F, '{s+=$4} END {print s}' sales.csv > ~/total.txt", 'cat ~/total.txt', "awk -F, '$2 == \"West\" {print $3}' sales.csv"],
-    debrief: 'Summing a column and filtering by a field are the two awk moves you will use constantly in reports and ops.'
+    cards: [
+      ['s/old/new/g', 'sed substitute; g = every match on the line, i = ignore case.'], ['sed \'/re/d\'', 'Delete lines matching re.'], ['sed -n \'5,10p\'', 'Print only lines 5–10 (-n suppresses default output).'],
+      ['sed \'/re/!d\'', '! negates the address: keep only matching lines.'], ['&', 'In a sed replacement: the whole matched text.'], ['\\1 \\2', 'Captured groups in a sed replacement.'],
+      ['sed -E', 'Extended regex: ( ) + ? | without backslashes.'], ['sed -i', 'Edit the file in place — back it up first.'],
+      ['find -type f -name "*.log"', 'Find regular files by name; quote the glob.'], ['find -empty', 'Zero-byte files or empty directories.'], ['find -size +100M', 'Files larger than 100 MB.'],
+      ['find -exec CMD {} \\;', 'Run a command on each result; {} is the path.'], ['find … -delete', 'Delete matches — dry-run first, put -delete last.'], ['find -perm 777', 'World-writable files — investigate.'],
+      ['grep -rh / -rl', 'Recursive search hiding names / listing only file names.'], ['tail -n +2', 'Everything from line 2 on — skips a header.'], ['sort -t, -k4 -nr', 'Sort a CSV numerically by column 4, largest first.'],
+      ['2>/dev/null', 'Discard error messages.'], ['cmd1 || cmd2', 'Run cmd2 only if cmd1 failed.']
+    ],
+    qs: [
+      Q('sed \'s/cat/dog/\' on the line "cat cat" outputs:', 'dog cat', ['dog dog', 'cat dog', 'cat cat'], 'Without g only the first match per line is replaced.', 0),
+      Q('Delete every line starting with # from config.ini, in place:', 'sed -i \'/^#/d\' config.ini', ['sed \'s/#//g\' config.ini', 'sed -n \'/^#/p\' config.ini', 'grep -v # config.ini > config.ini'], '-i edits in place; /^#/d deletes comment lines. (Redirecting a file onto itself truncates it before grep reads it!)', 0),
+      Q('sed -n \'/ERROR/p\' log is equivalent to:', 'grep ERROR log', ['grep -v ERROR log', 'grep -c ERROR log', 'cat log'], '-n suppresses everything except what p prints.', 0),
+      Q('In sed \'s/[0-9]*/<&>/\', the & means:', 'The text that matched', ['A literal ampersand', 'Run in the background', 'The line number'], '& inserts the match into the replacement.', 0),
+      Q('Before running sed -i on a production config, best practice is to:', 'Copy a backup and run the same sed without -i to preview', ['Run it twice to be sure', 'chmod 777 the file', 'Delete the old file first'], 'Preview, back up, then diff after the change.', 0),
+      Q('Why prefer s/^port=8080$/port=9090/ over s/8080/9090/?', 'Anchors change only the exact line and avoid hitting values like 18080', ['It runs faster', 'sed requires anchors', 'It also updates comments'], 'Precise patterns prevent collateral edits.', 0),
+      Q('Find all regular files ending in .log under /var/log:', 'find /var/log -type f -name "*.log"', ['find *.log /var/log', 'grep -r .log /var/log', 'ls -R /var/log/*.log -type f'], 'PATH first, then tests.', 0),
+      Q('Why quote the pattern in find -name "*.log"?', 'So the shell does not expand the glob before find sees it', ['find needs quotes for speed', 'It enables regex', 'It makes find case-insensitive'], 'Unquoted, *.log could expand to files in the current directory.', 0),
+      Q('In find . -name "*.tmp" -exec rm {} \\; what is {}?', 'Each matched path, substituted in turn', ['The current directory', 'All results joined', 'A placeholder for stdin'], '\\; ends the -exec command.', 0),
+      Q('Which finds world-writable files (a security red flag)?', 'find / -perm 777', ['find / -size 777', 'find / -type 777', 'find / -name 777'], '-perm matches permission bits.', 0),
+      Q('grep -rh ERROR srv | wc -l counts:', 'All ERROR lines across every file under srv', ['The number of files under srv', 'Lines that do not contain ERROR', 'Only the first file'], '-r recurses, -h drops file names, wc -l counts lines.', 0),
+      Q('Skip the header line of data.csv and print the rest:', 'tail -n +2 data.csv', ['tail -n 2 data.csv', 'head -n -1 data.csv', 'tail -2 data.csv'], '+2 means "starting at line 2".', 0),
+      Q('cmd > out.txt 2>&1 does what?', 'Sends both normal output and errors into out.txt', ['Sends only errors to out.txt', 'Discards everything', 'Runs cmd twice'], '2>&1 points stderr wherever stdout points.', 0),
+      Q('grep -q ERROR app.log && echo found prints "found" when:', 'app.log contains ERROR (grep exits 0)', ['app.log has no ERROR', 'Always', 'Never — -q silences echo'], '&& runs only on exit status 0.', 0),
+      Q('Sort sales.csv numerically by its 4th comma-separated column, largest first:', 'sort -t, -k4 -nr sales.csv', ['sort -k4 sales.csv', 'sort -n4 -r sales.csv', 'sort -d, -f4 sales.csv'], '-t sets the separator, -k the key field, -n numeric, -r reverse.', 0),
+      P('printf "a\\nb\\nc\\nd\\n" | sed -n \'2,3p\'', 'b\nc', ['a\nb', 'b', 'a\nd'], 'Only lines 2 through 3 are printed.', 'pipeline'),
+      P('echo "web01 up" | sed -E \'s/([a-z]+)([0-9]+)/\\2-\\1/\'', '01-web up', ['web-01 up', 'web01 up', '01web up'], 'Groups swapped around a hyphen.', 'pipeline'),
+      T('Type the sed command (with quotes) that deletes line 1 of the stream.', ["sed '1d'", 'sed 1d', 'sed "1d"'], "sed '1d'", 0, 'sed ...'),
+      T('Type the find test that matches only zero-byte files.', ['-empty', '-size 0', '-size 0c'], '-empty (or -size 0c)', 0, '-...')
+    ],
+    labs: ['lx-sedconf', 'lx-triage']
+  });
+
+  // ================= labs =================
+  L['lx-weblog'] = {
+    kind: 'sh', title: 'Web log forensics with awk',
+    brief: 'Your web server log is <code>~/srv/web/access.log</code>. Each line is <code>IP METHOD PATH STATUS BYTES</code>. Answer four questions, saving each answer to a file in your home directory:<br>(1) total bytes served → <code>~/bytes.txt</code> (just the number);<br>(2) requests per status code → <code>~/status.txt</code>, one <code>STATUS COUNT</code> per line;<br>(3) the busiest client IP → <code>~/topip.txt</code> (one line);<br>(4) every IP with <b>2 or more</b> failed logins (<code>POST /login</code> → <code>401</code>) → <code>~/suspects.txt</code>, one IP per line.',
+    setup: { extraHome: { srv: srv() } },
+    tasks: [
+      { t: 'bytes.txt holds the correct total of column 5', c: function (e) { var l = fileLines(e, '/home/phil/bytes.txt'); return !!l && l.length === 1 && +l[0] === 2752; } },
+      { t: 'status.txt has the right count for every status code', c: function (e) { var l = fileLines(e, '/home/phil/status.txt'); if (!l) return false; var want = { 200: 4, 401: 3, 403: 1, 404: 1, 500: 1 }, got = {}; l.forEach(function (x) { var p = x.split(/\s+/); if (p.length === 2) got[p[0]] = +p[1]; }); return l.length === 5 && Object.keys(want).every(function (k) { return got[k] === want[k]; }); } },
+      { t: 'topip.txt names the busiest IP (one line)', c: function (e) { var l = fileLines(e, '/home/phil/topip.txt'); return !!l && l.length === 1 && /(^|\s)10\.0\.0\.5$/.test(l[0]); } },
+      { t: 'suspects.txt lists exactly the IPs with 2+ failed logins', c: function (e) { var l = fileLines(e, '/home/phil/suspects.txt'); return !!l && l.length === 1 && l[0].split(/\s+/).indexOf('10.0.0.9') >= 0; } }
+    ],
+    hints: [
+      'Total: <code>awk \'{s += $5} END {print s}\' srv/web/access.log &gt; bytes.txt</code>',
+      'Per status: <code>awk \'{c[$4]++} END {for (s in c) print s, c[s]}\' srv/web/access.log | sort &gt; status.txt</code>',
+      'Busiest IP: print column 1, then <code>sort | uniq -c | sort -rn | head -1</code>',
+      'Suspects: pattern <code>$2=="POST" &amp;&amp; $3=="/login" &amp;&amp; $4==401</code>, count with <code>f[$1]++</code>, and in END print only keys where <code>f[ip] &gt;= 2</code>.'
+    ],
+    solution: [
+      "awk '{s += $5} END {print s}' srv/web/access.log > bytes.txt",
+      "awk '{c[$4]++} END {for (s in c) print s, c[s]}' srv/web/access.log | sort > status.txt",
+      "awk '{print $1}' srv/web/access.log | sort | uniq -c | sort -rn | head -1 > topip.txt",
+      "awk '$2==\"POST\" && $3==\"/login\" && $4==401 {f[$1]++} END {for (ip in f) if (f[ip] >= 2) print ip}' srv/web/access.log > suspects.txt",
+      'cat bytes.txt status.txt topip.txt suspects.txt'
+    ],
+    debrief: 'Sum, group-by, rank, and threshold — the four moves behind nearly every log question. 10.0.0.9 failing the login repeatedly (and also probing /admin) is exactly the pattern you would escalate or block in your own environment.'
   };
 
-  L['lx-sed'] = {
-    kind: 'sh', title: 'Rewrite a config with sed',
-    brief: '<code>app.conf</code> points at a staging server and has comment lines.<br>(1) Create <code>~/app.prod.conf</code> where every <code>staging</code> is replaced by <code>prod</code>. (2) Create <code>~/app.clean.conf</code> with all comment lines (starting with <code>#</code>) removed.',
-    setup: { extraHome: { 'app.conf': F('# app settings\nhost=staging.example.com\n# backup host\nbackup=staging-bk.example.com\nport=8080\n') } },
+  L['lx-report'] = {
+    kind: 'sh', title: 'Build a formatted sales report',
+    brief: '<code>~/sales.csv</code> has a header and columns <code>date,region,product,units,price</code>. Build two reports:<br>(1) <code>~/revenue.txt</code>: one line per region, <code>REGION TOTAL</code> where total = sum of units × price formatted to <b>2 decimals</b>, sorted by total <b>highest first</b>. The header must not appear.<br>(2) <code>~/top3.txt</code>: the 3 data rows with the most <b>units</b>, highest first (whole CSV lines, no header).',
     tasks: [
-      { t: 'app.prod.conf has no "staging" and does have "prod"', c: function (e) { var n = e.node('/home/phil/app.prod.conf'); return n && n.d.indexOf('staging') < 0 && /prod/.test(n.d) && /port=8080/.test(n.d); } },
-      { t: 'app.clean.conf has no comment lines but keeps settings', c: function (e) { var n = e.node('/home/phil/app.clean.conf'); return n && !n.d.split('\n').some(function (l) { return /^#/.test(l); }) && /port=8080/.test(n.d); } }
+      { t: 'revenue.txt: three regions, 2-decimal totals, highest first', c: function (e) { var l = fileLines(e, '/home/phil/revenue.txt'); return !!l && l.join('|').replace(/\s+/g, ' ') === 'West 1673.88|East 1481.85|North 452.42'; } },
+      { t: 'top3.txt: the three biggest-unit rows, highest first', c: function (e) { var l = fileLines(e, '/home/phil/top3.txt'); return !!l && l.length === 3 && /,Cable,50,/.test(l[0]) && /,Mouse,30,/.test(l[1]) && /,Mouse,22,/.test(l[2]); } },
+      { t: 'You used printf for the formatting', c: function (e) { return ran(e, /awk[\s\S]*printf/); } }
     ],
-    hints: ["Replace every match: <code>sed 's/staging/prod/g' app.conf &gt; ~/app.prod.conf</code>", "Delete comments: <code>sed '/^#/d' app.conf &gt; ~/app.clean.conf</code>"],
-    solution: ["sed 's/staging/prod/g' app.conf > ~/app.prod.conf", "sed '/^#/d' app.conf > ~/app.clean.conf", 'cat ~/app.prod.conf', 'cat ~/app.clean.conf'],
-    debrief: 'Templating configs per environment with sed is everyday deployment work.'
+    hints: [
+      'Group: <code>awk -F, \'NR&gt;1 {r[$2] += $4*$5} END {for (k in r) printf "%s %.2f\\n", k, r[k]}\' sales.csv</code>',
+      'Sort the report by its 2nd column numerically, descending: <code>| sort -k2 -nr &gt; revenue.txt</code>',
+      'Top 3: <code>tail -n +2 sales.csv | sort -t, -k4 -nr | head -3 &gt; top3.txt</code>'
+    ],
+    solution: [
+      "awk -F, 'NR>1 {r[$2] += $4*$5} END {for (k in r) printf \"%s %.2f\\n\", k, r[k]}' sales.csv | sort -k2 -nr > revenue.txt",
+      'tail -n +2 sales.csv | sort -t, -k4 -nr | head -3 > top3.txt',
+      'cat revenue.txt top3.txt'
+    ],
+    debrief: 'awk did the GROUP BY and the formatting; sort did the ORDER BY; head did the LIMIT. Same mental model as SQL — and it works on any box with nothing installed.'
   };
 
-  L['lx-find'] = {
-    kind: 'sh', title: 'Find and collect files',
-    brief: 'Notes are scattered under <code>~/work</code>.<br>(1) List every <code>.md</code> file under ~/work with find and save the list to <code>~/notes.txt</code>. (2) Count how many there are.',
-    setup: { extraHome: { work: D({ 'plan.md': F('# plan\n'), 'todo.txt': F('x\n'), a: D({ 'ideas.md': F('i\n'), 'data.csv': F('1\n') }), b: D({ 'meeting.md': F('m\n') }) }) } },
+  L['lx-sedconf'] = {
+    kind: 'sh', title: 'Change a config safely with sed',
+    brief: 'Ops wants <code>~/srv/app.conf</code> changed. Do it the professional way:<br>(1) back it up to <code>~/srv/app.conf.bak</code> first;<br>(2) change <code>port=8080</code> to <code>port=9090</code>;<br>(3) change <code>host</code> to <code>127.0.0.1</code> and <code>log_level</code> to <code>warn</code>;<br>(4) remove every comment line (lines starting with <code>#</code>).<br>Edit in place with <code>sed -i</code>. Nothing else in the file may change.',
+    setup: { extraHome: { srv: srv() } },
     tasks: [
-      { t: 'Used find with -name "*.md"', c: function (e) { return e.history.some(function (h) { return /find/.test(h) && /\.md/.test(h) && /-name/.test(h); }); } },
-      { t: '~/notes.txt lists exactly the 3 .md files', c: function (e) { var n = e.node('/home/phil/notes.txt'); if (!n) return false; var ls = n.d.split('\n').filter(Boolean); return ls.length === 3 && ls.every(function (l) { return /\.md$/.test(l); }); } },
-      { t: 'Counted them (wc -l)', c: function (e) { return e.history.some(function (h) { return /wc\s+-l/.test(h); }); } }
+      { t: 'Backup app.conf.bak holds the ORIGINAL file', c: function (e) { var n = e.node('/home/phil/srv/app.conf.bak'); return !!n && n.t === 'f' && n.d === CONF; } },
+      { t: 'port is now 9090', c: function (e) { var l = fileLines(e, '/home/phil/srv/app.conf'); return !!l && l.indexOf('port=9090') >= 0 && l.indexOf('port=8080') < 0; } },
+      { t: 'host is 127.0.0.1 and log_level is warn', c: function (e) { var l = fileLines(e, '/home/phil/srv/app.conf'); return !!l && l.indexOf('host=127.0.0.1') >= 0 && l.indexOf('log_level=warn') >= 0; } },
+      { t: 'No comment lines remain, and nothing else changed', c: function (e) { var l = fileLines(e, '/home/phil/srv/app.conf'); return !!l && l.join('|') === 'port=9090|host=127.0.0.1|debug=false|log_level=warn'; } },
+      { t: 'You edited in place with sed -i', c: function (e) { return ran(e, /sed\s+(-\w*\s+)*-[a-zA-Z]*i/); } }
     ],
-    hints: ['<code>find ~/work -name "*.md"</code>', 'Save: add <code>&gt; ~/notes.txt</code>', 'Count: <code>wc -l ~/notes.txt</code>'],
-    solution: ['find ~/work -name "*.md" > ~/notes.txt', 'cat ~/notes.txt', 'wc -l ~/notes.txt'],
-    debrief: 'find + redirect + wc is how you inventory files across a tree.'
+    hints: [
+      '<code>cp srv/app.conf srv/app.conf.bak</code>',
+      'Preview first: <code>sed \'s/^port=8080$/port=9090/\' srv/app.conf</code> — then add <code>-i</code>.',
+      'Several edits at once: <code>sed -i -e \'s/^host=.*/host=127.0.0.1/\' -e \'s/^log_level=.*/log_level=warn/\' srv/app.conf</code>',
+      'Comments: <code>sed -i \'/^#/d\' srv/app.conf</code> — note this also removes <code>#debug=true</code>, which is a comment.'
+    ],
+    solution: [
+      'cp srv/app.conf srv/app.conf.bak',
+      "sed 's/^port=8080$/port=9090/' srv/app.conf",
+      "sed -i 's/^port=8080$/port=9090/' srv/app.conf",
+      "sed -i -e 's/^host=.*/host=127.0.0.1/' -e 's/^log_level=.*/log_level=warn/' srv/app.conf",
+      "sed -i '/^#/d' srv/app.conf",
+      'cat srv/app.conf'
+    ],
+    debrief: 'Back up, preview, apply with anchored patterns, verify. That four-step habit is what separates a safe change from an outage at 2 a.m. (In real life, finish with diff app.conf.bak app.conf.)'
+  };
+
+  L['lx-triage'] = {
+    kind: 'sh', title: 'Incident triage across a whole tree',
+    brief: 'Something is failing under <code>~/srv</code> and logs are scattered across sub-folders. Triage it:<br>(1) list every <code>.log</code> file under srv → <code>~/loglist.txt</code>;<br>(2) the total number of <code>ERROR</code> lines across all of srv → <code>~/errcount.txt</code> (just the number);<br>(3) the single most common error message (the text after the date and level) → <code>~/toperr.txt</code>;<br>(4) clean up: delete only the <b>empty</b> files in <code>srv/tmp</code> — <code>cache2.tmp</code> has data and must survive.',
+    setup: { extraHome: { srv: srv() } },
+    tasks: [
+      { t: 'loglist.txt lists all four .log files and nothing else', c: function (e) { var l = fileLines(e, '/home/phil/loglist.txt'); if (!l || l.length !== 4) return false; var want = ['access.log', 'api.log', 'api-2025-12.log', 'db.log']; return want.every(function (w) { return l.some(function (x) { return x.split('/').pop() === w; }); }); } },
+      { t: 'errcount.txt holds the right total', c: function (e) { var l = fileLines(e, '/home/phil/errcount.txt'); return !!l && l.length === 1 && +l[0].split(/\s+/)[0] === 5; } },
+      { t: 'toperr.txt names the most common error', c: function (e) { var l = fileLines(e, '/home/phil/toperr.txt'); return !!l && l.length === 1 && /db timeout$/.test(l[0]); } },
+      { t: 'Empty tmp files deleted; cache2.tmp kept', c: function (e) { var n = e.node('/home/phil/srv/tmp'); return !!n && n.t === 'd' && !n.c['cache1.tmp'] && !n.c['cache3.tmp'] && !!n.c['cache2.tmp'] && n.c['cache2.tmp'].d === 'keep me\n'; } }
+    ],
+    hints: [
+      '<code>find srv -type f -name "*.log" &gt; loglist.txt</code>',
+      '<code>grep -rh ERROR srv | wc -l &gt; errcount.txt</code>',
+      'Strip date+level with <code>cut -d" " -f3-</code>, then <code>sort | uniq -c | sort -rn | head -1</code>.',
+      'Dry run: <code>find srv/tmp -type f -empty</code>. Happy with the list? Re-run it with <code>-delete</code> on the end.'
+    ],
+    solution: [
+      'find srv -type f -name "*.log" > loglist.txt',
+      'grep -rh ERROR srv | wc -l > errcount.txt',
+      'grep -rh ERROR srv | cut -d" " -f3- | sort | uniq -c | sort -rn | head -1 > toperr.txt',
+      'find srv/tmp -type f -empty',
+      'find srv/tmp -type f -empty -delete',
+      'cat loglist.txt errcount.txt toperr.txt; ls srv/tmp'
+    ],
+    debrief: '"db timeout" is the repeat offender — across this month and last month\'s rotated log. find to scope, grep to filter, cut to shape, sort|uniq -c to rank, and a dry-run before every -delete. That is a real on-call workflow.'
   };
 })();
 
