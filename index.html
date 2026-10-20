@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build 30309c45d6 */
+/* build a6be2ef96d */
 /* AwkCore — a small but real awk interpreter for the bash sandbox.
    Supports: BEGIN/END, pattern-only rules, /regex/ patterns, expressions with
    fields ($0, $n, $NF), NR, NF, FS/OFS, variables, associative arrays,
@@ -3778,6 +3778,221 @@ window.X = {
     hints: ['Build the label: CASE WHEN qty*price >= 100 THEN \'big\' ELSE \'small\' END AS category.', 'GROUP BY category, COUNT(*) AS cnt.', 'ORDER BY category puts \'big\' before \'small\'.'],
     why: 'CASE adds if/else logic; grouping on the CASE result is conditional aggregation — the basis of pivots and bucketed reports.',
     debrief: 'CASE + GROUP BY turns raw rows into labeled summaries — a reporting staple.' });
+})();
+
+;
+/* SQL depth pack: deeper lessons, more questions, build + find-and-fix labs on a richer database, and a real-world SQL stage */
+(function () {
+  var X = window.X, Q = window.Q, T = window.TYPE, L = COURSE.labs;
+  var SEED2 = [
+    "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, city TEXT, joined TEXT);",
+    "INSERT INTO customers VALUES (1,'Ava','Norman','2025-01-10'),(2,'Ben','Tulsa','2025-02-02'),(3,'Cy','Norman','2025-02-20'),(4,'Dee','Edmond','2025-03-05'),(5,'Eli','Tulsa','2025-03-18'),(6,'Fay','Moore','2025-04-01');",
+    "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, product TEXT, qty INTEGER, price REAL, ordered TEXT);",
+    "INSERT INTO orders VALUES (1,1,'Keyboard',2,29.99,'2025-03-01'),(2,1,'Mouse',1,14.50,'2025-03-02'),(3,2,'Monitor',1,199.00,'2025-03-03'),(4,3,'Keyboard',1,29.99,'2025-03-05'),(5,3,'Cable',4,4.25,'2025-03-06'),(6,2,'Mouse',3,14.50,'2025-03-08'),(7,4,'Monitor',2,199.00,'2025-03-10'),(8,1,'Cable',10,4.25,'2025-03-11'),(9,5,'Keyboard',1,29.99,'2025-03-12');",
+    "CREATE TABLE products (name TEXT PRIMARY KEY, category TEXT, stock INTEGER);",
+    "INSERT INTO products VALUES ('Keyboard','peripherals',12),('Mouse','peripherals',30),('Monitor','display',5),('Cable','accessory',100),('Webcam','peripherals',8);",
+    "CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT, manager_id INTEGER, dept TEXT, salary INTEGER);",
+    "INSERT INTO employees VALUES (1,'Grace',NULL,'Eng',150000),(2,'Hal',1,'Eng',120000),(3,'Ivy',1,'Eng',125000),(4,'Jon',2,'Eng',95000),(5,'Kim',NULL,'Sales',130000),(6,'Lee',5,'Sales',80000),(7,'Mo',5,'Sales',85000),(8,'Nia',6,'Sales',NULL);",
+    "CREATE TABLE events (user_id INTEGER, ts TEXT, type TEXT);",
+    "INSERT INTO events VALUES (1,'2025-05-01 09:00','visit'),(1,'2025-05-01 09:05','signup'),(1,'2025-05-02 10:00','purchase'),(2,'2025-05-01 11:00','visit'),(2,'2025-05-01 11:02','signup'),(3,'2025-05-02 08:00','visit'),(4,'2025-05-02 12:00','visit'),(4,'2025-05-02 12:30','visit'),(4,'2025-05-02 12:40','signup'),(4,'2025-05-03 09:00','purchase'),(5,'2025-05-03 14:00','visit'),(6,'2025-05-04 16:00','visit');"
+  ].join('\n');
+  var NOTE2 = "customers(id, name, city, joined)   -- Fay (id 6) has no orders\norders(id, customer_id, product, qty, price, ordered)\nproducts(name, category, stock)     -- Webcam has never been ordered\nemployees(id, name, manager_id, dept, salary)  -- salary may be NULL\nevents(user_id, ts, type)           -- visit / signup / purchase";
+  function slab(id, o) { o.kind = 'code'; o.lang = 'sql'; o.seed = SEED2; o.seedNote = NOTE2; if (o.ordered === undefined) o.ordered = true; o.starter = o.starter || 'SELECT ...'; L[id] = o; }
+
+  // ---------------- sql1 ----------------
+  X.add('sql1', { gateN: 16,
+    lesson: [{ h: 'Deep dive: filtering precisely (and the NULL trap)', html: '<pre>SELECT DISTINCT product            -- unique values only\nFROM orders\nWHERE ordered BETWEEN \'2025-03-03\' AND \'2025-03-10\'   -- inclusive both ends\n  AND product IN (\'Mouse\', \'Monitor\')                  -- list membership\n  AND product LIKE \'M%\'                               -- % = any chars, _ = one char\nORDER BY product\nLIMIT 10 OFFSET 0;                 -- paging</pre><ul><li><b>NULL means unknown</b>. <code>salary = NULL</code> is never true (it evaluates to NULL). Use <code>IS NULL</code> / <code>IS NOT NULL</code>.</li><li><b>Precedence</b>: <code>AND</code> binds tighter than <code>OR</code>. <code>a OR b AND c</code> means <code>a OR (b AND c)</code>. Always add parentheses when mixing them.</li><li>Text in single quotes; identifiers (column names) in double quotes only if needed.</li><li><code>COALESCE(x, 0)</code> replaces NULL with a default; <code>NULLIF(a, b)</code> returns NULL when they are equal (handy to avoid divide-by-zero).</li><li>Logical order of execution: <b>FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT</b>. That is why a SELECT alias cannot be used in WHERE (in standard SQL).</li></ul>' }],
+    qs: [
+      Q('WHERE salary = NULL returns:', 'No rows — comparisons with NULL are never true; use IS NULL', ['All rows with a NULL salary', 'An error', 'All rows'], 'NULL is unknown, not a value.', 0),
+      Q('WHERE dept = \'Eng\' OR dept = \'Sales\' AND salary > 100000 is evaluated as:', 'dept = \'Eng\' OR (dept = \'Sales\' AND salary > 100000)', ['(dept = \'Eng\' OR dept = \'Sales\') AND salary > 100000', 'Left to right with no precedence', 'An error'], 'AND binds tighter than OR.', 0),
+      Q('BETWEEN 10 AND 20 includes:', '10 and 20 (both ends inclusive)', ['Neither end', 'Only 10', 'Only 20'], 'Inclusive range.', 0),
+      Q('LIKE \'_at\' matches:', '"cat" and "hat" but not "flat"', ['"flat" only', 'Anything containing "at"', 'Only "_at"'], '_ is exactly one character.', 0),
+      Q('In SQL\'s logical order, which runs first?', 'FROM / WHERE', ['SELECT', 'ORDER BY', 'LIMIT'], 'Rows are filtered before columns are chosen.', 0),
+      Q('SELECT COUNT(salary) FROM employees counts:', 'Only rows where salary is not NULL', ['All rows', 'Distinct salaries', 'NULL rows only'], 'COUNT(col) skips NULLs; COUNT(*) does not.', 0),
+      Q('Show page 3 of results with 20 rows per page:', 'LIMIT 20 OFFSET 40', ['LIMIT 3 OFFSET 20', 'LIMIT 60', 'OFFSET 3'], 'Skip 2 pages × 20.', 0),
+      Q('COALESCE(discount, 0) returns:', 'discount, or 0 when discount is NULL', ['Always 0', 'NULL when discount is 0', 'The sum of discount and 0'], 'First non-NULL argument.', 0),
+      Q('Against the course database, SELECT COUNT(DISTINCT product) FROM orders returns:', '4', ['9', '5', '3'], 'Keyboard, Mouse, Monitor, Cable.', 0),
+      T('Type the operator used to test for a missing value (two words).', [/^is\s+null$/i], 'IS NULL', 0, 'IS ...')
+    ],
+    labs: ['sqx-between', 'sqx-fix-null'] });
+
+  slab('sqx-between', { title: 'Distinct products in a date range', brief: 'Return the <b>distinct product names</b> (column <b>product</b>) ordered between <b>2025-03-03</b> and <b>2025-03-10</b> inclusive, alphabetically.',
+    solution: "SELECT DISTINCT product FROM orders WHERE ordered BETWEEN '2025-03-03' AND '2025-03-10' ORDER BY product;",
+    mustUse: ['DISTINCT', 'BETWEEN'],
+    hints: ['ISO dates (YYYY-MM-DD) compare correctly as text.', "WHERE ordered BETWEEN '2025-03-03' AND '2025-03-10'", 'SELECT DISTINCT product … ORDER BY product.'],
+    debrief: 'DISTINCT + BETWEEN on ISO dates — a filter you will write constantly for reports.' });
+  slab('sqx-fix-null', { title: 'Fix it: the HR filter', brief: 'HR wants the <b>name</b> of every employee who is in <b>Eng or Sales</b> <i>and</i> earns <b>at least 120000</b>, plus every employee whose salary is <b>missing</b> so they can fix the record. Sort by name. The query below returns the wrong people — fix it.',
+    starter: "SELECT name\nFROM employees\nWHERE dept = 'Eng' OR dept = 'Sales' AND salary >= 120000\n   OR salary = NULL\nORDER BY name;",
+    solution: "SELECT name FROM employees WHERE ((dept = 'Eng' OR dept = 'Sales') AND salary >= 120000) OR salary IS NULL ORDER BY name;",
+    mustUse: ['IS\\s+NULL'],
+    hints: ['Run it: Jon (95000) shows up and Nia (NULL salary) does not.', 'AND binds tighter than OR — group the department test in parentheses.', '<code>salary = NULL</code> is never true; use <code>salary IS NULL</code>.'],
+    debrief: 'Precedence and NULL comparisons are the two most common WHERE-clause bugs, and they fail silently — no error, just wrong rows.' });
+
+  // ---------------- sql2 ----------------
+  X.add('sql2', { gateN: 16,
+    lesson: [{ h: 'Deep dive: join types and the fan-out trap', html: '<table><tr><th>Join</th><th>Keeps</th></tr><tr><td>INNER JOIN</td><td>Only rows that match on both sides</td></tr><tr><td>LEFT JOIN</td><td>Every row from the left table; NULLs where the right has no match</td></tr><tr><td>RIGHT / FULL OUTER</td><td>Every row from the right / from both (SQLite 3.39+ supports both)</td></tr><tr><td>CROSS JOIN</td><td>Every combination (rows × rows)</td></tr></table><pre>-- customers with their order counts, INCLUDING customers with no orders\nSELECT c.name, COUNT(o.id) AS orders     -- COUNT(o.id), not COUNT(*)\nFROM customers c\nLEFT JOIN orders o ON o.customer_id = c.id\nGROUP BY c.id, c.name;\n\n-- "anti-join": customers with NO orders\nSELECT c.name FROM customers c\nLEFT JOIN orders o ON o.customer_id = c.id\nWHERE o.id IS NULL;</pre><ul><li><b>Fan-out</b>: joining a one-to-many relationship repeats the "one" side. <code>COUNT(*)</code> then counts orders, not customers, and summing a customer-level column double-counts. Use <code>COUNT(DISTINCT c.id)</code> or aggregate before joining.</li><li>With LEFT JOIN, a filter on the right table in <code>WHERE</code> silently turns it into an inner join. Put it in the <code>ON</code> clause instead: <code>LEFT JOIN orders o ON o.customer_id = c.id AND o.product = \'Mouse\'</code>.</li><li>Every non-aggregated column in SELECT should be in GROUP BY.</li></ul>' }],
+    qs: [
+      Q('Which join lists every customer, even those with zero orders?', 'customers LEFT JOIN orders', ['customers INNER JOIN orders', 'orders LEFT JOIN customers', 'CROSS JOIN'], 'LEFT keeps every left row.', 0),
+      Q('After customers LEFT JOIN orders, COUNT(*) for a customer with no orders is:', '1 — the NULL-padded row is still a row; COUNT(o.id) gives 0', ['0', 'NULL', 'An error'], 'Count a column from the right table.', 0),
+      Q('WHERE o.product = \'Mouse\' after a LEFT JOIN to orders:', 'Removes customers without a Mouse order, turning it into an inner join', ['Keeps all customers', 'Is a syntax error', 'Only affects ORDER BY'], 'Move right-table filters to ON.', 0),
+      Q('Find customers who have never ordered:', 'LEFT JOIN orders and keep rows WHERE o.id IS NULL (or NOT EXISTS)', ['INNER JOIN and WHERE o.id = 0', 'GROUP BY with COUNT(*) = 0', 'CROSS JOIN'], 'The anti-join pattern.', 0),
+      Q('A 5-row table CROSS JOIN another 5-row table returns:', '25 rows', ['5 rows', '10 rows', '0 rows'], 'Every combination.', 0),
+      Q('Fan-out happens when:', 'A one-to-many join repeats the "one" row for each match, inflating counts and sums', ['A join has no matches', 'You use DISTINCT', 'Tables have no primary key'], 'Aggregate before joining or count DISTINCT.', 0),
+      Q('In this course database, customers LEFT JOIN orders produces how many rows?', '10 (9 matched orders + 1 for Fay, who has none)', ['9', '6', '15'], 'Fay gets one NULL-padded row.', 0),
+      Q('HAVING vs WHERE:', 'WHERE filters rows before grouping; HAVING filters groups after aggregation', ['They are identical', 'HAVING runs first', 'WHERE can use SUM()'], 'Aggregates belong in HAVING.', 0),
+      Q('A self-join is used to:', 'Relate rows in the same table, e.g. employee to manager', ['Copy a table', 'Delete duplicates automatically', 'Join a table to a view only'], 'Alias the table twice.', 0)
+    ],
+    labs: ['sqx-leftjoin', 'sqx-fix-fanout'] });
+
+  slab('sqx-leftjoin', { title: 'Every customer, with order counts', brief: 'Return every customer\'s <b>name</b> and their number of orders as <b>order_count</b> — <b>including customers with no orders</b> (count 0). Sort by order_count descending, then name.',
+    solution: "SELECT c.name, COUNT(o.id) AS order_count FROM customers c LEFT JOIN orders o ON o.customer_id = c.id GROUP BY c.id, c.name ORDER BY order_count DESC, c.name;",
+    mustUse: ['LEFT\\s+(OUTER\\s+)?JOIN'],
+    hints: ['Start FROM customers c and LEFT JOIN orders o ON o.customer_id = c.id.', '<code>COUNT(o.id)</code> counts only real orders, so Fay gets 0.', 'GROUP BY c.id, c.name, then ORDER BY order_count DESC, c.name.'],
+    debrief: 'LEFT JOIN + COUNT(right_column) is how you avoid silently dropping the zeros — often the most important rows in a report.' });
+  slab('sqx-fix-fanout', { title: 'Fix it: the city revenue report', brief: 'For <b>every city</b> (including cities whose customers never ordered), return <b>city</b>, the number of <b>customers</b> living there, and <b>revenue</b> (sum of qty×price, rounded to 2 decimals, <b>0</b> when none). Sort by revenue descending, then city. The query has <b>three bugs</b>.',
+    starter: "SELECT c.city,\n       COUNT(*) AS customers,\n       SUM(o.qty * o.price) AS revenue\nFROM customers c\nJOIN orders o ON o.customer_id = c.id\nGROUP BY c.city\nORDER BY revenue DESC;",
+    solution: "SELECT c.city, COUNT(DISTINCT c.id) AS customers, ROUND(COALESCE(SUM(o.qty * o.price), 0), 2) AS revenue FROM customers c LEFT JOIN orders o ON o.customer_id = c.id GROUP BY c.city ORDER BY revenue DESC, c.city;",
+    hints: ['Norman shows 5 "customers" — that is the number of orders. Count <code>DISTINCT c.id</code>.', 'Moore is missing: use LEFT JOIN.', 'Moore\'s revenue would be NULL: wrap in <code>COALESCE(…, 0)</code> and ROUND to 2. Add city as a tie-breaker.'],
+    debrief: 'Fan-out inflated the customer count, an inner join dropped a city, and NULL leaked into a number column. Reviewers catch these by sanity-checking counts against the source tables.' });
+
+  // ---------------- sql3 ----------------
+  X.add('sql3', { gateN: 14,
+    lesson: [{ h: 'Deep dive: subqueries, EXISTS and the NOT IN trap', html: '<pre>-- scalar subquery: compare to a single computed value\nSELECT name, salary FROM employees\nWHERE salary &gt; (SELECT AVG(salary) FROM employees);\n\n-- correlated subquery: runs per outer row\nSELECT e.name FROM employees e\nWHERE e.salary &gt; (SELECT AVG(salary) FROM employees WHERE dept = e.dept);\n\n-- EXISTS: is there at least one matching row?\nSELECT p.name FROM products p\nWHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.product = p.name);\n\n-- chained CTEs read like steps\nWITH spend AS (SELECT customer_id, SUM(qty*price) AS total FROM orders GROUP BY customer_id),\n     avg_spend AS (SELECT AVG(total) AS a FROM spend)\nSELECT * FROM spend, avg_spend WHERE total &gt; a;</pre><ul><li><b>NOT IN with NULLs</b>: <code>x NOT IN (1, 2, NULL)</code> is never true, because x &lt;&gt; NULL is unknown. If the subquery can return NULL, use <code>NOT EXISTS</code>.</li><li><code>AVG</code> ignores NULLs; <code>AVG(COALESCE(x, 0))</code> treats them as zero — choose deliberately.</li><li>Recursive CTEs (<code>WITH RECURSIVE</code>) walk hierarchies such as org charts and category trees.</li><li>Integer division: in SQLite <code>5 / 2 = 2</code>. Multiply by <code>1.0</code> (or <code>100.0</code>) for decimals.</li></ul>' }],
+    qs: [
+      Q('id NOT IN (SELECT manager_id FROM employees) returns no rows at all. Why?', 'manager_id contains NULL, so every NOT IN comparison is unknown', ['NOT IN is not supported', 'The subquery is empty', 'IDs are integers'], 'Use NOT EXISTS or filter out NULLs.', 0),
+      Q('A correlated subquery is one that:', 'References a column from the outer query, so it is evaluated per outer row', ['Has no WHERE clause', 'Is written in a CTE', 'Returns many columns'], 'e.dept inside the subquery.', 0),
+      Q('SELECT 5 / 2 in SQLite returns:', '2', ['2.5', '3', 'An error'], 'Integer division. Use 5 * 1.0 / 2.', 0),
+      Q('In this database, SELECT AVG(salary) FROM employees averages over how many rows?', '7 — AVG skips Nia\'s NULL salary', ['8', '6', '0'], 'Aggregates ignore NULL.', 0),
+      Q('EXISTS (subquery) is true when:', 'The subquery returns at least one row', ['The subquery returns exactly one row', 'Every row matches', 'The subquery returns NULL'], 'It only checks for existence.', 0),
+      Q('Walk an employee → manager → manager\'s manager chain of unknown depth:', 'WITH RECURSIVE', ['GROUP BY', 'A scalar subquery', 'CROSS JOIN'], 'Recursive CTEs walk trees.', 0),
+      Q('Why use a CTE instead of a nested subquery?', 'It names each step so complex queries read top to bottom and can be reused', ['It is always faster', 'Subqueries are deprecated', 'CTEs store data permanently'], 'Readability.', 0),
+      Q('Which product in this database has never been ordered?', 'Webcam', ['Cable', 'Mouse', 'Monitor'], 'It is in products but not orders.', 0)
+    ],
+    labs: ['sqx-above-avg', 'sqx-not-exists'] });
+
+  slab('sqx-above-avg', { title: 'Customers above average spend', brief: 'Return the <b>name</b> and <b>total</b> spend (sum of qty×price, rounded to 2) of customers whose total is <b>above the average total</b> of customers who ordered. Highest first. Use a CTE.',
+    starter: 'WITH spend AS (\n  -- total per customer\n)\nSELECT ...',
+    solution: "WITH spend AS (SELECT customer_id, SUM(qty*price) AS total FROM orders GROUP BY customer_id) SELECT c.name, ROUND(s.total, 2) AS total FROM spend s JOIN customers c ON c.id = s.customer_id WHERE s.total > (SELECT AVG(total) FROM spend) ORDER BY s.total DESC;",
+    mustUse: ['WITH'],
+    hints: ['CTE: per-customer totals with GROUP BY customer_id.', 'Average of those totals: <code>(SELECT AVG(total) FROM spend)</code>.', 'Join spend to customers for names; filter, round, sort DESC.'],
+    debrief: 'Comparing each row to an aggregate of the set — "above average", "top 10%" — is a core analyst move.' });
+  slab('sqx-not-exists', { title: 'What Tulsa never bought', brief: 'Return the <b>name</b> and <b>category</b> of products that <b>no customer from Tulsa</b> has ever ordered. Sort by name. Use <code>NOT EXISTS</code>.',
+    solution: "SELECT p.name, p.category FROM products p WHERE NOT EXISTS (SELECT 1 FROM orders o JOIN customers c ON c.id = o.customer_id WHERE c.city = 'Tulsa' AND o.product = p.name) ORDER BY p.name;",
+    mustUse: ['NOT\\s+EXISTS'],
+    hints: ['Outer query: FROM products p.', "Inner: SELECT 1 FROM orders o JOIN customers c ON c.id = o.customer_id WHERE c.city = 'Tulsa' AND o.product = p.name", 'The inner query is correlated through <code>p.name</code>.'],
+    debrief: 'NOT EXISTS is the safe anti-join: correct with NULLs and usually well-optimized.' });
+
+  // ---------------- sql4 ----------------
+  X.add('sql4', { gateN: 14,
+    lesson: [{ h: 'Deep dive: top-N per group, shares of total, and frames', html: '<pre>-- top 1 per group: rank inside a CTE, then filter (you cannot filter a window in WHERE)\nWITH ranked AS (\n  SELECT customer_id, product, qty*price AS line,\n         ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY qty*price DESC, id) AS rn\n  FROM orders)\nSELECT * FROM ranked WHERE rn = 1;\n\n-- share of total: a window over the whole result\nSELECT product, SUM(qty*price) AS rev,\n       ROUND(100.0 * SUM(qty*price) / SUM(SUM(qty*price)) OVER (), 1) AS pct\nFROM orders GROUP BY product;\n\n-- frames\nAVG(x) OVER (ORDER BY d ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)  -- 7-day moving average\nFIRST_VALUE(x) OVER (PARTITION BY g ORDER BY d)                    -- first in group</pre><ul><li>Window functions run <b>after</b> WHERE/GROUP BY/HAVING, so to filter on them, wrap in a CTE or subquery.</li><li><code>OVER ()</code> with nothing inside = the whole result set.</li><li>Ties: ROW_NUMBER picks one arbitrarily unless you add a tie-breaker to ORDER BY; use RANK if ties should all be kept.</li><li>With <code>ORDER BY</code> in the window, the default frame is "start to current row" (RANGE) — which is why SUM becomes a running total and why <code>LAST_VALUE</code> surprises people.</li></ul>' }],
+    qs: [
+      Q('Why can\'t you write WHERE ROW_NUMBER() OVER (...) = 1?', 'Window functions are computed after WHERE; filter in an outer query or CTE', ['ROW_NUMBER needs GROUP BY', 'It works fine', 'WHERE cannot use numbers'], 'Wrap, then filter.', 0),
+      Q('SUM(x) OVER () gives:', 'The grand total on every row', ['A running total', 'An error', 'NULL'], 'Empty window = all rows.', 0),
+      Q('To keep all tied customers in a "top spender" query, use:', 'RANK() and keep rank = 1', ['ROW_NUMBER() = 1', 'LIMIT 1', 'MAX() with GROUP BY only'], 'RANK keeps ties.', 0),
+      Q('ROWS BETWEEN 6 PRECEDING AND CURRENT ROW over daily rows gives:', 'A 7-day moving window', ['A 6-day window', 'The whole table', 'Only the current row'], '6 previous + current.', 0),
+      Q('LAST_VALUE(x) OVER (ORDER BY d) often returns the current row\'s x because:', 'The default frame ends at the current row', ['LAST_VALUE is broken', 'ORDER BY is ignored', 'It needs PARTITION BY'], 'Specify ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING.', 0),
+      Q('Percent of total for each product needs:', 'Product revenue divided by SUM(revenue) OVER (), times 100.0', ['GROUP BY total', 'A CROSS JOIN only', 'COUNT(*)'], 'Window over an aggregate.', 0),
+      Q('In this database, which product has the largest revenue?', 'Monitor', ['Keyboard', 'Cable', 'Mouse'], '3 × 199 = 597.', 0)
+    ],
+    labs: ['sqx-top-per-group', 'sqx-share'] });
+
+  slab('sqx-top-per-group', { title: 'Each customer\'s biggest order line', brief: 'For each customer who ordered, return <b>name</b>, the <b>product</b> of their largest order line (qty×price) and that <b>line_total</b> (rounded to 2). Break ties by the earlier order id. Sort by name.',
+    solution: "WITH ranked AS (SELECT customer_id, product, qty*price AS line_total, ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY qty*price DESC, id) AS rn FROM orders) SELECT c.name, r.product, ROUND(r.line_total, 2) AS line_total FROM ranked r JOIN customers c ON c.id = r.customer_id WHERE r.rn = 1 ORDER BY c.name;",
+    mustUse: ['PARTITION\\s+BY'],
+    hints: ['In a CTE, number each customer\'s lines: <code>ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY qty*price DESC, id) AS rn</code>.', 'Outer query: keep <code>rn = 1</code>.', 'Join to customers for the name; round line_total.'],
+    debrief: 'Top-N per group is the most-asked analytics interview question — and a daily task in real reporting.' });
+  slab('sqx-share', { title: 'Revenue share by product', brief: 'Return each <b>product</b>, its <b>revenue</b> (sum of qty×price, rounded to 2) and <b>pct</b>: its share of all revenue as a percentage rounded to 1 decimal. Highest revenue first.',
+    solution: "SELECT product, ROUND(SUM(qty*price), 2) AS revenue, ROUND(100.0 * SUM(qty*price) / SUM(SUM(qty*price)) OVER (), 1) AS pct FROM orders GROUP BY product ORDER BY revenue DESC;",
+    mustUse: ['OVER\\s*\\(\\s*\\)'],
+    hints: ['GROUP BY product with SUM(qty*price).', 'The grand total of those sums is <code>SUM(SUM(qty*price)) OVER ()</code>.', 'Multiply by <code>100.0</code> to avoid integer division, then ROUND(…, 1).'],
+    debrief: 'Mixing GROUP BY with a window over the grouped result gives shares, ratios and contribution analysis in one query.' });
+
+  // ---------------- sql5 ----------------
+  X.add('sql5', { gateN: 14,
+    lesson: [{ h: 'Deep dive: reading query plans and modeling decisions', html: '<pre>EXPLAIN QUERY PLAN\nSELECT * FROM orders WHERE customer_id = 3;\n--  SCAN orders                       ← reads every row\n\nCREATE INDEX idx_orders_customer ON orders(customer_id);\n--  SEARCH orders USING INDEX idx_orders_customer (customer_id=?)   ← jumps straight there</pre><ul><li>An index helps <b>selective</b> filters, joins and ORDER BY. A <b>composite</b> index <code>(customer_id, ordered)</code> serves filters on customer_id, or on both — not on ordered alone (leftmost-prefix rule).</li><li>Index killers: wrapping the column in a function (<code>WHERE lower(email) = …</code>), leading wildcards (<code>LIKE \'%son\'</code>), implicit type conversions.</li><li><b>Normalization</b>: 1NF (atomic values, no repeating groups), 2NF (no partial dependency on a composite key), 3NF (no column depends on another non-key column). Denormalize deliberately for read-heavy analytics (star schemas: a fact table + dimension tables).</li><li><b>Keys</b>: primary key (unique row identity), foreign key (references another table\'s key — enable in SQLite with <code>PRAGMA foreign_keys = ON</code>), natural vs surrogate keys.</li><li>Self-joins model hierarchies; conditional aggregation (<code>SUM(CASE WHEN … THEN … ELSE 0 END)</code>) pivots rows into columns.</li></ul>' }],
+    qs: [
+      Q('EXPLAIN QUERY PLAN shows "SCAN orders" for a filter on customer_id. What does it mean?', 'Every row is read; an index on customer_id would allow a SEARCH', ['The query failed', 'The result is cached', 'An index is already used'], 'SCAN = full table read.', 0),
+      Q('A composite index on (customer_id, ordered) helps which filter least?', 'WHERE ordered = \'2025-03-01\' alone', ['WHERE customer_id = 3', 'WHERE customer_id = 3 AND ordered > \'2025-03-01\'', 'ORDER BY customer_id, ordered'], 'Leftmost-prefix rule.', 0),
+      Q('Why might WHERE lower(email) = \'a@x.com\' ignore an index on email?', 'Applying a function to the column prevents a plain index lookup (use an expression index or store normalized values)', ['lower() is not valid SQL', 'Emails cannot be indexed', 'It always uses the index'], 'Sargability.', 0),
+      Q('A table stores customer_city in every order row. Which normal form issue is this?', 'A transitive dependency (3NF): city depends on the customer, not the order', ['1NF violation', 'Primary key missing', 'No issue'], 'Store it once in customers.', 0),
+      Q('A star schema has:', 'A central fact table of events/measures joined to dimension tables', ['One table only', 'No keys', 'Only views'], 'The analytics model.', 0),
+      Q('Turn rows per product into a column per product:', 'Conditional aggregation: SUM(CASE WHEN product = \'X\' THEN qty ELSE 0 END)', ['UNION ALL', 'DISTINCT', 'LIMIT'], 'Pivot with CASE.', 0),
+      Q('Foreign keys in SQLite are enforced only when:', 'PRAGMA foreign_keys = ON is set for the connection', ['Always', 'Never', 'You use INTEGER keys'], 'Off by default for compatibility.', 0)
+    ],
+    labs: ['sqx-selfjoin', 'sqx-pivot'] });
+
+  slab('sqx-selfjoin', { title: 'Employees and their managers', brief: 'Return each employee\'s <b>employee</b> name and their <b>manager</b>\'s name. Top-level employees (no manager) show <b>(none)</b>. Sort by employee.',
+    solution: "SELECT e.name AS employee, COALESCE(m.name, '(none)') AS manager FROM employees e LEFT JOIN employees m ON m.id = e.manager_id ORDER BY e.name;",
+    mustUse: ['JOIN'],
+    hints: ['Alias the same table twice: <code>employees e</code> and <code>employees m</code>.', 'LEFT JOIN so Grace and Kim are kept: <code>ON m.id = e.manager_id</code>.', "COALESCE(m.name, '(none)') AS manager."],
+    debrief: 'A self-join turns a parent pointer into a readable hierarchy — org charts, category trees, reply threads.' });
+  slab('sqx-pivot', { title: 'Pivot quantities by city', brief: 'For each <b>city</b> with orders, return <b>keyboards</b> (total Keyboard quantity), <b>monitors</b> (total Monitor quantity) and <b>total_qty</b> (all products). Sort by city.',
+    solution: "SELECT c.city, SUM(CASE WHEN o.product = 'Keyboard' THEN o.qty ELSE 0 END) AS keyboards, SUM(CASE WHEN o.product = 'Monitor' THEN o.qty ELSE 0 END) AS monitors, SUM(o.qty) AS total_qty FROM orders o JOIN customers c ON c.id = o.customer_id GROUP BY c.city ORDER BY c.city;",
+    mustUse: ['CASE'],
+    hints: ['Join orders to customers and GROUP BY c.city.', "keyboards: <code>SUM(CASE WHEN o.product = 'Keyboard' THEN o.qty ELSE 0 END)</code>", 'Same for Monitor; total_qty is a plain SUM(o.qty).'],
+    debrief: 'Conditional aggregation is the portable way to pivot — it works in every SQL database.' });
+
+  // ---------------- new stage: real-world SQL ----------------
+  X.insertAfter('sql5', {
+    id: 'sql6', track: 'sql', tier: 'sql-exp', title: 'Real-world SQL: schemas, transactions & safe queries', code: 'BEGIN; UPDATE ...; COMMIT;', gateN: 12,
+    goal: 'Design tables with constraints, change data safely in transactions, upsert, handle dates and messy data, analyze funnels — and keep queries safe from SQL injection.',
+    lesson: [
+      { h: 'Define data with constraints', html: '<pre>CREATE TABLE reviews (\n  id       INTEGER PRIMARY KEY,\n  product  TEXT NOT NULL REFERENCES products(name),\n  stars    INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5),\n  email    TEXT UNIQUE,\n  created  TEXT DEFAULT CURRENT_TIMESTAMP\n);\nALTER TABLE reviews ADD COLUMN helpful INTEGER DEFAULT 0;\nCREATE VIEW top_products AS SELECT product, AVG(stars) AS avg_stars FROM reviews GROUP BY product;</pre><p>Constraints make bad data <b>impossible</b> instead of merely unlikely: <code>NOT NULL</code>, <code>UNIQUE</code>, <code>CHECK</code>, <code>PRIMARY KEY</code>, <code>FOREIGN KEY</code>, <code>DEFAULT</code>. A <b>view</b> is a saved query you can select from.</p>' },
+      { h: 'Change data safely', html: '<pre>BEGIN;\nUPDATE accounts SET balance = balance - 50 WHERE id = 1;\nUPDATE accounts SET balance = balance + 50 WHERE id = 2;\nCOMMIT;           -- or ROLLBACK; if anything failed\n\n-- upsert: insert, or update if the key already exists\nINSERT INTO products (name, category, stock) VALUES (\'Mouse\', \'peripherals\', 10)\nON CONFLICT(name) DO UPDATE SET stock = stock + excluded.stock;</pre><ul><li><b>ACID</b>: Atomic (all or nothing), Consistent (constraints hold), Isolated (concurrent transactions don\'t see half-done work), Durable (committed data survives crashes).</li><li>Before any <code>UPDATE</code> or <code>DELETE</code>, run the same <code>WHERE</code> as a <code>SELECT</code> to see what will change. An UPDATE without WHERE changes <b>every row</b>.</li><li><code>excluded.col</code> refers to the value you tried to insert.</li></ul>' },
+      { h: 'Dates, text and messy data (SQLite)', html: '<ul><li>Store dates as ISO text (<code>2025-03-01</code>) so they sort and compare correctly.</li><li><code>date(\'2025-03-01\', \'+7 days\')</code>, <code>strftime(\'%Y-%m\', ordered)</code> (group by month), <code>julianday(b) - julianday(a)</code> (days between).</li><li>Clean text: <code>TRIM()</code>, <code>LOWER()</code>, <code>REPLACE()</code>, <code>SUBSTR()</code>, <code>||</code> to concatenate. <code>CAST(x AS INTEGER)</code> converts types.</li><li>Deduplicate: <code>ROW_NUMBER() OVER (PARTITION BY email ORDER BY created DESC)</code> and keep rn = 1.</li><li>Funnels and retention: <code>COUNT(DISTINCT CASE WHEN type = \'signup\' THEN user_id END)</code> counts users who reached a step.</li></ul>' },
+      { h: 'Never build SQL from user input', html: '<pre>// UNSAFE — input becomes code\ndb.query("SELECT * FROM users WHERE email = \'" + email + "\'");\n\n// SAFE — a parameterized query; input is always treated as data\ndb.query("SELECT * FROM users WHERE email = ?", [email]);</pre><p><b>SQL injection</b> happens when user input is concatenated into a query string, letting crafted input change the query\'s meaning. The fix is <b>parameterized queries / prepared statements</b> (every database library supports them), plus least-privilege database accounts and input validation as defense in depth. ORMs parameterize for you — until someone uses a raw-string escape hatch, so review those carefully.</p>' }
+    ],
+    cards: [['NOT NULL / UNIQUE / CHECK', 'Constraints that make invalid data impossible.'], ['FOREIGN KEY', 'A column that must match another table\'s key.'], ['VIEW', 'A saved query you can SELECT from.'], ['BEGIN … COMMIT', 'A transaction: all statements succeed or none do.'], ['ROLLBACK', 'Undo the current transaction.'], ['ACID', 'Atomic, Consistent, Isolated, Durable.'], ['ON CONFLICT … DO UPDATE', 'Upsert: insert or update an existing key.'], ['excluded.col', 'The value you attempted to insert in an upsert.'], ['strftime(\'%Y-%m\', d)', 'Year-month for monthly grouping (SQLite).'], ['julianday(b) - julianday(a)', 'Days between two dates (SQLite).'], ['Parameterized query', 'Placeholders (?) keep user input as data — prevents SQL injection.'], ['Select before you delete', 'Run the WHERE as a SELECT first to preview affected rows.']],
+    qs: [
+      Q('UPDATE products SET stock = 0; (no WHERE) does what?', 'Sets stock to 0 on every row', ['Updates the first row only', 'Fails with an error', 'Does nothing'], 'Always preview with SELECT … WHERE first.', 0),
+      Q('Two UPDATEs move money between accounts. Why wrap them in BEGIN/COMMIT?', 'So both happen or neither does if something fails midway (atomicity)', ['To make them faster', 'To skip constraints', 'Transactions are required for every SELECT'], 'All or nothing.', 0),
+      Q('The best defense against SQL injection is:', 'Parameterized queries / prepared statements', ['Escaping quotes by hand', 'Hiding error messages', 'Using POST instead of GET'], 'Input stays data, never code.', 0),
+      Q('A CHECK (stars BETWEEN 1 AND 5) constraint:', 'Rejects inserts or updates where stars is outside 1–5', ['Rounds stars into range', 'Only warns', 'Applies only to SELECT'], 'The database enforces it.', 0),
+      Q('In INSERT … ON CONFLICT(name) DO UPDATE SET stock = stock + excluded.stock, excluded.stock is:', 'The stock value from the row you tried to insert', ['The old stock', 'Always 0', 'A deleted row'], 'The proposed new values.', 0),
+      Q('Group orders by month in SQLite:', 'GROUP BY strftime(\'%Y-%m\', ordered)', ['GROUP BY MONTH(ordered) only', 'GROUP BY ordered / 30', 'ORDER BY month'], 'strftime formats dates.', 0),
+      Q('Count users who reached the signup step:', 'COUNT(DISTINCT CASE WHEN type = \'signup\' THEN user_id END)', ['COUNT(*) WHERE signup', 'SUM(user_id)', 'COUNT(type)'], 'Distinct users, not events.', 0),
+      Q('Which ACID property means committed data survives a power loss?', 'Durability', ['Atomicity', 'Isolation', 'Consistency'], 'Written to durable storage.', 0),
+      Q('Keep only the newest row per email when deduplicating:', 'ROW_NUMBER() OVER (PARTITION BY email ORDER BY created DESC) and keep 1', ['DISTINCT *', 'GROUP BY created', 'DELETE FROM table'], 'Rank within duplicates.', 0),
+      Q('An ORM query uses a raw-SQL helper with string concatenation of a search term. In review you should:', 'Flag it and switch to the helper\'s parameter binding', ['Approve — ORMs are always safe', 'Only add a comment', 'Escape spaces'], 'Escape hatches reintroduce injection risk.', 0),
+      Q('In this database\'s events table, how many distinct users visited?', '6', ['7', '5', '12'], 'User 4 visited twice; count distinct.', 0),
+      T('Type the keyword that undoes the current transaction.', [/^rollback;?$/i], 'ROLLBACK', 0, 'keyword')
+    ],
+    labs: ['sqx-ddl', 'sqx-upsert', 'sqx-funnel', 'sqx-fix-report']
+  });
+
+  slab('sqx-ddl', { title: 'Create a constrained table', mode: 'state', ordered: false, brief: 'Create a table <code>reviews</code> with: <b>id</b> INTEGER PRIMARY KEY; <b>product</b> TEXT NOT NULL that references <code>products(name)</code>; <b>stars</b> INTEGER NOT NULL with a CHECK that it is between 1 and 5; <b>body</b> TEXT. Then insert three reviews: Mouse 5 stars "Great", Monitor 4 stars "Sharp", Cable 2 stars "Frayed".',
+    starter: 'CREATE TABLE reviews (\n  -- columns and constraints\n);\n\n-- INSERT INTO reviews (product, stars, body) VALUES ...',
+    solution: "CREATE TABLE reviews (id INTEGER PRIMARY KEY, product TEXT NOT NULL REFERENCES products(name), stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5), body TEXT);\nINSERT INTO reviews (product, stars, body) VALUES ('Mouse', 5, 'Great'), ('Monitor', 4, 'Sharp'), ('Cable', 2, 'Frayed');",
+    tests: [
+      { name: 'Three reviews inserted', sql: 'SELECT product, stars, body FROM reviews ORDER BY product', expect: [['Cable', 2, 'Frayed'], ['Monitor', 4, 'Sharp'], ['Mouse', 5, 'Great']] },
+      { name: 'product and stars are NOT NULL', sql: "SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name IN ('product','stars') AND \"notnull\" = 1", expect: [[2]] },
+      { name: 'stars has a CHECK constraint', sql: "SELECT sql LIKE '%CHECK%' FROM sqlite_master WHERE name = 'reviews'", expect: [[1]] },
+      { name: 'product references products', sql: "SELECT COUNT(*) FROM pragma_foreign_key_list('reviews') WHERE \"table\" = 'products'", expect: [[1]] },
+      { name: 'id is the primary key', sql: "SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'id' AND pk = 1", expect: [[1]] }
+    ],
+    hints: ['Column syntax: <code>name TYPE constraints</code>, separated by commas.', '<code>stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5)</code> and <code>product TEXT NOT NULL REFERENCES products(name)</code>.', "One INSERT with three tuples: <code>VALUES ('Mouse', 5, 'Great'), (…), (…);</code>"],
+    debrief: 'Constraints are documentation the database enforces. Every rule you encode here is a class of bug that can never reach your reports.' });
+  slab('sqx-upsert', { title: 'Restock with an upsert in a transaction', mode: 'state', ordered: false, brief: 'A shipment arrived: <b>Keyboard +10</b>, <b>Webcam +5</b>, and a new product <b>Headset</b> (category <b>audio</b>, stock <b>7</b>). Inside a transaction, apply it with <code>INSERT … ON CONFLICT(name) DO UPDATE</code> so existing products add to their stock and new ones are inserted.',
+    starter: 'BEGIN;\n-- INSERT INTO products (name, category, stock) VALUES ...\n-- ON CONFLICT(name) DO UPDATE SET ...\nCOMMIT;',
+    solution: "BEGIN;\nINSERT INTO products (name, category, stock) VALUES ('Keyboard', 'peripherals', 10), ('Webcam', 'peripherals', 5), ('Headset', 'audio', 7)\nON CONFLICT(name) DO UPDATE SET stock = stock + excluded.stock;\nCOMMIT;",
+    tests: [
+      { name: 'Stock levels are correct', sql: 'SELECT name, stock FROM products ORDER BY name', expect: [['Cable', 100], ['Headset', 7], ['Keyboard', 22], ['Monitor', 5], ['Mouse', 30], ['Webcam', 13]] },
+      { name: 'Headset added with its category', sql: "SELECT category FROM products WHERE name = 'Headset'", expect: [['audio']] },
+      { name: 'No duplicate products', sql: 'SELECT COUNT(*) - COUNT(DISTINCT name) FROM products', expect: [[0]] }
+    ],
+    hints: ['One INSERT with three rows.', 'Add <code>ON CONFLICT(name) DO UPDATE SET stock = stock + excluded.stock</code>.', 'Wrap it in <code>BEGIN; … COMMIT;</code>.'],
+    debrief: 'Upserts make data loads idempotent-friendly and race-safe; transactions make multi-step changes all-or-nothing.' });
+  slab('sqx-funnel', { title: 'Signup funnel', brief: 'From <code>events</code>, return one row with <b>visitors</b>, <b>signups</b> and <b>purchasers</b> (distinct users who did each event type) and <b>conversion</b>: purchasers ÷ visitors as a percentage rounded to 1 decimal.',
+    solution: "SELECT COUNT(DISTINCT CASE WHEN type = 'visit' THEN user_id END) AS visitors, COUNT(DISTINCT CASE WHEN type = 'signup' THEN user_id END) AS signups, COUNT(DISTINCT CASE WHEN type = 'purchase' THEN user_id END) AS purchasers, ROUND(100.0 * COUNT(DISTINCT CASE WHEN type = 'purchase' THEN user_id END) / COUNT(DISTINCT CASE WHEN type = 'visit' THEN user_id END), 1) AS conversion FROM events;",
+    mustUse: ['DISTINCT', 'CASE'],
+    hints: ["Distinct users per step: <code>COUNT(DISTINCT CASE WHEN type = 'visit' THEN user_id END)</code>.", 'CASE without ELSE yields NULL, which COUNT ignores.', 'Conversion: <code>ROUND(100.0 * purchasers_expr / visitors_expr, 1)</code>.'],
+    debrief: 'Funnels are how product teams measure where users drop off. Counting distinct users (not events) is the detail that makes the number honest.' });
+  slab('sqx-fix-report', { title: 'Debug: the category revenue report', brief: 'Finance wants, per product <b>category</b>: <b>units</b> sold and <b>revenue</b> (rounded to 2), only for categories with revenue <b>over 100</b>, highest revenue first. The query has <b>four bugs</b> — it doesn\'t even run yet.',
+    starter: "SELECT p.category, SUM(o.qty) AS units, SUM(o.qty * o.price) AS revenue\nFROM orders o\nJOIN products p ON o.product = p.category\nWHERE SUM(o.qty * o.price) > 100\nGROUP BY p.name\nORDER BY revenue;",
+    solution: "SELECT p.category, SUM(o.qty) AS units, ROUND(SUM(o.qty * o.price), 2) AS revenue FROM orders o JOIN products p ON o.product = p.name GROUP BY p.category HAVING SUM(o.qty * o.price) > 100 ORDER BY revenue DESC;",
+    mustUse: ['HAVING'],
+    hints: ['Error first: aggregates are not allowed in WHERE — move that filter to HAVING (after GROUP BY).', 'The join compares a product name to a category: it should be <code>o.product = p.name</code>.', 'Group by <code>p.category</code> (not name), and sort DESC for "highest first".'],
+    debrief: 'Wrong join key, wrong grain, WHERE vs HAVING, and sort direction. Reading a query clause by clause against the requirement catches all four.' });
 })();
 
 ;
