@@ -5,7 +5,7 @@ let py = null;
 const HARNESS = `
 import sys, io, json, traceback
 def __run_user(src, stdin):
-    g = {'__name__': '__main__'}
+    g = {'__name__': '__main__', '__CODE__': src}
     sys.stdin = io.StringIO(stdin)
     buf = io.StringIO(); old = sys.stdout; sys.stdout = buf
     err = None

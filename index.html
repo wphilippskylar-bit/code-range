@@ -245,7 +245,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build f92cb03d3d */
+/* build e437ea905b */
 /* AwkCore — a small but real awk interpreter for the bash sandbox.
    Supports: BEGIN/END, pattern-only rules, /regex/ patterns, expressions with
    fields ($0, $n, $NF), NR, NF, FS/OFS, variables, associative arrays,
@@ -2514,6 +2514,21 @@ window.COURSE = {
 };
 
 ;
+/* Depth packs: add to existing stages or insert new stages (runs before the engine). */
+window.X = {
+  st: function (id) { var s = COURSE.stages.filter(function (x) { return x.id === id; })[0]; if (!s) throw new Error('X: no stage ' + id); return s; },
+  add: function (id, o) {
+    var s = this.st(id);
+    if (o.lesson) s.lesson = (s.lesson || []).concat(o.lesson);
+    if (o.qs) s.qs = (s.qs || []).concat(o.qs);
+    if (o.cards) s.cards = (s.cards || []).concat(o.cards);
+    if (o.labs) s.labs = (s.labs || []).concat(o.labs);
+    if (o.gateN) s.gateN = o.gateN;
+  },
+  insertAfter: function (id, stage) { var i = COURSE.stages.indexOf(this.st(id)); COURSE.stages.splice(i + 1, 0, stage); }
+};
+
+;
 /* Code from Zero — the gentlest possible on-ramp. Assumes you have never written a line.
    Taught in plain language with real, runnable Python. Small steps, one idea at a time. */
 (function () {
@@ -2674,6 +2689,256 @@ window.COURSE = {
     hints: ['Inside the function, use return (not print).', 'return f"Hi {name}"', 'The last line, print(greet("Phil")), is already there.'],
     solution: 'def greet(name):\n    return f"Hi {name}"\n\nprint(greet("Phil"))',
     why: 'A function packages logic you can reuse with any input.', debrief: 'You built your first reusable machine. Feed it any name.' });
+})();
+
+;
+/* Code from Zero depth pack: gentler extra practice for z1–z3, plus text/input, dictionaries and first-real-program stages */
+(function () {
+  var X = window.X, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs;
+  function z(id, o) { o.kind = 'code'; o.lang = 'py'; L[id] = o; }
+  function PY(code, right, wrong, e) { return P(code, right, wrong, e, 'Python'); }
+  // new tiers for the new stages
+  var ti = COURSE.tiers.map(function (t) { return t.id; }).indexOf('zero-3');
+  COURSE.tiers.splice(ti + 1, 0,
+    { id: 'zero-4', track: 'zero', name: 'Text & labeled data', desc: 'Talk to the user, work with text, and use dictionaries.' },
+    { id: 'zero-5', track: 'zero', name: 'First real programs', desc: 'Plan, build and test small programs end to end.' });
+
+  // ---------------- z1 ----------------
+  X.add('z1', { gateN: 14,
+    lesson: [{ h: 'When it goes red: reading your first errors', html: '<p>Everyone — including professionals — sees errors all day. An error is the computer saying <i>"I didn\'t understand this line"</i>. Read the <b>last line</b> first, then look at the line number it points to.</p><pre>print("Hello)\n      ^\nSyntaxError: unterminated string literal   ← a quote is missing\n\nPrint("Hi")\nNameError: name \'Print\' is not defined     ← capital P: Python is case-sensitive\n\nprint("Total:" total)\nSyntaxError: invalid syntax                 ← missing comma (or use an f-string)</pre><ul><li><b>SyntaxError</b> = typing/grammar problem (quotes, brackets, colons, commas).</li><li><b>NameError</b> = a name it doesn\'t know — usually a typo or a box you never filled.</li><li>Fix one error, run again. The next error may be on a later line — that is progress.</li></ul>' }],
+    qs: [
+      PY('price = 4\nqty = 3\nprint(price * qty)', '12', ['43', '7', 'price * qty'], 'The boxes hold numbers, so * multiplies them.'),
+      PY('a = "4"\nb = "3"\nprint(a + b)', '43', ['7', '12', 'a + b'], 'Text + text glues the text together.'),
+      PY('name = "Sam"\nname = "Ana"\nprint(name)', 'Ana', ['Sam', 'Sam Ana', 'name'], 'A box holds its newest value.'),
+      Q('Print("hi") gives NameError: name \'Print\' is not defined. Why?', 'Python is case-sensitive — it must be lowercase print', ['Print needs two brackets', 'hi must be a number', 'The computer is broken'], 'Capital letters matter.', 0),
+      Q('SyntaxError: unterminated string literal usually means:', 'A quote mark is missing', ['A number is too big', 'The file is empty', 'A variable is unused'], 'Text must open and close with quotes.', 0),
+      Q('When you see an error, read which part first?', 'The last line (the error type and message), then the line number', ['Only the first word', 'Nothing — just retype everything', 'The file name only'], 'The bottom tells you what went wrong.', 0)
+    ],
+    labs: ['z-fix-typos', 'z-receipt'] });
+
+  z('z-fix-typos', { title: 'Fix the three typos', brief: 'This little program has <b>three typos</b>, so it will not run. Press Run, read each error, fix it, and run again. When fixed it prints:<br><code>Welcome!</code><br><code>Your seat: 12</code><br><code>Enjoy the show</code>',
+    starter: 'print("Welcome!)\nseat = 12\nprint(f"Your seat: {seat}")\nPrint("Enjoy the show")\nprint("Bye"\n',
+    tests: [{ name: 'Prints all three lines', expect: 'Welcome!\nYour seat: 12\nEnjoy the show' }, { name: 'The program runs without errors to the end', expect: 'Bye' }],
+    hints: ['Line 1 is missing a closing quote: "Welcome!"', 'Line 4: Print must be lowercase print.', 'The last line is missing its closing bracket: print("Bye")'],
+    solution: 'print("Welcome!")\nseat = 12\nprint(f"Your seat: {seat}")\nprint("Enjoy the show")\nprint("Bye")',
+    why: 'Quotes and brackets must be closed, and Python cares about capital letters.', debrief: 'Read the error, fix one thing, run again — that loop is debugging, and you just did it three times.' });
+
+  z('z-receipt', { title: 'A tiny receipt', brief: 'Boxes are given: <code>item = "Notebook"</code>, <code>price = 3.5</code>, <code>qty = 4</code>. Make a box <code>total</code> = price × qty, then print exactly:<br><code>Notebook x4</code><br><code>Total: $14.0</code>',
+    starter: 'item = "Notebook"\nprice = 3.5\nqty = 4\n# make total, then print the two lines with f-strings\n',
+    tests: [{ name: 'First line', expect: 'Notebook x4' }, { name: 'Total line', expect: 'Total: $14.0' }, { name: 'Uses a total box', check: 'assert total == 14.0, "make a box called total = price * qty"' }],
+    hints: ['total = price * qty', 'print(f"{item} x{qty}")', 'print(f"Total: ${total}")'],
+    solution: 'item = "Notebook"\nprice = 3.5\nqty = 4\ntotal = price * qty\nprint(f"{item} x{qty}")\nprint(f"Total: ${total}")',
+    why: 'Compute once into a named box, then show it — readable and easy to change.', debrief: 'Change qty to 10 and run again. Same program, new answer — that\'s why we use boxes.' });
+
+  // ---------------- z2 ----------------
+  X.add('z2', { gateN: 14,
+    lesson: [{ h: 'More choices, and the other kind of loop', html: '<pre>score = 83\nif score &gt;= 90:\n    print("A")\nelif score &gt;= 80:      # "else if": checked only when the line above was False\n    print("B")\nelse:\n    print("try again")\n\ncount = 3\nwhile count &gt; 0:       # repeat WHILE the question is True\n    print(count)\n    count = count - 1  # change something, or it repeats forever!\nprint("Lift off!")</pre><ul><li>Python checks <code>if</code>/<code>elif</code> from the top and runs the <b>first</b> one that is True — order matters.</li><li><code>for</code> = repeat for each item / a set number of times. <code>while</code> = repeat until a condition changes.</li><li>Indentation (4 spaces) is how Python knows which lines belong inside the <code>if</code> or loop.</li><li>Comparisons: <code>==</code> equal, <code>!=</code> not equal, <code>&lt; &gt; &lt;= &gt;=</code>; combine with <code>and</code> / <code>or</code>.</li></ul>' }],
+    qs: [
+      PY('score = 85\nif score >= 80:\n    print("B")\nelif score >= 70:\n    print("C")', 'B', ['C', 'B\nC', 'nothing'], 'Only the first True branch runs.'),
+      PY('n = 3\nwhile n > 0:\n    print(n)\n    n = n - 1', '3\n2\n1', ['3\n2\n1\n0', '1\n2\n3', '3'], 'Stops when n reaches 0.'),
+      PY('x = 7\nprint(x > 5 and x < 10)', 'True', ['False', '7', 'and'], 'Both are true.'),
+      Q('A while loop never stops. The most likely cause:', 'Nothing inside the loop changes the condition', ['while is broken', 'The indent is 4 spaces', 'print is slow'], 'Change the box the condition checks.', 0),
+      Q('Which symbol asks "is equal to?"', '==', ['=', '!=', '=>'], '= puts a value in a box; == compares.', 0),
+      Q('Why does indentation matter in Python?', 'It shows which lines belong inside the if or loop', ['It makes code faster', 'It is decoration', 'It turns on colors'], 'Indented = inside.', 0)
+    ],
+    labs: ['z-grade', 'z-countdown', 'z-fix-indent'] });
+
+  z('z-grade', { title: 'Letter grades', brief: 'The box <code>score</code> holds a number. Print <code>A</code> for 90 or more, <code>B</code> for 80–89, <code>C</code> for 70–79, and <code>F</code> for anything lower. Tests will change the score (keep the first line exactly <code>score = 83</code>).',
+    starter: 'score = 83\n# if / elif / else\n',
+    tests: [
+      { name: '83 → B', expect: 'B' },
+      { name: 'Works for every grade', check: 'import io, contextlib\nfor s, want in ((95, "A"), (90, "A"), (89, "B"), (70, "C"), (69, "F"), (0, "F")):\n    buf = io.StringIO()\n    code = __CODE__.replace("score = 83", "score = %d" % s, 1)\n    with contextlib.redirect_stdout(buf):\n        exec(code, {})\n    assert buf.getvalue().strip() == want, "score %d should print %s, got %r" % (s, want, buf.getvalue().strip())' }
+    ],
+    hints: ['Start from the top: if score >= 90: print("A")', 'Then elif score >= 80: … and elif score >= 70: …', 'Finish with else: print("F")'],
+    solution: 'score = 83\nif score >= 90:\n    print("A")\nelif score >= 80:\n    print("B")\nelif score >= 70:\n    print("C")\nelse:\n    print("F")',
+    why: 'Checking from the highest grade down means each elif only needs one comparison.', debrief: 'The checker re-ran your program with six different scores — that is what "testing the edges" means.' });
+
+  z('z-countdown', { title: 'Countdown with while', brief: 'Using a <b>while</b> loop, print <code>5</code> down to <code>1</code> (one per line), then <code>Lift off!</code>.',
+    starter: 'count = 5\n# while count is more than 0: print it and make it 1 smaller\n',
+    tests: [{ name: 'Counts down and lifts off', expect: '5\n4\n3\n2\n1\nLift off!' }, { name: 'Uses while', check: 'assert "while" in __CODE__, "use a while loop"' }],
+    hints: ['while count > 0:', 'Inside (indented): print(count) then count = count - 1', 'After the loop (not indented): print("Lift off!")'],
+    solution: 'count = 5\nwhile count > 0:\n    print(count)\n    count = count - 1\nprint("Lift off!")',
+    why: 'The loop changes count every time, so the question eventually becomes False.', debrief: 'Forget the count = count - 1 line and it never ends — now you know why.' });
+
+  z('z-fix-indent', { title: 'Fix it: the misplaced lines', brief: 'This should print each fruit on its own line, and then <b>once</b> at the end print <code>3 fruits</code>. Instead it prints the count three times and checks the wrong thing. Fix the <b>indentation</b> and the <b>comparison</b>.',
+    starter: 'fruits = ["apple", "pear", "plum"]\ncount = 0\nfor f in fruits:\n    print(f)\n    count = count + 1\n    print(f"{count} fruits")\nif count = 3:\n    print("all here")\n',
+    tests: [{ name: 'Fruits then one total line', expect: 'apple\npear\nplum\n3 fruits\nall here' }],
+    hints: ['Run it: there is a SyntaxError on the if line — comparing needs ==.', 'The total line is indented inside the loop. Move it left so it runs once, after the loop.', 'print(f"{count} fruits") should line up with the word for.'],
+    solution: 'fruits = ["apple", "pear", "plum"]\ncount = 0\nfor f in fruits:\n    print(f)\n    count = count + 1\nprint(f"{count} fruits")\nif count == 3:\n    print("all here")',
+    why: 'Indented lines repeat with the loop; un-indented lines run once after it. == compares, = stores.', debrief: 'Two of the most common beginner bugs, fixed by reading the code\'s shape.' });
+
+  // ---------------- z3 ----------------
+  X.add('z3', { gateN: 14,
+    lesson: [{ h: 'Three patterns you will use forever', html: '<pre># 1. Find the biggest (keep the best so far)\nbest = nums[0]\nfor n in nums:\n    if n &gt; best:\n        best = n\n\n# 2. Keep only some items (build a new list)\nevens = []\nfor n in nums:\n    if n % 2 == 0:       # % is the remainder: 0 means "divides evenly"\n        evens.append(n)\n\n# 3. A machine with two inputs that gives back an answer\ndef area(width, height):\n    return width * height\nprint(area(3, 4))        # 12</pre><ul><li><code>len(nums)</code> = how many items; <code>nums[0]</code> = the first item (counting starts at 0!).</li><li><code>return</code> hands a value back; <code>print</code> only shows it.</li></ul>' }],
+    qs: [
+      PY('nums = [4, 9, 2]\nprint(nums[0], len(nums))', '4 3', ['9 3', '4 2', '2 3'], 'Index 0 is the first item; len counts them.'),
+      PY('nums = [1, 2, 3, 4]\nevens = []\nfor n in nums:\n    if n % 2 == 0:\n        evens.append(n)\nprint(evens)', '[2, 4]', ['[1, 3]', '[1, 2, 3, 4]', '2 4'], 'Keeps numbers with remainder 0.'),
+      PY('def double(x):\n    return x * 2\nprint(double(5) + 1)', '11', ['10', '12', '6'], 'double(5) gives back 10, then + 1.'),
+      Q('Why start "best" at nums[0] instead of 0?', 'If every number is negative, 0 would wrongly win', ['0 is not allowed', 'It is faster', 'nums[0] is always the biggest'], 'Start from real data.', 0),
+      Q('What does 7 % 2 give?', '1 (the remainder)', ['3.5', '3', '0'], '7 = 2×3 + 1.', 0),
+      Q('A function that prints instead of returning — what goes wrong?', 'You cannot use its result in other code (it gives back None)', ['Nothing', 'It runs twice', 'It deletes the value'], 'return hands the value back.', 0)
+    ],
+    labs: ['z-biggest', 'z-evens', 'z-area'] });
+
+  z('z-biggest', { title: 'Find the biggest without max()', brief: 'Given <code>temps = [12, -3, 25, 7, 25, 18]</code>, find the biggest number <b>using a loop</b> (no <code>max()</code>) and print <code>Hottest: 25</code>.',
+    starter: 'temps = [12, -3, 25, 7, 25, 18]\n# keep the best so far\n',
+    tests: [{ name: 'Prints Hottest: 25', expect: 'Hottest: 25' }, { name: 'Works with all-negative lists (no max())', check: 'assert "max(" not in __CODE__, "solve it with a loop"\nimport io, contextlib\nbuf = io.StringIO()\nwith contextlib.redirect_stdout(buf):\n    exec(__CODE__.replace("[12, -3, 25, 7, 25, 18]", "[-8, -2, -5]", 1), {})\nassert buf.getvalue().strip() == "Hottest: -2", buf.getvalue()' }],
+    hints: ['best = temps[0]', 'for t in temps: if t > best: best = t', 'print(f"Hottest: {best}")'],
+    solution: 'temps = [12, -3, 25, 7, 25, 18]\nbest = temps[0]\nfor t in temps:\n    if t > best:\n        best = t\nprint(f"Hottest: {best}")',
+    why: 'Keep the best value seen so far, compare each new one against it.', debrief: 'This "running best" pattern finds maximums, minimums, longest names, cheapest prices — anything.' });
+
+  z('z-evens', { title: 'Keep only what you need', brief: 'Given <code>prices = [5, 12, 30, 8, 45, 20]</code>, build a new list <code>cheap</code> with only prices <b>under 20</b>, then print it and how many there are:<br><code>[5, 12, 8]</code><br><code>3 cheap items</code>',
+    starter: 'prices = [5, 12, 30, 8, 45, 20]\ncheap = []\n# fill cheap with a loop\n',
+    tests: [{ name: 'Prints the list and count', expect: '[5, 12, 8]\n3 cheap items' }],
+    hints: ['for p in prices:', 'if p < 20: cheap.append(p)', 'After the loop: print(cheap) and print(f"{len(cheap)} cheap items")'],
+    solution: 'prices = [5, 12, 30, 8, 45, 20]\ncheap = []\nfor p in prices:\n    if p < 20:\n        cheap.append(p)\nprint(cheap)\nprint(f"{len(cheap)} cheap items")',
+    why: 'Loop + if + append is the filter pattern; len counts the result.', debrief: 'Notice 20 is not included: "under 20" means < 20. Reading the words carefully is half of programming.' });
+
+  z('z-area', { title: 'A machine with two inputs', brief: 'Write <code>area(width, height)</code> that <b>returns</b> width × height. Then print the total area of two rooms, 3×4 and 5×2: <code>Total: 22</code>.',
+    starter: 'def area(width, height):\n    pass  # return the area\n\n# print the total of area(3, 4) and area(5, 2)\n',
+    tests: [{ name: 'Prints Total: 22', expect: 'Total: 22' }, { name: 'area returns (not prints)', check: 'assert area(2, 5) == 10 and area(1, 1) == 1' }],
+    hints: ['Inside the function: return width * height', 'total = area(3, 4) + area(5, 2)', 'print(f"Total: {total}")'],
+    solution: 'def area(width, height):\n    return width * height\n\ntotal = area(3, 4) + area(5, 2)\nprint(f"Total: {total}")',
+    why: 'Because area returns a value, you can add results together.', debrief: 'Two inputs, one answer, reused twice. That\'s what functions are for.' });
+
+  // ---------------- z4: text & input ----------------
+  X.insertAfter('z3', {
+    id: 'z4', track: 'zero', tier: 'zero-4', title: 'Talking to the user & working with text', code: 'ZERO-INPUT-AND-TEXT', gateN: 12,
+    goal: 'Ask the user for information with input(), turn text into numbers, and clean up, search and split text.',
+    lesson: [
+      { h: 'Asking questions: input()', html: '<pre>name = input("What is your name? ")   # waits for the user to type\nage = int(input("Age? "))             # input always gives TEXT — int() turns it into a number\nprint(f"Hi {name}, next year you will be {age + 1}")</pre><p><code>input()</code> always hands back <b>text</b>, even if the user typed <code>20</code>. Use <code>int()</code> for whole numbers and <code>float()</code> for decimals before doing math.</p>' },
+      { h: 'Text tools', html: '<pre>s = "  Hello World  "\ns.strip()          # "Hello World"   (remove spaces at the ends)\ns.lower()          # "  hello world  "\ns.upper()          # "  HELLO WORLD  "\ns.replace("o", "0")\nlen(s)             # how many characters\n"World" in s       # True\n"a,b,c".split(",") # ["a", "b", "c"]\n" ".join(["a", "b"])   # "a b"\nf"{3.14159:.2f}"   # "3.14"   (2 decimal places)</pre>' }
+    ],
+    cards: [['input("…")', 'Ask the user; gives back text.'], ['int(text) / float(text)', 'Turn text into a number.'], ['.strip()', 'Remove spaces at both ends.'], ['.lower() / .upper()', 'Change case.'], ['.replace(a, b)', 'Swap text.'], ['.split()', 'Break text into a list of words.'], ['len(text)', 'Number of characters.'], ['"x" in text', 'True if x appears in text.'], ['f"{x:.2f}"', 'Show a number with 2 decimals.']],
+    qs: [
+      PY('age = "20"\nprint(age + "1")', '201', ['21', 'error', '20 1'], 'Text + text glues; it does not add.'),
+      PY('age = "20"\nprint(int(age) + 1)', '21', ['201', '20', 'error'], 'int() turns the text into a number first.'),
+      PY('s = "  Ana  "\nprint(len(s), len(s.strip()))', '7 3', ['3 3', '7 7', '5 3'], 'strip removes the spaces at the ends.'),
+      PY('print("a b  c".split())', "['a', 'b', 'c']", ["['a', 'b', '', 'c']", "['a b  c']", 'a b c'], 'split() with no argument splits on any run of spaces.'),
+      PY('print(f"{2/3:.2f}")', '0.67', ['0.66', '0.6666', '2/3'], 'Rounded to 2 decimals.'),
+      PY('email = " Phil@Example.COM "\nprint(email.strip().lower())', 'phil@example.com', ['Phil@Example.COM', ' phil@example.com ', 'PHIL@EXAMPLE.COM'], 'Clean, then lowercase.'),
+      Q('The user types 5 at age = input("Age? "). What type is age?', 'Text (a string) — use int() to make it a number', ['A number', 'Nothing', 'An error'], 'input always returns text.', 0),
+      Q('int("hello") causes:', 'A ValueError — the text is not a whole number', ['0', 'hello', 'None'], 'Only numeric text converts.', 0),
+      Q('Check whether "@" appears in an email:', '"@" in email', ['email.has("@")', 'email == "@"', 'find(@)'], 'The in operator.', 0),
+      Q('Join ["red", "green"] into "red, green":', '", ".join(["red", "green"])', ['["red", "green"].join(", ")', 'red + green', 'split(", ")'], 'The separator does the joining.', 0),
+      Q('Why clean user text with strip() and lower() before comparing?', '"Yes ", "YES" and "yes" should all count as the same answer', ['It is required', 'It makes it longer', 'It encrypts it'], 'Users type messily.', 0),
+      T('Type the function that turns the text "42" into the number 42.', ['int("42")', "int('42')", 'int'], 'int("42")', 0, '...("42")')
+    ],
+    labs: ['z-ask', 'z-words', 'z-clean-email']
+  });
+
+  z('z-ask', { title: 'Ask and answer', brief: 'Ask for a name and an age with <code>input()</code>, then print <code>Hi NAME, next year you will be AGE+1</code>. The checker types <code>Phil</code> and <code>27</code> for you.',
+    stdin: 'Phil\n27',
+    starter: 'name = input("Name? ")\nage = input("Age? ")\nprint(f"Hi {name}, next year you will be {age + 1}")\n',
+    tests: [{ name: 'Phil, 27', stdin: 'Phil\n27\n', expect: 'Hi Phil, next year you will be 28' }, { name: 'Ana, 9', stdin: 'Ana\n9\n', expect: 'Hi Ana, next year you will be 10' }],
+    hints: ['Run it: TypeError — you cannot add text and a number.', 'age is text. Turn it into a number: age = int(input("Age? "))', 'Then {age + 1} works.'],
+    solution: 'name = input("Name? ")\nage = int(input("Age? "))\nprint(f"Hi {name}, next year you will be {age + 1}")',
+    why: 'input gives text; int() makes it a number you can do math with.', debrief: 'Your program now reacts to the person using it. Every app starts here.' });
+
+  z('z-words', { title: 'Word statistics', brief: 'Read one sentence with <code>input()</code>. Print how many words it has and the longest word:<br><code>Words: 6</code><br><code>Longest: computer</code><br>(If two words tie, keep the first one.)',
+    stdin: 'the computer does what you say',
+    starter: 'sentence = input()\n# split into words, count them, find the longest\n',
+    tests: [{ name: 'Sample sentence', stdin: 'the computer does what you say\n', expect: 'Words: 6\nLongest: computer' }, { name: 'Tie keeps the first', stdin: 'cat dog emu\n', expect: 'Words: 3\nLongest: cat' }],
+    hints: ['words = sentence.split()', 'print(f"Words: {len(words)}")', 'Running best: longest = words[0]; for w in words: if len(w) > len(longest): longest = w'],
+    solution: 'sentence = input()\nwords = sentence.split()\nprint(f"Words: {len(words)}")\nlongest = words[0]\nfor w in words:\n    if len(w) > len(longest):\n        longest = w\nprint(f"Longest: {longest}")',
+    why: 'split turns text into a list; then the list patterns you know apply.', debrief: 'Using > (not >=) is what keeps the first word on a tie. Small details decide correctness.' });
+
+  z('z-clean-email', { title: 'Clean up an email address', brief: 'Read an email with <code>input()</code>. Clean it (remove outer spaces, make it lowercase). If it contains <code>@</code> and a <code>.</code> after the @, print <code>OK: cleaned</code>; otherwise print <code>Invalid: cleaned</code>.',
+    stdin: '  Phil@Example.COM ',
+    starter: 'email = input()\n# clean it, then check it\n',
+    tests: [{ name: 'Messy but valid', stdin: '  Phil@Example.COM \n', expect: 'OK: phil@example.com' }, { name: 'No @', stdin: 'phil.example.com\n', expect: 'Invalid: phil.example.com' }, { name: 'No dot after @', stdin: 'phil.w@localhost\n', expect: 'Invalid: phil.w@localhost' }],
+    hints: ['email = input().strip().lower()', 'After the @: email.split("@")[-1] gives the part after the last @.', 'if "@" in email and "." in email.split("@")[-1]: …'],
+    solution: 'email = input().strip().lower()\nif "@" in email and "." in email.split("@")[-1]:\n    print(f"OK: {email}")\nelse:\n    print(f"Invalid: {email}")',
+    why: 'Clean first, then validate — the same order real sign-up forms use.', debrief: 'Never trust typed input as-is. You cleaned it and checked it before using it.' });
+
+  // ---------------- z5: dictionaries ----------------
+  X.insertAfter('z4', {
+    id: 'z5', track: 'zero', tier: 'zero-4', title: 'Dictionaries: boxes with labels inside', code: 'ZERO-DICT-LOOKUP', gateN: 12,
+    goal: 'Store labeled data in a dictionary, look things up, loop over it, and count things.',
+    lesson: [
+      { h: 'A dictionary is a set of labeled drawers', html: '<pre>menu = {"coffee": 3.5, "tea": 2.0, "muffin": 4.25}\nprint(menu["tea"])            # 2.0   — look up by label (the "key")\nmenu["juice"] = 3.0           # add a new drawer\nmenu["tea"] = 2.25            # change one\nprint("cake" in menu)         # False — is there a drawer with that label?\nprint(menu.get("cake", 0))    # 0 — get with a fallback instead of an error\n\nfor item, price in menu.items():\n    print(f"{item}: ${price}")</pre>' },
+      { h: 'Counting with a dictionary', html: '<pre>votes = ["red", "blue", "red", "green", "red"]\ncounts = {}\nfor v in votes:\n    counts[v] = counts.get(v, 0) + 1    # start at 0 the first time\nprint(counts)    # {\'red\': 3, \'blue\': 1, \'green\': 1}</pre><p>This little loop is how websites count likes, how logs count errors, and how polls count votes.</p>' }
+    ],
+    cards: [['Dictionary {key: value}', 'Labeled values you look up by key.'], ['d["key"]', 'Get a value (error if missing).'], ['d.get(key, default)', 'Get a value, or a default if missing.'], ['d[key] = value', 'Add or change an entry.'], ['key in d', 'True if the key exists.'], ['for k, v in d.items()', 'Loop over labels and values together.'], ['counts.get(x, 0) + 1', 'The counting pattern.']],
+    qs: [
+      PY('d = {"a": 1, "b": 2}\nd["a"] = 5\nprint(d["a"] + d["b"])', '7', ['3', '6', 'error'], '"a" was changed to 5.'),
+      PY('d = {"x": 1}\nprint(d.get("y", 0))', '0', ['None', 'error', '1'], 'get uses the fallback.'),
+      PY('c = {}\nfor w in ["hi", "yo", "hi"]:\n    c[w] = c.get(w, 0) + 1\nprint(c["hi"])', '2', ['1', '3', 'error'], 'Counted twice.'),
+      PY('d = {"tea": 2}\nprint("coffee" in d, len(d))', 'False 1', ['True 1', 'False 2', 'error'], 'in checks the keys.'),
+      Q('menu["cake"] when there is no "cake" key gives:', 'A KeyError', ['0', 'None', 'An empty string'], 'Use get() for a fallback.', 0),
+      Q('Best structure for "phone number for each friend\'s name":', 'A dictionary {name: number}', ['A list of numbers', 'One long string', 'A number'], 'Look up by label.', 0),
+      Q('In {"coffee": 3.5}, "coffee" is the:', 'Key', ['Value', 'Index', 'Function'], 'Key → value.', 0),
+      Q('Loop over keys and values together:', 'for k, v in d.items():', ['for k in d.values():', 'for d in k:', 'while d:'], '.items() gives pairs.', 0),
+      Q('counts.get(v, 0) + 1 starts at 0 because:', 'The first time a value is seen, it has no count yet', ['0 is lucky', 'Dictionaries start at 1', 'It resets the count'], 'Default for missing keys.', 0),
+      Q('Can two drawers in one dictionary have the same key?', 'No — keys are unique; assigning again replaces the value', ['Yes, always', 'Only for numbers', 'Only for text'], 'One value per key.', 0),
+      PY('stock = {"pen": 3}\nstock["pen"] -= 1\nstock["cap"] = 5\nprint(stock)', "{'pen': 2, 'cap': 5}", ["{'pen': 3, 'cap': 5}", "{'cap': 5, 'pen': 2}", "{'pen': 2}"], 'Changed one, added one (in insertion order).'),
+      T('Type the method that loops over a dictionary\'s key/value pairs (just the method name with brackets).', ['items()', '.items()', 'items'], 'items()', 0, '.____()')
+    ],
+    labs: ['z-order', 'z-votes']
+  });
+
+  z('z-order', { title: 'Cafe order total', brief: 'The <code>menu</code> dictionary holds prices. The <code>order</code> list holds what a customer asked for. Print each item with its price, skip anything not on the menu with <code>Sorry, no ITEM</code>, then print <code>Total: $X.XX</code>.',
+    starter: 'menu = {"coffee": 3.5, "tea": 2.0, "muffin": 4.25}\norder = ["coffee", "cake", "muffin", "coffee"]\ntotal = 0\n# loop over order\n',
+    tests: [{ name: 'Full receipt', expect: 'coffee $3.5\nSorry, no cake\nmuffin $4.25\ncoffee $3.5\nTotal: $11.25' }],
+    hints: ['for item in order:', 'if item in menu: print(f"{item} ${menu[item]}") and add menu[item] to total — else print the sorry line.', 'print(f"Total: ${total:.2f}")'],
+    solution: 'menu = {"coffee": 3.5, "tea": 2.0, "muffin": 4.25}\norder = ["coffee", "cake", "muffin", "coffee"]\ntotal = 0\nfor item in order:\n    if item in menu:\n        print(f"{item} ${menu[item]}")\n        total = total + menu[item]\n    else:\n        print(f"Sorry, no {item}")\nprint(f"Total: ${total:.2f}")',
+    why: 'Check the key exists before looking it up, so one bad item doesn\'t crash the whole order.', debrief: 'A lookup table + a loop + a guard: the core of every shopping cart.' });
+
+  z('z-votes', { title: 'Count the votes', brief: 'Read one line of votes separated by spaces (e.g. <code>red blue red green red</code>). Count them with a dictionary and print each color and its count <b>in the order first seen</b>, then <code>Winner: COLOR</code> (the most votes; on a tie, the one seen first).',
+    stdin: 'red blue red green red blue',
+    starter: 'votes = input().split()\ncounts = {}\n# count, print, find the winner\n',
+    tests: [{ name: 'Sample', stdin: 'red blue red green red blue\n', expect: 'red 3\nblue 2\ngreen 1\nWinner: red' }, { name: 'Tie goes to the first seen', stdin: 'cat dog dog cat\n', expect: 'cat 2\ndog 2\nWinner: cat' }],
+    hints: ['for v in votes: counts[v] = counts.get(v, 0) + 1', 'Dictionaries remember the order keys were added: for color, n in counts.items(): print(color, n)', 'Running best: winner = None, best = 0; if n > best: …'],
+    solution: 'votes = input().split()\ncounts = {}\nfor v in votes:\n    counts[v] = counts.get(v, 0) + 1\nwinner = None\nbest = 0\nfor color, n in counts.items():\n    print(color, n)\n    if n > best:\n        best = n\n        winner = color\nprint(f"Winner: {winner}")',
+    why: 'Counting + running best = a tiny election system.', debrief: 'You combined three patterns — split, count with get, running best — into one working program.' });
+
+  // ---------------- z6: first real programs ----------------
+  X.insertAfter('z5', {
+    id: 'z6', track: 'zero', tier: 'zero-5', title: 'Your first real programs', code: 'ZERO-PLAN-BUILD-TEST', gateN: 10,
+    goal: 'Plan a program in plain words, build it one small piece at a time, test it with different inputs, and know where to go next.',
+    lesson: [
+      { h: 'Plan in plain words first', html: '<p>Before typing code, write the steps as comments:</p><pre># 1. ask for the bill amount (a decimal number)\n# 2. ask for the tip percent\n# 3. ask how many people\n# 4. tip = bill × percent ÷ 100\n# 5. each = (bill + tip) ÷ people\n# 6. print each, with 2 decimals</pre><p>Then turn <b>one comment at a time</b> into code and run it after each step. Small steps = small, easy-to-find mistakes.</p>' },
+      { h: 'Test like you mean it', html: '<ul><li>Try normal input, then <b>edge cases</b>: zero, one, very large, empty, negative.</li><li>Decide what should happen with bad input (a message, not a crash).</li><li>When something is wrong, add a <code>print()</code> to see what a box holds at that point.</li></ul><p><b>Where next?</b> You now know the core ideas of every programming language: values, boxes, choices, loops, lists, dictionaries and functions. Continue with the <b>Python</b> track for real-world tools, or <b>Linux</b> to automate your computer.</p>' }
+    ],
+    cards: [['Plan in comments', 'Write the steps in plain words before code.'], ['One step at a time', 'Write a little, run, check, repeat.'], ['Edge cases', 'Zero, one, empty, huge, negative inputs.'], ['print() to look inside', 'Show a box\'s value while debugging.'], ['Bad input', 'Decide on a friendly message instead of a crash.']],
+    qs: [
+      Q('Best first step for a new program:', 'Write the steps in plain words (comments) first', ['Type as much code as possible', 'Copy random code', 'Start with the hardest part'], 'Plan, then build.', 0),
+      Q('Why run the program after each small piece?', 'Mistakes are found right away, while they are small and easy to locate', ['It is required', 'It makes the code shorter', 'It saves electricity'], 'Small steps.', 0),
+      Q('Which is an edge case for "split the bill among people"?', '0 people', ['3 people', '4 people', '5 people'], 'Division by zero lurks there.', 0),
+      Q('Your total is wrong somewhere in the middle. A quick way to look inside?', 'Add print() lines showing the boxes\' values', ['Delete the program', 'Rename variables', 'Restart the computer'], 'Make the invisible visible.', 0),
+      Q('The user types "abc" where a number is needed. A friendly program:', 'Shows a message like "please type a number" instead of crashing', ['Crashes', 'Guesses a number', 'Deletes the input'], 'Handle bad input.', 0),
+      PY('people = 0\nif people < 1:\n    print("need at least 1 person")\nelse:\n    print(100 / people)', 'need at least 1 person', ['0', 'error', 'inf'], 'The guard prevents dividing by zero.'),
+      PY('scores = {"q1": True, "q2": False, "q3": True}\nprint(sum(1 for ok in scores.values() if ok), "of", len(scores))', '2 of 3', ['3 of 3', '1 of 3', 'True of 3'], 'Counts the True answers.'),
+      PY('total = 0\nfor line in ["food 12.5", "gas 30", "food 7.5"]:\n    cat, amt = line.split()\n    if cat == "food":\n        total += float(amt)\nprint(total)', '20.0', ['50.0', '12.5', '20'], 'Only the food lines are added.'),
+      Q('After this track, which is a natural next step?', 'The Python track (real-world tools) or Linux (automation)', ['Stop coding', 'Start with C++ templates', 'Memorize every function'], 'Build on the core ideas.', 0),
+      Q('A program that works for the example but not other inputs is:', 'Not finished — test more cases', ['Done', 'Perfect', 'Impossible to fix'], 'Examples are not proof.', 0)
+    ],
+    labs: ['z-tip', 'z-quiz', 'z-budget']
+  });
+
+  z('z-tip', { title: 'Tip calculator', brief: 'Ask for the bill (decimal), the tip percent (whole number) and the number of people. Print <code>Each pays: $X.XX</code>. If people is less than 1, print <code>Need at least 1 person</code> instead.',
+    stdin: '84.50\n20\n4',
+    starter: '# 1. ask for bill, tip percent, people\n# 2. guard against fewer than 1 person\n# 3. compute and print each share with 2 decimals\n',
+    tests: [{ name: '$84.50, 20%, 4 people', stdin: '84.50\n20\n4\n', expect: 'Each pays: $25.35' }, { name: 'No tip, 1 person', stdin: '10\n0\n1\n', expect: 'Each pays: $10.00' }, { name: 'Zero people', stdin: '50\n15\n0\n', expect: 'Need at least 1 person' }],
+    hints: ['bill = float(input()); tip = int(input()); people = int(input())', 'if people < 1: print("Need at least 1 person")', 'else: each = (bill + bill * tip / 100) / people; print(f"Each pays: ${each:.2f}")'],
+    solution: 'bill = float(input())\ntip = int(input())\npeople = int(input())\nif people < 1:\n    print("Need at least 1 person")\nelse:\n    each = (bill + bill * tip / 100) / people\n    print(f"Each pays: ${each:.2f}")',
+    why: 'Convert inputs, guard the edge case, compute, format.', debrief: 'That is a complete, useful program — and it doesn\'t crash on the edge case. Ship it.' });
+
+  z('z-quiz', { title: 'A quiz game', brief: 'The <code>quiz</code> list holds (question, answer) pairs. For each one, print the question, read the player\'s answer with <code>input()</code>, and compare it <b>ignoring case and outer spaces</b>. Print <code>Correct!</code> or <code>Answer: ANSWER</code>. Finish with <code>Score: N/3</code>.',
+    stdin: 'paris\n 4 \nblue',
+    starter: 'quiz = [("Capital of France?", "Paris"), ("2 + 2?", "4"), ("Color of the sky on a clear day?", "Blue")]\nscore = 0\n# loop, ask, compare, count\n',
+    tests: [{ name: 'All right (messy typing)', stdin: 'paris\n 4 \nBLUE\n', expect: 'Capital of France?\nCorrect!\n2 + 2?\nCorrect!\nColor of the sky on a clear day?\nCorrect!\nScore: 3/3' }, { name: 'Some wrong', stdin: 'rome\n4\ngreen\n', expect: 'Capital of France?\nAnswer: Paris\n2 + 2?\nCorrect!\nColor of the sky on a clear day?\nAnswer: Blue\nScore: 1/3' }],
+    hints: ['for question, answer in quiz:', 'print(question); guess = input()', 'if guess.strip().lower() == answer.lower(): … then print(f"Score: {score}/{len(quiz)}")'],
+    solution: 'quiz = [("Capital of France?", "Paris"), ("2 + 2?", "4"), ("Color of the sky on a clear day?", "Blue")]\nscore = 0\nfor question, answer in quiz:\n    print(question)\n    guess = input()\n    if guess.strip().lower() == answer.lower():\n        print("Correct!")\n        score = score + 1\n    else:\n        print(f"Answer: {answer}")\nprint(f"Score: {score}/{len(quiz)}")',
+    why: 'A list of pairs drives the whole game — add questions without touching the logic.', debrief: 'Data (the quiz list) separate from logic (the loop) — that\'s good design, already.' });
+
+  z('z-budget', { title: 'Expense tracker', brief: 'Read lines like <code>food 12.50</code> until the user types <code>done</code>. Add each amount to its category. Then print each category (in the order first seen) as <code>CATEGORY: $X.XX</code> and finally <code>Total: $X.XX</code>. Skip lines that don\'t have exactly two parts and print <code>Skipped: LINE</code> for them.',
+    stdin: 'food 12.50\ngas 30\nfood 7.25\noops\nrent 900\ndone',
+    starter: 'totals = {}\nwhile True:\n    line = input()\n    # stop on "done", otherwise split and add\n    break\n',
+    tests: [{ name: 'Sample', stdin: 'food 12.50\ngas 30\nfood 7.25\noops\nrent 900\ndone\n', expect: 'Skipped: oops\nfood: $19.75\ngas: $30.00\nrent: $900.00\nTotal: $949.75' }, { name: 'Nothing entered', stdin: 'done\n', expect: 'Total: $0.00' }],
+    hints: ['if line == "done": break', 'parts = line.split(); if len(parts) != 2: print(f"Skipped: {line}"); continue', 'cat, amt = parts; totals[cat] = totals.get(cat, 0) + float(amt). After the loop, print each and sum(totals.values()).'],
+    solution: 'totals = {}\nwhile True:\n    line = input()\n    if line == "done":\n        break\n    parts = line.split()\n    if len(parts) != 2:\n        print(f"Skipped: {line}")\n        continue\n    cat, amt = parts\n    totals[cat] = totals.get(cat, 0) + float(amt)\nfor cat, amt in totals.items():\n    print(f"{cat}: ${amt:.2f}")\nprint(f"Total: ${sum(totals.values()):.2f}")',
+    why: 'A loop that reads until a stop word, a guard for bad lines, and a dictionary of totals.', debrief: 'You just wrote a real tool: input, validation, grouping, formatting. Everything after this is the same ideas, bigger.' });
 })();
 
 ;
@@ -3434,21 +3699,6 @@ window.COURSE = {
     why: 'Read input, filter with a comprehension, tally with len, and format output — the anatomy of a real CLI tool.',
     debrief: 'You built a working log analyzer from the pieces across the Python path. That is the job.' });
 })();
-
-;
-/* Depth packs: add to existing stages or insert new stages (runs before the engine). */
-window.X = {
-  st: function (id) { var s = COURSE.stages.filter(function (x) { return x.id === id; })[0]; if (!s) throw new Error('X: no stage ' + id); return s; },
-  add: function (id, o) {
-    var s = this.st(id);
-    if (o.lesson) s.lesson = (s.lesson || []).concat(o.lesson);
-    if (o.qs) s.qs = (s.qs || []).concat(o.qs);
-    if (o.cards) s.cards = (s.cards || []).concat(o.cards);
-    if (o.labs) s.labs = (s.labs || []).concat(o.labs);
-    if (o.gateN) s.gateN = o.gateN;
-  },
-  insertAfter: function (id, stage) { var i = COURSE.stages.indexOf(this.st(id)); COURSE.stages.splice(i + 1, 0, stage); }
-};
 
 ;
 /* Linux depth pack: deeper lessons, more questions, real bash scripting labs (editor + autograded scripts), and two new stages */
@@ -6881,6 +7131,257 @@ window.X = {
     solution: 'def final_price(price, percent):\n    if percent < 0 or percent > 100:\n        return price\n    return round(price - price * percent / 100, 2)\n\nprint(final_price(50, 20))',
     why: 'The happy-path math was fine, but the spec also required rounding and input validation — exactly the parts generated code tends to skip.',
     debrief: 'You reviewed AI output against the full spec, wrote the edge cases as tests, and repaired it without breaking the main case. That\'s the workflow.' });
+})();
+
+;
+/* Review & Fix depth pack: more find-and-fix labs for fx1–fx3, a defensive security-review stage,
+   a debugging-methodology stage (performance bugs, regression tests), and a multi-bug capstone. */
+(function () {
+  var X = window.X, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs;
+  function py(id, o) { o.kind = 'code'; o.lang = 'py'; L[id] = o; }
+  function js(id, o) { o.kind = 'code'; o.lang = 'js'; L[id] = o; }
+  function PY(code, right, wrong, e) { return P(code, right, wrong, e, 'Python'); }
+  var ti = COURSE.tiers.map(function (t) { return t.id; }).indexOf('fix-3');
+  COURSE.tiers.splice(ti + 1, 0,
+    { id: 'fix-4', track: 'fix', name: 'Security review', desc: 'Find and fix the bugs attackers look for — defensively.' },
+    { id: 'fix-5', track: 'fix', name: 'Debug like a pro', desc: 'Method, performance bugs, regression tests and a multi-bug capstone.' });
+
+  // ---------------- fx1 ----------------
+  X.add('fx1', { gateN: 14,
+    lesson: [{ h: 'A repeatable way into unfamiliar code', html: '<ol><li><b>Run it first.</b> See what it actually does with the example input.</li><li><b>Find the entry point</b> and follow one input all the way through. Write down what each box holds at each step (a "trace table").</li><li><b>Name the gap</b>: expected X, got Y, first wrong at line N.</li><li><b>Change one thing</b>, re-run, and confirm only the intended behavior changed.</li></ol><p>In JavaScript, <code>TypeError: Cannot read properties of undefined</code> means some object in a chain like <code>user.profile.city</code> is missing — find <i>which</i> one and decide what should happen.</p>' }],
+    qs: [
+      PY('data = {"a": [1, 2], "b": []}\nprint(sum(len(v) for v in data.values()))', '2', ['3', '0', '[1, 2]'], 'Lengths 2 and 0.'),
+      PY('def f(x):\n    if x > 10:\n        return "big"\n    elif x > 5:\n        return "mid"\nprint(f(3))', 'None', ['mid', 'small', 'error'], 'No branch matched, so the function falls off the end and returns None.'),
+      Q('A trace table is:', 'A written record of each variable\'s value at each step', ['A database table', 'A stack trace', 'A list of tests'], 'Make execution visible.', 0),
+      Q('Before changing unfamiliar code you should:', 'Run it and reproduce the problem with a concrete input', ['Rewrite it', 'Delete the tests', 'Rename everything'], 'Reproduce first.', 0)
+    ],
+    labs: ['fx-js-undefined'] });
+
+  js('fx-js-undefined', { title: 'Fix it: Cannot read properties of undefined', brief: '<code>cityLabels(users)</code> should return a label per user: <code>"NAME (CITY)"</code>, or <code>"NAME (unknown)"</code> if the user has no <code>profile</code> or no <code>city</code>. Names should be trimmed. It crashes on real data. Fix it.',
+    starter: 'function cityLabels(users) {\n  return users.map(u => `${u.name} (${u.profile.city})`);\n}\n',
+    tests: [
+      { name: 'Normal users', check: 'return JSON.stringify(cityLabels([{ name: "Ana", profile: { city: "Tulsa" } }])) === \'["Ana (Tulsa)"]\';' },
+      { name: 'Missing profile or city → unknown', check: 'const r = cityLabels([{ name: "Bo" }, { name: "Cy", profile: {} }, { name: "Di", profile: { city: "" } }]);\nreturn JSON.stringify(r) === \'["Bo (unknown)","Cy (unknown)","Di (unknown)"]\';' },
+      { name: 'Names trimmed', check: 'return cityLabels([{ name: "  Ed ", profile: { city: "Moore" } }])[0] === "Ed (Moore)";' },
+      { name: 'Empty list', check: 'return Array.isArray(cityLabels([])) && cityLabels([]).length === 0;' }
+    ],
+    hints: ['Run the second test: Bo has no profile, so <code>u.profile.city</code> reads <code>.city</code> of undefined.', 'Optional chaining: <code>u.profile?.city</code>.', 'Use <code>|| "unknown"</code> (empty string should also count as unknown) and <code>u.name.trim()</code>.'],
+    solution: 'function cityLabels(users) {\n  return users.map(u => `${u.name.trim()} (${u.profile?.city || "unknown"})`);\n}',
+    debrief: 'Real data is incomplete. Decide what missing means, then encode that decision once — here, ?. plus a default.' });
+
+  // ---------------- fx2 ----------------
+  X.add('fx2', { gateN: 14,
+    lesson: [{ h: 'More usual suspects', html: '<table><tr><th>Bug</th><th>Symptom</th><th>Fix</th></tr><tr><td>Mutable default argument</td><td>Data "leaks" between calls</td><td><code>def f(x, items=None): items = items or []</code></td></tr><tr><td>Float equality</td><td><code>0.1 + 0.2 == 0.3</code> is False</td><td>Round, compare with tolerance, or use <code>Decimal</code>/integer cents</td></tr><tr><td>Integer vs float division</td><td>Lost decimals (in many languages)</td><td>Convert before dividing</td></tr><tr><td>Shadowing</td><td>A name like <code>list</code> or <code>sum</code> stops working</td><td>Rename the variable</td></tr><tr><td>Modifying while iterating</td><td>Skipped items</td><td>Build a new list instead</td></tr></table>' }],
+    qs: [
+      PY('def add(x, items=[]):\n    items.append(x)\n    return items\nadd(1)\nprint(add(2))', '[1, 2]', ['[2]', '[1]', 'error'], 'The default list is created once and shared between calls.'),
+      PY('print(0.1 + 0.2 == 0.3, round(0.1 + 0.2, 2) == 0.3)', 'False True', ['True True', 'False False', 'True False'], 'Binary floats are approximate; round before comparing.'),
+      PY('nums = [1, 2, 2, 3]\nfor n in nums:\n    if n == 2:\n        nums.remove(n)\nprint(nums)', '[1, 2, 3]', ['[1, 3]', '[1, 2, 2, 3]', 'error'], 'Removing while iterating skips the next item.'),
+      PY('sum = 10\ntry:\n    print(sum([1, 2]))\nexcept TypeError:\n    print("shadowed")', 'shadowed', ['3', '13', '10'], 'The variable sum hides the built-in function.'),
+      Q('Safest type for money in Python:', 'decimal.Decimal or integer cents', ['float', 'str only', 'complex'], 'Exact decimal arithmetic.', 0)
+    ],
+    labs: ['fx-mutable', 'fx-money'] });
+
+  py('fx-mutable', { title: 'Fix it: the cart that remembers other customers', brief: '<code>new_cart(owner, items=[])</code> should return a fresh cart dict for each call. Customers report seeing each other\'s items. Fix it so every cart is independent.',
+    starter: 'def new_cart(owner, items=[]):\n    cart = {"owner": owner, "items": items}\n    return cart\n\ndef add_item(cart, item):\n    cart["items"].append(item)\n    return cart\n',
+    tests: [
+      { name: 'Two carts are independent', check: 'a = new_cart("ana")\nb = new_cart("bo")\nadd_item(a, "pen")\nassert b["items"] == [], b' },
+      { name: 'Passing items still works', check: 'c = new_cart("cy", ["mug"])\nassert c["items"] == ["mug"]' },
+      { name: 'Caller\'s list is not modified', check: 'mine = ["mug"]\nc = new_cart("cy", mine)\nadd_item(c, "pen")\nassert mine == ["mug"], mine' }
+    ],
+    hints: ['The default <code>[]</code> is created once, when the function is defined, and reused forever.', 'Use <code>items=None</code> and create a new list inside.', 'Copy what the caller passed: <code>list(items) if items is not None else []</code>.'],
+    solution: 'def new_cart(owner, items=None):\n    cart = {"owner": owner, "items": list(items) if items is not None else []}\n    return cart\n\ndef add_item(cart, item):\n    cart["items"].append(item)\n    return cart\n',
+    debrief: 'Mutable defaults are shared state in disguise. The None pattern plus a defensive copy fixes both the leak and the aliasing.' });
+
+  py('fx-money', { title: 'Fix it: the invoice that is off by a cent', brief: '<code>invoice_total(lines, tax_rate)</code> gets <code>(price_string, qty)</code> pairs like <code>("19.99", 3)</code>. It must return the total including tax as a string with exactly 2 decimals, rounding half up (0.005 → 0.01). <code>is_paid(total, paid)</code> compares two money strings. The float version is wrong in the cents. Use <code>Decimal</code>.',
+    starter: 'def invoice_total(lines, tax_rate):\n    subtotal = sum(float(p) * q for p, q in lines)\n    total = subtotal * (1 + tax_rate)\n    return str(round(total, 2))\n\ndef is_paid(total, paid):\n    return float(total) == float(paid)\n',
+    tests: [
+      { name: 'Two decimals always', check: 'assert invoice_total([("10.00", 1)], "0") == "10.00", invoice_total([("10.00", 1)], "0")' },
+      { name: 'Exact cents with tax', check: 'assert invoice_total([("19.99", 3), ("0.10", 2)], "0.0825") == "65.13", invoice_total([("19.99", 3), ("0.10", 2)], "0.0825")' },
+      { name: 'Half-up rounding', check: 'assert invoice_total([("1.005", 1)], "0") == "1.01", invoice_total([("1.005", 1)], "0")\nassert invoice_total([("0.125", 1)], "0") == "0.13"' },
+      { name: 'is_paid compares exactly', check: 'assert is_paid("65.13", "65.130")\nassert not is_paid("65.13", "65.12")' }
+    ],
+    hints: ['<code>from decimal import Decimal, ROUND_HALF_UP</code>; build Decimals from the <b>strings</b>, never from floats.', '<code>subtotal = sum(Decimal(p) * q for p, q in lines)</code>; <code>total = subtotal * (1 + Decimal(tax_rate))</code>.', '<code>str(total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))</code>; is_paid: <code>Decimal(total) == Decimal(paid)</code>.'],
+    solution: 'from decimal import Decimal, ROUND_HALF_UP\n\ndef invoice_total(lines, tax_rate):\n    subtotal = sum(Decimal(p) * q for p, q in lines)\n    total = subtotal * (1 + Decimal(tax_rate))\n    return str(total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))\n\ndef is_paid(total, paid):\n    return Decimal(total) == Decimal(paid)\n',
+    debrief: 'Floats are binary approximations; money is decimal. Decimal from strings plus explicit rounding gives the answer accountants expect.' });
+
+  // ---------------- fx3 ----------------
+  X.add('fx3', { gateN: 14,
+    qs: [
+      Q('An AI-written retry helper retries forever with no delay. The main risk:', 'It hammers a failing service and never reports the failure', ['It is too slow', 'It uses too little memory', 'None'], 'Bound attempts, add backoff, re-raise.', 0),
+      Q('AI code computes "days between dates" by subtracting day numbers from strings. Which input breaks it first?', 'Dates in different months (e.g. Jan 30 → Feb 2)', ['Two identical dates', 'Dates in the same week', 'Morning vs evening'], 'Use a real date library.', 0),
+      Q('An except: pass block in generated code is suspicious because:', 'It silently hides every error, including bugs', ['It is slow', 'It is a syntax error', 'It logs too much'], 'Catch specific errors and handle or re-raise.', 0)
+    ],
+    labs: ['fx-vibe-dates', 'fx-vibe-retry'] });
+
+  py('fx-vibe-dates', { title: 'Review: the AI date math', brief: 'An AI wrote <code>days_between(a, b)</code> for ISO dates (<code>"2026-01-30"</code>) and <code>is_weekend(d)</code>. Spec: days_between returns the absolute number of days (works across months, years and leap days); is_weekend is True for Saturday/Sunday. Both are wrong on real dates — fix them with <code>datetime</code>.',
+    starter: '# AI-generated\ndef days_between(a, b):\n    return abs(int(b[-2:]) - int(a[-2:]))\n\ndef is_weekend(d):\n    return int(d[-2:]) % 7 in (0, 6)\n',
+    tests: [
+      { name: 'Same month', check: 'assert days_between("2026-03-01", "2026-03-15") == 14' },
+      { name: 'Across months and years, either order', check: 'assert days_between("2026-01-30", "2026-02-02") == 3, days_between("2026-01-30", "2026-02-02")\nassert days_between("2026-12-31", "2025-12-31") == 365' },
+      { name: 'Leap year', check: 'assert days_between("2024-02-28", "2024-03-01") == 2' },
+      { name: 'Weekends', check: 'assert is_weekend("2026-10-17") and is_weekend("2026-10-18")\nassert not is_weekend("2026-10-19") and not is_weekend("2026-10-14")' }
+    ],
+    hints: ['<code>from datetime import date</code>; <code>date.fromisoformat("2026-01-30")</code>.', 'Subtracting dates gives a timedelta: <code>abs((db - da).days)</code>.', '<code>date.weekday()</code>: Monday = 0 … Saturday = 5, Sunday = 6.'],
+    solution: 'from datetime import date\n\ndef days_between(a, b):\n    return abs((date.fromisoformat(b) - date.fromisoformat(a)).days)\n\ndef is_weekend(d):\n    return date.fromisoformat(d).weekday() >= 5\n',
+    debrief: 'The draft passed a same-month demo. Calendars are full of edges (month lengths, leap years, weekday math) — always reach for the library.' });
+
+  js('fx-vibe-retry', { title: 'Review: the AI retry helper', brief: 'An AI wrote <code>retry(fn, attempts, baseMs)</code>. Spec: call the async <code>fn</code>; on failure wait <code>baseMs × 2^(try−1)</code> (exponential backoff) and try again, up to <code>attempts</code> total calls; if all fail, <b>throw the last error</b>; never retry more than asked. The draft ignores <code>attempts</code>, never waits, and swallows the error.',
+    starter: '// AI-generated\nasync function retry(fn, attempts, baseMs) {\n  for (let i = 0; i < 100; i++) {\n    try {\n      return await fn();\n    } catch (e) {\n      // try again right away\n    }\n  }\n}\n',
+    tests: [
+      { name: 'Returns on success after failures', check: 'let n = 0;\nconst v = await retry(async () => { if (++n < 3) throw new Error("flaky"); return "ok"; }, 5, 1);\nreturn v === "ok" && n === 3;' },
+      { name: 'Stops after `attempts` and throws the last error', check: 'let n = 0;\ntry { await retry(async () => { n++; throw new Error("down " + n); }, 3, 1); return false; } catch (e) { return e.message === "down 3" && n === 3; }' },
+      { name: 'Backs off exponentially', check: 'const times = [];\ntry { await retry(async () => { times.push(Date.now()); throw new Error("x"); }, 3, 30); } catch (e) {}\nconst g1 = times[1] - times[0], g2 = times[2] - times[1];\nreturn times.length === 3 && g1 >= 25 && g2 >= 55;' }
+    ],
+    hints: ['Use a counted loop: <code>for (let i = 1; i &lt;= attempts; i++)</code>.', 'In catch: remember the error; if <code>i &lt; attempts</code>, <code>await new Promise(r =&gt; setTimeout(r, baseMs * 2 ** (i - 1)))</code>.', 'After the loop, <code>throw last;</code>.'],
+    solution: 'async function retry(fn, attempts, baseMs) {\n  let last;\n  for (let i = 1; i <= attempts; i++) {\n    try {\n      return await fn();\n    } catch (e) {\n      last = e;\n      if (i < attempts) await new Promise(r => setTimeout(r, baseMs * 2 ** (i - 1)));\n    }\n  }\n  throw last;\n}',
+    debrief: 'Unbounded retries without backoff turn one outage into a self-inflicted denial of service. Bounded, backed-off, and loud on final failure is the production pattern.' });
+
+  // ---------------- fx4: security review ----------------
+  X.insertAfter('fx3', {
+    id: 'fx4', track: 'fix', tier: 'fix-4', title: 'Security review: bugs attackers look for', code: 'FIX-PARAMS-NOT-STRINGS', gateN: 12,
+    goal: 'Recognize and fix the most common security bugs in everyday code — injection, path traversal, unsafe eval, cross-site scripting, hardcoded secrets and weak randomness — from the defender\'s side of the review.',
+    lesson: [
+      { h: 'The review mindset', html: '<p>For every piece of input, ask: <b>where does it come from</b> (user, file, network, AI output), and <b>where does it end up</b> (SQL, a file path, HTML, a shell, <code>eval</code>)? Bugs happen when untrusted data reaches an interpreter <b>as code</b> instead of as data.</p><table><tr><th>Sink</th><th>Bug</th><th>Fix</th></tr><tr><td>SQL</td><td>Injection via string building</td><td>Parameterized queries (<code>?</code> placeholders)</td></tr><tr><td>File path</td><td>Path traversal (<code>../</code>)</td><td>Resolve the path and check it stays inside the base folder</td></tr><tr><td><code>eval</code>/<code>exec</code></td><td>Code execution</td><td><code>json.loads</code> / <code>ast.literal_eval</code></td></tr><tr><td>HTML</td><td>Cross-site scripting (XSS)</td><td>Escape output / <code>textContent</code></td></tr><tr><td>Shell</td><td>Command injection</td><td><code>subprocess.run([...])</code> with a list, no <code>shell=True</code></td></tr><tr><td>Source code</td><td>Hardcoded secrets</td><td>Environment variables / secret manager</td></tr><tr><td>Tokens</td><td>Predictable values</td><td><code>secrets</code> module, not <code>random</code></td></tr></table>' },
+      { h: 'Fix it the boring, reliable way', html: '<ul><li>Prefer <b>structural</b> fixes (parameters, allow-lists, library parsers) over clever filtering — blocklists always miss something.</li><li>Validate input shape early (type, length, allowed characters) <i>and</i> encode output for its destination.</li><li>Fail closed: on doubt, reject.</li><li>Add a regression test with the malicious input so the bug cannot come back.</li></ul>' }
+    ],
+    cards: [['Untrusted input', 'Anything from users, files, networks or AI output.'], ['Sink', 'Where data is interpreted: SQL, paths, HTML, shell, eval.'], ['Parameterized query', 'Placeholders keep input as data, never SQL.'], ['Path traversal', '../ sequences escaping the intended folder.'], ['realpath / resolve()', 'Normalize a path before checking it.'], ['ast.literal_eval', 'Safely parse Python literals without executing code.'], ['XSS', 'Injected script in a web page; fix by escaping output.'], ['secrets.token_urlsafe', 'Cryptographically strong random token.'], ['shell=True', 'Runs through a shell — avoid with untrusted input.'], ['Fail closed', 'When unsure, deny.']],
+    qs: [
+      Q('cursor.execute(f"SELECT * FROM users WHERE name = \'{name}\'") — the fix is:', 'cursor.execute("SELECT * FROM users WHERE name = ?", (name,))', ['Escape quotes with replace()', 'Use a longer variable name', 'Wrap it in try/except'], 'Parameters, not string building.', 0),
+      Q('A download endpoint opens os.path.join(BASE, filename). A request for "../../etc/passwd":', 'May escape BASE — resolve the path and verify it is still inside BASE', ['Is harmless', 'Is blocked by join automatically', 'Only works on Windows'], 'Path traversal.', 0),
+      Q('Config values are parsed with eval(text). Safer replacement:', 'json.loads or ast.literal_eval', ['exec(text)', 'eval(text.strip())', 'compile(text)'], 'Parse data; never execute it.', 0),
+      Q('A comment is rendered with element.innerHTML = comment. The risk:', 'Cross-site scripting — attacker HTML/script runs for other users', ['Slower page', 'Broken CSS', 'None'], 'Use textContent or escape.', 0),
+      Q('Password-reset tokens are made with random.randint. Why is that a bug?', 'random is predictable; use the secrets module for security tokens', ['randint is too slow', 'Tokens must be letters', 'It is fine'], 'Cryptographic randomness.', 0),
+      Q('subprocess.run(f"ping {host}", shell=True) with user-supplied host. Fix:', 'subprocess.run(["ping", "-c", "1", host]) after validating host', ['Add quotes around host', 'Use os.system instead', 'Run as root'], 'No shell, list arguments, validate.', 0),
+      Q('Why prefer allow-lists over block-lists for input validation?', 'Block-lists inevitably miss new bad patterns; allow-lists accept only known-good', ['They are shorter', 'They are required by law', 'No difference'], 'Define what is valid.', 0),
+      Q('After fixing an injection bug you should also:', 'Add a regression test using the malicious input', ['Delete the logs', 'Hide the endpoint', 'Nothing'], 'Keep it fixed.', 0),
+      Q('An API key is committed in settings.py. Beyond removing it, you must:', 'Rotate the key and load it from an environment variable or secret store', ['Rename the variable', 'Base64-encode it', 'Make the file read-only'], 'Assume it leaked.', 0),
+      Q('"Fail closed" means:', 'When validation is unsure, reject the request', ['Close the app on errors', 'Allow by default', 'Retry forever'], 'Deny on doubt.', 0),
+      Q('A filename check uses filename.startswith("/srv/files") on the resolved path. Why is that not enough?', '"/srv/files2/secret" also starts with "/srv/files" — compare whole path components (commonpath)', ['startswith is slow', 'Paths cannot be compared', 'It is enough'], 'Prefix ≠ containment.', 0),
+      Q('An AI-generated endpoint passes user JSON straight into an ORM update (all fields). The review finding:', 'Mass assignment — allow-list the fields a user may change', ['None', 'Use more JSON', 'Rename the endpoint'], 'Never bind every field blindly.', 0)
+    ],
+    labs: ['fx-sql', 'fx-path', 'fx-eval', 'fx-xss', 'fx-token']
+  });
+
+  py('fx-sql', { title: 'Fix it: SQL injection in a search function', brief: '<code>find_users(conn, name)</code> searches a SQLite <code>users(id, name, role)</code> table and returns <code>[(id, name)]</code> for exact name matches, sorted by id. <code>count_role(conn, role)</code> returns how many users have a role. Both build SQL by string formatting — rewrite them with <b>parameterized queries</b>.',
+    starter: 'def find_users(conn, name):\n    q = f"SELECT id, name FROM users WHERE name = \'{name}\' ORDER BY id"\n    return conn.execute(q).fetchall()\n\ndef count_role(conn, role):\n    q = "SELECT COUNT(*) FROM users WHERE role = \'%s\'" % role\n    return conn.execute(q).fetchone()[0]\n',
+    tests: [
+      { name: 'Normal searches work', check: 'import sqlite3\nc = sqlite3.connect(":memory:")\nc.executescript("CREATE TABLE users(id INTEGER, name TEXT, role TEXT); INSERT INTO users VALUES (1,\'ana\',\'admin\'),(2,\'bo\',\'user\'),(3,\'ana\',\'user\');")\nassert find_users(c, "ana") == [(1, "ana"), (3, "ana")]\nassert count_role(c, "user") == 2' },
+      { name: 'Injection returns nothing', check: 'import sqlite3\nc = sqlite3.connect(":memory:")\nc.executescript("CREATE TABLE users(id INTEGER, name TEXT, role TEXT); INSERT INTO users VALUES (1,\'ana\',\'admin\'),(2,\'bo\',\'user\');")\nassert find_users(c, "x\' OR \'1\'=\'1") == []\nassert count_role(c, "x\' OR \'1\'=\'1") == 0' },
+      { name: 'Names with apostrophes work', check: 'import sqlite3\nc = sqlite3.connect(":memory:")\nc.executescript("CREATE TABLE users(id INTEGER, name TEXT, role TEXT); INSERT INTO users VALUES (7,\'o\'\'brien\',\'user\');")\nassert find_users(c, "o\'brien") == [(7, "o\'brien")]' },
+      { name: 'Uses placeholders', check: 'assert "?" in __CODE__ and "f\\"SELECT" not in __CODE__ and "% role" not in __CODE__, "use ? placeholders"' }
+    ],
+    hints: ['Put a <code>?</code> where the value goes and pass the value separately.', '<code>conn.execute("SELECT id, name FROM users WHERE name = ? ORDER BY id", (name,))</code> — note the comma that makes a tuple.', 'Same for count_role with <code>(role,)</code>.'],
+    solution: 'def find_users(conn, name):\n    return conn.execute("SELECT id, name FROM users WHERE name = ? ORDER BY id", (name,)).fetchall()\n\ndef count_role(conn, role):\n    return conn.execute("SELECT COUNT(*) FROM users WHERE role = ?", (role,)).fetchone()[0]\n',
+    debrief: 'Notice the apostrophe test: parameterization is not only safer, it is more correct — legitimate names like O\'Brien broke the old code too.' });
+
+  py('fx-path', { title: 'Fix it: path traversal in a file download', brief: '<code>safe_path(base, filename)</code> must return the absolute path of a file <b>inside</b> <code>base</code>, or raise <code>ValueError</code> if the request would escape it (<code>../</code>, absolute paths, tricks like <code>reports/../../x</code>) or if filename is empty. Subfolders inside base are fine.',
+    starter: 'import os\n\ndef safe_path(base, filename):\n    return os.path.join(base, filename)\n',
+    tests: [
+      { name: 'Normal files and subfolders', check: 'import os\nb = "/srv/files"\nassert safe_path(b, "report.pdf") == "/srv/files/report.pdf"\nassert safe_path(b, "2026/q1.csv") == "/srv/files/2026/q1.csv"\nassert safe_path(b, "a/../b.txt") == "/srv/files/b.txt"' },
+      { name: 'Traversal is rejected', check: 'for bad in ("../etc/passwd", "reports/../../secret", "..", "../files2/x"):\n    try:\n        safe_path("/srv/files", bad)\n        raise AssertionError("accepted " + bad)\n    except ValueError:\n        pass' },
+      { name: 'Absolute paths and empty names rejected', check: 'for bad in ("/etc/passwd", ""):\n    try:\n        safe_path("/srv/files", bad)\n        raise AssertionError("accepted %r" % bad)\n    except ValueError:\n        pass' }
+    ],
+    hints: ['Normalize: <code>full = os.path.normpath(os.path.join(base, filename))</code> (on a real server use <code>os.path.realpath</code> to resolve symlinks too).', 'Inside check: <code>os.path.commonpath([base, full]) == base</code> — a plain <code>startswith</code> would wrongly accept <code>/srv/files2</code>.', 'Reject empty names and <code>os.path.isabs(filename)</code> first; also reject <code>full == base</code>.'],
+    solution: 'import os\n\ndef safe_path(base, filename):\n    if not filename or os.path.isabs(filename):\n        raise ValueError("invalid file name")\n    base = os.path.normpath(base)\n    full = os.path.normpath(os.path.join(base, filename))\n    if full == base or os.path.commonpath([base, full]) != base:\n        raise ValueError("path escapes the base folder")\n    return full\n',
+    debrief: 'Normalize first, then check containment with commonpath — the "../files2" test is why prefix checks are not enough.' });
+
+  py('fx-eval', { title: 'Fix it: eval() in a settings parser', brief: '<code>parse_settings(text)</code> reads lines <code>key = value</code> (skip blanks and <code>#</code> comments) where values are Python-style literals: numbers, quoted strings, <code>True/False</code>, lists. It uses <code>eval</code>, which runs any code. Replace it with <code>ast.literal_eval</code>, and raise <code>ValueError</code> mentioning the line number for values that are not plain literals.',
+    starter: 'def parse_settings(text):\n    out = {}\n    for line in text.splitlines():\n        if not line.strip() or line.strip().startswith("#"):\n            continue\n        key, value = line.split("=", 1)\n        out[key.strip()] = eval(value.strip())\n    return out\n',
+    tests: [
+      { name: 'Literals parse', check: 'r = parse_settings("# app\\nport = 8080\\nname = \'shop\'\\ndebug = False\\n\\nhosts = [\'a\', \'b\']\\nrate = 0.5")\nassert r == {"port": 8080, "name": "shop", "debug": False, "hosts": ["a", "b"], "rate": 0.5}, r' },
+      { name: 'Code is never executed', check: 'import builtins\nran = []\nbuiltins.__dict__["_probe"] = lambda: ran.append(1)\ntry:\n    parse_settings("x = _probe()")\n    raise AssertionError("accepted a function call")\nexcept ValueError as e:\n    assert "1" in str(e), "mention the line number"\nassert ran == [], "the code ran!"' },
+      { name: 'Expressions and names rejected with line number', check: 'for bad, ln in (("a = 1\\nb = __import__(\'os\')", "2"), ("a = 2 + 2", "1"), ("z = undefined_name", "1")):\n    try:\n        parse_settings(bad)\n        raise AssertionError("accepted " + bad)\n    except ValueError as e:\n        assert ln in str(e), str(e)' },
+      { name: 'Lines without = rejected', check: 'try:\n    parse_settings("justtext")\n    raise AssertionError("accepted")\nexcept ValueError:\n    pass' }
+    ],
+    hints: ['<code>import ast</code>; <code>ast.literal_eval(value)</code> accepts only literals and raises ValueError/SyntaxError otherwise.', 'Use <code>enumerate(text.splitlines(), 1)</code> for line numbers; check <code>"=" in line</code> before splitting.', 'Wrap: <code>except (ValueError, SyntaxError): raise ValueError(f"line {n}: not a literal value")</code>.'],
+    solution: 'import ast\n\ndef parse_settings(text):\n    out = {}\n    for n, line in enumerate(text.splitlines(), 1):\n        s = line.strip()\n        if not s or s.startswith("#"):\n            continue\n        if "=" not in s:\n            raise ValueError(f"line {n}: expected key = value")\n        key, value = s.split("=", 1)\n        try:\n            out[key.strip()] = ast.literal_eval(value.strip())\n        except (ValueError, SyntaxError):\n            raise ValueError(f"line {n}: not a literal value")\n    return out\n',
+    debrief: 'eval turns a config file into a program anyone with write access can run. literal_eval keeps it data — and the line-numbered errors make bad configs easy to fix.' });
+
+  js('fx-xss', { title: 'Fix it: cross-site scripting in comments', brief: '<code>renderComments(list)</code> returns HTML for a list of <code>{author, text, url}</code>: <code>&lt;li&gt;&lt;a href="URL"&gt;AUTHOR&lt;/a&gt;: TEXT&lt;/li&gt;</code> joined together. Escape <code>&amp; &lt; &gt; " \'</code> in author and text; only allow URLs starting with <code>https://</code> or <code>http://</code> (otherwise use <code>#</code>), and escape them too.',
+    starter: 'function renderComments(list) {\n  return list.map(c => `<li><a href="${c.url}">${c.author}</a>: ${c.text}</li>`).join("");\n}\n',
+    tests: [
+      { name: 'Normal comment', check: 'return renderComments([{ author: "Ana", text: "Nice post", url: "https://ana.dev" }]) === \'<li><a href="https://ana.dev">Ana</a>: Nice post</li>\';' },
+      { name: 'Script tags are escaped', check: 'const h = renderComments([{ author: "<b>x</b>", text: "<script>steal()<\/script> & more", url: "https://x.test" }]);\nreturn !h.includes("<script>") && h.includes("&lt;script&gt;steal()&lt;/script&gt; &amp; more") && h.includes("&lt;b&gt;x&lt;/b&gt;");' },
+      { name: 'javascript: URLs are neutralized', check: 'const h = renderComments([{ author: "a", text: "t", url: "javascript:alert(1)" }, { author: "b", text: "t", url: " JAVASCRIPT:alert(1)" }]);\nreturn !/javascript:/i.test(h) && (h.match(/href="#"/g) || []).length === 2;' },
+      { name: 'Quotes cannot break out of href', check: 'const h = renderComments([{ author: "a", text: "t", url: \'https://x.test/" onmouseover="alert(1)\' }]);\nreturn !h.includes(\'" onmouseover\') && h.includes("&quot;");' }
+    ],
+    hints: ['Write <code>esc(s)</code> replacing <code>&amp;</code> first, then <code>&lt; &gt; " \'</code> with <code>&amp;amp; &amp;lt; &amp;gt; &amp;quot; &amp;#39;</code>.', 'URL allow-list: <code>/^https?:\\/\\//i.test(url.trim()) ? url.trim() : "#"</code>.', 'Escape everything you insert, including the URL.'],
+    solution: 'function esc(s) {\n  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\'/g, "&#39;");\n}\nfunction safeUrl(u) {\n  const t = String(u || "").trim();\n  return /^https?:\\/\\//i.test(t) ? t : "#";\n}\nfunction renderComments(list) {\n  return list.map(c => `<li><a href="${esc(safeUrl(c.url))}">${esc(c.author)}</a>: ${esc(c.text)}</li>`).join("");\n}',
+    debrief: 'Output encoding per context (HTML text, attribute) plus a URL scheme allow-list closes the common XSS doors. In real apps, a templating engine that escapes by default does this for you.' });
+
+  py('fx-token', { title: 'Fix it: hardcoded secret and predictable tokens', brief: 'This module signs reset links. Fix it so: <code>get_api_key()</code> reads <code>APP_API_KEY</code> from the environment and raises <code>RuntimeError</code> if it is missing (no hardcoded key anywhere); <code>make_reset_token()</code> returns a URL-safe token from the <code>secrets</code> module with at least 32 bytes of randomness; <code>tokens_match(a, b)</code> compares in constant time.',
+    starter: 'import random\nimport string\n\nAPI_KEY = "sk_live_51HxDEMOKEY"\n\ndef get_api_key():\n    return API_KEY\n\ndef make_reset_token():\n    return "".join(random.choice(string.ascii_letters) for _ in range(8))\n\ndef tokens_match(a, b):\n    return a == b\n',
+    tests: [
+      { name: 'Key comes from the environment', check: 'import os\nos.environ["APP_API_KEY"] = "from-env-123"\nassert get_api_key() == "from-env-123"\ndel os.environ["APP_API_KEY"]\ntry:\n    get_api_key()\n    raise AssertionError("expected RuntimeError when missing")\nexcept RuntimeError:\n    pass' },
+      { name: 'No hardcoded key in the code', check: 'assert "sk_live" not in __CODE__, "remove the hardcoded key"' },
+      { name: 'Strong, URL-safe, unique tokens', check: 'import re\nts = {make_reset_token() for _ in range(50)}\nassert len(ts) == 50\nassert all(len(t) >= 43 and re.fullmatch(r"[A-Za-z0-9_-]+", t) for t in ts), list(ts)[:2]\nassert "secrets" in __CODE__ and "random.choice" not in __CODE__' },
+      { name: 'Constant-time comparison', check: 'assert tokens_match("abc", "abc") and not tokens_match("abc", "abd")\nassert "compare_digest" in __CODE__' }
+    ],
+    hints: ['<code>key = os.environ.get("APP_API_KEY")</code>; <code>if not key: raise RuntimeError("APP_API_KEY is not set")</code>.', '<code>secrets.token_urlsafe(32)</code> — 32 bytes → about 43 characters.', '<code>secrets.compare_digest(a, b)</code> avoids timing leaks.'],
+    solution: 'import os\nimport secrets\n\ndef get_api_key():\n    key = os.environ.get("APP_API_KEY")\n    if not key:\n        raise RuntimeError("APP_API_KEY is not set")\n    return key\n\ndef make_reset_token():\n    return secrets.token_urlsafe(32)\n\ndef tokens_match(a, b):\n    return secrets.compare_digest(a, b)\n',
+    debrief: 'Three classic findings in one review: a secret in source control (also rotate it!), guessable tokens, and a timing-unsafe comparison. Each fix is one standard-library call.' });
+
+  // ---------------- fx5: debug like a pro ----------------
+  X.insertAfter('fx4', {
+    id: 'fx5', track: 'fix', tier: 'fix-5', title: 'Debug like a pro: method, performance & tests', code: 'FIX-REPRODUCE-ISOLATE-PROVE', gateN: 12,
+    goal: 'A dependable debugging method, spotting and fixing performance bugs, writing regression tests that would have caught a bug, and repairing a multi-bug module end to end.',
+    lesson: [
+      { h: 'The method', html: '<ol><li><b>Reproduce</b> reliably with the smallest input you can find.</li><li><b>Isolate</b>: binary-search the problem — comment out half, shrink the input by half, bisect commits — until one cause remains.</li><li><b>Hypothesize</b> one specific cause and predict what you will see if it is true.</li><li><b>Test the hypothesis</b> (print/log/debugger). Wrong? Cross it off; you learned something.</li><li><b>Fix and prove</b>: write a test that fails before and passes after; run the whole suite.</li></ol><p>Write down what you tried. Most "impossible" bugs are an assumption you never checked (wrong file, stale cache, different input, different environment).</p>' },
+      { h: 'Performance bugs are bugs', html: '<ul><li><code>x in some_list</code> inside a loop is O(n²) — use a <code>set</code> or <code>dict</code> (O(1) lookups).</li><li>String building with <code>+=</code> in a big loop → collect parts and <code>"".join</code>.</li><li>Repeating the same expensive work (a query or API call per item) → batch it or cache it.</li><li>Measure before optimizing: <code>time.perf_counter()</code>, <code>cProfile</code>.</li></ul>' },
+      { h: 'Tests that pin bugs down', html: '<pre>def test_slugify_collapses_spaces():\n    assert slugify("  Big   News ") == "big-news"     # the exact input from the bug report\n\ndef test_slugify_rejects_empty():\n    with pytest.raises(ValueError):\n        slugify("!!!")</pre><p>A good regression test is <b>specific</b> (the real failing input), <b>fast</b>, and <b>fails on the buggy code</b>. If it would have passed before your fix, it does not protect you.</p>' }
+    ],
+    cards: [['Reproduce', 'Make the bug happen on demand with minimal input.'], ['Isolate', 'Halve the search space until one cause remains.'], ['Hypothesis', 'A specific, testable guess about the cause.'], ['Regression test', 'A test that fails on the bug and passes after the fix.'], ['O(n²) membership', 'list lookups inside a loop; use a set.'], ['"".join(parts)', 'Fast string building.'], ['perf_counter / cProfile', 'Measure before optimizing.'], ['Rubber-duck', 'Explain the code line by line out loud — you will spot the gap.']],
+    qs: [
+      Q('A bug appears with a 10,000-line input file. Best first step?', 'Shrink the input (halve it repeatedly) until you have the smallest file that still fails', ['Read all 10,000 lines', 'Rewrite the parser', 'Add try/except everywhere'], 'Minimal reproduction.', 0),
+      Q('A regression test is only useful if:', 'It fails on the buggy code and passes on the fixed code', ['It passes on both', 'It is very long', 'It tests unrelated code'], 'Prove it catches the bug.', 0),
+      Q('This loop is slow for 100k items: for x in a: if x in b_list: … Fix?', 'Convert b_list to a set first', ['Sort a', 'Use while instead of for', 'Add more RAM'], 'O(1) membership.', 0),
+      Q('"It works on my machine" — what should you compare first?', 'The inputs, configuration and environment versions between the two machines', ['Keyboard layout', 'Screen size', 'Nothing — it must be fine'], 'Unchecked assumptions.', 0),
+      Q('Before optimizing a slow function you should:', 'Measure where the time actually goes (profile)', ['Rewrite it in C', 'Guess the slow line', 'Remove error handling'], 'Measure first.', 0),
+      PY('import time\nt = time.perf_counter()\nx = sum(range(1000))\nprint(x, time.perf_counter() - t >= 0)', '499500 True', ['500500 True', '499500 False', '1000 True'], 'perf_counter differences are never negative.'),
+      Q('A good hypothesis while debugging is:', 'Specific and testable: "total is wrong because tax is applied twice in apply_discount"', ['"Something is broken"', '"The computer is weird"', '"Maybe it is the network"'], 'Predict what you will observe.', 0),
+      Q('After fixing a bug, run:', 'The whole test suite, not just the new test', ['Nothing', 'Only the new test', 'Only manual clicks'], 'Fixes can break other things.', 0),
+      Q('Rubber-duck debugging works because:', 'Explaining each line forces you to notice assumptions', ['Ducks know Python', 'It slows you down', 'It replaces tests'], 'Say it out loud.', 0),
+      Q('An endpoint does one database query per item in a 500-item list. This is called:', 'The N+1 query problem — batch or join instead', ['Caching', 'Indexing', 'Sharding'], 'Batch the work.', 0),
+      Q('A flaky test fails 1 run in 20. Most useful next step?', 'Find what differs between runs (time, ordering, randomness, shared state) and make it deterministic', ['Delete the test', 'Retry it until green', 'Ignore it'], 'Flakiness hides real bugs.', 0),
+      PY('parts = []\nfor i in range(3):\n    parts.append(str(i))\nprint("-".join(parts))', '0-1-2', ['012', '0-1-2-', '1-2-3'], 'join puts the separator between items only.')
+    ],
+    labs: ['fx-perf', 'fx-regress', 'fx-capstone']
+  });
+
+  py('fx-perf', { title: 'Fix it: the report that takes forever', brief: '<code>report(orders, vip_ids)</code> returns <code>(vip_order_count, unique_customers, summary)</code> where summary is the customer ids joined by commas in first-seen order. Results are correct but it is far too slow on big inputs (the test uses 12,000 orders). Make it fast <b>without changing results</b>.',
+    starter: 'def report(orders, vip_ids):\n    vip_count = 0\n    seen = []\n    summary = ""\n    for o in orders:\n        if o["customer"] in vip_ids:\n            vip_count += 1\n        if o["customer"] not in seen:\n            seen.append(o["customer"])\n            summary = summary + ("," if summary else "") + str(o["customer"])\n    return vip_count, len(seen), summary\n',
+    tests: [
+      { name: 'Correct results', check: 'orders = [{"customer": c} for c in [5, 3, 5, 9, 3, 1]]\nassert report(orders, [3, 1]) == (3, 4, "5,3,9,1"), report(orders, [3, 1])' },
+      { name: 'Fast on 12,000 orders', check: 'import time\norders = [{"customer": i % 5000} for i in range(12000)]\nvips = list(range(0, 5000, 2))\nt = time.perf_counter()\nr = report(orders, vips)\nel = time.perf_counter() - t\nassert r[0] == 6000 and r[1] == 5000 and r[2].startswith("0,1,2,"), r[:2]\nassert el < 0.25, "took %.2fs" % el' }
+    ],
+    hints: ['<code>x in vip_ids</code> on a list scans it every time → make <code>vip = set(vip_ids)</code> once.', 'Track seen customers in a <code>set</code>, but keep a list for order.', 'Collect ids in a list and <code>",".join(map(str, order))</code> at the end instead of growing a string.'],
+    solution: 'def report(orders, vip_ids):\n    vip = set(vip_ids)\n    vip_count = 0\n    seen = set()\n    order = []\n    for o in orders:\n        c = o["customer"]\n        if c in vip:\n            vip_count += 1\n        if c not in seen:\n            seen.add(c)\n            order.append(c)\n    return vip_count, len(order), ",".join(map(str, order))\n',
+    debrief: 'Two list-membership checks made it O(n²). Sets made it O(n) — same answers, thousands of times faster. The correctness test made sure the speedup did not change behavior.' });
+
+  py('fx-regress', { title: 'Write the regression tests', brief: 'A bug report says <code>normalize_phone</code> mishandled numbers with a leading <code>+1</code> and with dots. Write test functions <code>test_plain()</code>, <code>test_country_code()</code>, <code>test_dots_and_spaces()</code> and <code>test_rejects_short()</code> using <code>assert</code>. Each takes the function to test as its argument: <code>def test_plain(normalize_phone): …</code>. The checker runs your tests against the <b>fixed</b> version (all must pass) and a <b>buggy</b> version (at least one must fail). Rules: output is 10 digits like <code>4055550182</code>; strip a leading <code>+1</code> or <code>1</code> on 11-digit input; ignore spaces, dashes, dots and brackets; fewer than 10 digits raises ValueError.',
+    starter: 'def test_plain(normalize_phone):\n    pass\n\ndef test_country_code(normalize_phone):\n    pass\n\ndef test_dots_and_spaces(normalize_phone):\n    pass\n\ndef test_rejects_short(normalize_phone):\n    pass\n',
+    tests: [
+      { name: 'All your tests pass on the correct implementation', check: 'import re\ndef good(s):\n    d = re.sub(r"\\D", "", s)\n    if len(d) == 11 and d[0] == "1":\n        d = d[1:]\n    if len(d) != 10:\n        raise ValueError("bad phone")\n    return d\nfor t in (test_plain, test_country_code, test_dots_and_spaces, test_rejects_short):\n    t(good)' },
+      { name: 'Your tests catch the country-code bug', check: 'import re\ndef bug1(s):\n    d = re.sub(r"\\D", "", s)\n    if len(d) < 10:\n        raise ValueError("bad")\n    return d[:10]\nfailed = 0\nfor t in (test_plain, test_country_code, test_dots_and_spaces, test_rejects_short):\n    try:\n        t(bug1)\n    except Exception:\n        failed += 1\nassert failed >= 1, "no test failed on an implementation that keeps the leading 1"' },
+      { name: 'Your tests catch the dots bug', check: 'import re\ndef bug2(s):\n    d = re.sub(r"[\\s()\\-+]", "", s)\n    if len(d) == 11 and d[0] == "1":\n        d = d[1:]\n    if len(d) < 10:\n        raise ValueError("bad")\n    return d\nfailed = 0\nfor t in (test_plain, test_country_code, test_dots_and_spaces, test_rejects_short):\n    try:\n        t(bug2)\n    except Exception:\n        failed += 1\nassert failed >= 1, "no test failed on an implementation that keeps dots"' },
+      { name: 'Your tests catch the missing length check', check: 'import re\ndef bug3(s):\n    d = re.sub(r"\\D", "", s)\n    if len(d) == 11 and d[0] == "1":\n        d = d[1:]\n    return d\nfailed = 0\nfor t in (test_plain, test_country_code, test_dots_and_spaces, test_rejects_short):\n    try:\n        t(bug3)\n    except Exception:\n        failed += 1\nassert failed >= 1, "no test failed on an implementation that accepts short numbers"' }
+    ],
+    hints: ['<code>assert normalize_phone("405-555-0182") == "4055550182"</code>', 'Country code: <code>assert normalize_phone("+1 405 555 0182") == "4055550182"</code> — and dots: <code>"405.555.0182"</code>.', 'Short: <code>try: normalize_phone("555-0182") \\n    assert False \\nexcept ValueError: pass</code> — careful that your own AssertionError is not swallowed (catch only ValueError).'],
+    solution: 'def test_plain(normalize_phone):\n    assert normalize_phone("405-555-0182") == "4055550182"\n    assert normalize_phone("(405) 555-0182") == "4055550182"\n\ndef test_country_code(normalize_phone):\n    assert normalize_phone("+1 405 555 0182") == "4055550182"\n    assert normalize_phone("1-405-555-0182") == "4055550182"\n\ndef test_dots_and_spaces(normalize_phone):\n    assert normalize_phone("405.555.0182") == "4055550182"\n    assert normalize_phone(" 405 555 0182 ") == "4055550182"\n\ndef test_rejects_short(normalize_phone):\n    try:\n        normalize_phone("555-0182")\n    except ValueError:\n        return\n    raise AssertionError("short number was accepted")\n',
+    debrief: 'You wrote tests that kill three different mutants of the function. That is how you know a test suite is worth something: it fails when the code is wrong.' });
+
+  py('fx-capstone', { title: 'Capstone: repair the inventory module', brief: 'A teammate\'s <code>Inventory</code> class has <b>five bugs</b>. Spec: <code>add(sku, qty)</code> — qty must be a positive int, else ValueError; <code>remove(sku, qty)</code> — ValueError if qty is not positive or exceeds stock (stock unchanged); items reaching 0 are deleted; <code>low_stock(threshold)</code> — skus with stock <b>at or below</b> threshold, sorted; <code>value(prices)</code> — total of stock × price as a string with 2 decimals, skus missing from prices count as 0; each Inventory starts empty and independent.',
+    starter: 'class Inventory:\n    def __init__(self, stock={}):\n        self.stock = stock\n\n    def add(self, sku, qty):\n        self.stock[sku] = self.stock.get(sku, 0) + qty\n\n    def remove(self, sku, qty):\n        if qty <= 0:\n            raise ValueError("qty must be positive")\n        self.stock[sku] = self.stock.get(sku, 0) - qty\n        if self.stock[sku] < 0:\n            raise ValueError("not enough stock")\n        if self.stock[sku] == 0:\n            del self.stock[sku]\n\n    def low_stock(self, threshold):\n        return sorted(s for s, q in self.stock.items() if q < threshold)\n\n    def value(self, prices):\n        total = sum(q * prices[s] for s, q in self.stock.items())\n        return str(round(total, 2))\n',
+    tests: [
+      { name: 'Inventories are independent', check: 'a = Inventory(); b = Inventory()\na.add("pen", 3)\nassert b.stock == {}, b.stock' },
+      { name: 'add validates qty', check: 'inv = Inventory()\nfor bad in (0, -2, 1.5, "3"):\n    try:\n        inv.add("pen", bad)\n        raise AssertionError("accepted %r" % (bad,))\n    except ValueError:\n        pass\nassert inv.stock == {}' },
+      { name: 'Failed remove leaves stock unchanged', check: 'inv = Inventory(); inv.add("pen", 2)\ntry:\n    inv.remove("pen", 5)\n    raise AssertionError("allowed overdraw")\nexcept ValueError:\n    pass\nassert inv.stock == {"pen": 2}, inv.stock\ntry:\n    inv.remove("cap", 1)\n    raise AssertionError("removed unknown sku")\nexcept ValueError:\n    pass\nassert "cap" not in inv.stock\ninv.remove("pen", 2)\nassert inv.stock == {}' },
+      { name: 'low_stock includes the threshold', check: 'inv = Inventory(); inv.add("a", 5); inv.add("b", 2); inv.add("c", 9)\nassert inv.low_stock(5) == ["a", "b"], inv.low_stock(5)' },
+      { name: 'value: two decimals, missing prices count as 0', check: 'inv = Inventory(); inv.add("a", 3); inv.add("b", 1)\nassert inv.value({"a": 1.1}) == "3.30", inv.value({"a": 1.1})\nassert Inventory().value({}) == "0.00"' }
+    ],
+    hints: ['Mutable default again: <code>def __init__(self, stock=None): self.stock = dict(stock) if stock else {}</code>.', 'add: <code>if not isinstance(qty, int) or isinstance(qty, bool) or qty &lt;= 0: raise ValueError</code>. remove: check <code>qty &gt; self.stock.get(sku, 0)</code> <b>before</b> changing anything.', 'low_stock uses <code>&lt;=</code>; value uses <code>prices.get(s, 0)</code> and <code>f"{total:.2f}"</code>.'],
+    solution: 'class Inventory:\n    def __init__(self, stock=None):\n        self.stock = dict(stock) if stock else {}\n\n    @staticmethod\n    def _check(qty):\n        if not isinstance(qty, int) or isinstance(qty, bool) or qty <= 0:\n            raise ValueError("qty must be a positive whole number")\n\n    def add(self, sku, qty):\n        self._check(qty)\n        self.stock[sku] = self.stock.get(sku, 0) + qty\n\n    def remove(self, sku, qty):\n        self._check(qty)\n        have = self.stock.get(sku, 0)\n        if qty > have:\n            raise ValueError("not enough stock")\n        if have - qty == 0:\n            del self.stock[sku]\n        else:\n            self.stock[sku] = have - qty\n\n    def low_stock(self, threshold):\n        return sorted(s for s, q in self.stock.items() if q <= threshold)\n\n    def value(self, prices):\n        total = sum(q * prices.get(s, 0) for s, q in self.stock.items())\n        return f"{total:.2f}"\n',
+    debrief: 'Shared default state, missing validation, mutate-then-check, an off-by-one comparison and formatting/KeyError issues — five bug families in 25 lines. You found them by reading against the spec, not by guessing.' });
 })();
 
 ;
