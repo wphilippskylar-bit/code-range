@@ -242,7 +242,7 @@ body.pc .editor{min-height:300px}
 <body>
 <noscript>This study app needs JavaScript enabled.</noscript>
 <script>
-/* build aef7d87566 */
+/* build c174caa3ea */
 /* AwkCore — a small but real awk interpreter for the bash sandbox.
    Supports: BEGIN/END, pattern-only rules, /regex/ patterns, expressions with
    fields ($0, $n, $NF), NR, NF, FS/OFS, variables, associative arrays,
@@ -2576,6 +2576,326 @@ window.COURSE = {
     solution: 'import sys\nlines = sys.stdin.read().splitlines()\nerrs = [l for l in lines if l.startswith("ERROR")]\nprint(f"ERROR count: {len(errs)}")\nif errs:\n    print(f"first: {errs[0][len(\'ERROR \'):]}")\n',
     why: 'Read input, filter with a comprehension, tally with len, and format output — the anatomy of a real CLI tool.',
     debrief: 'You built a working log analyzer from the pieces across the Python path. That is the job.' });
+})();
+
+;
+/* Depth packs: add to existing stages or insert new stages (runs before the engine). */
+window.X = {
+  st: function (id) { var s = COURSE.stages.filter(function (x) { return x.id === id; })[0]; if (!s) throw new Error('X: no stage ' + id); return s; },
+  add: function (id, o) {
+    var s = this.st(id);
+    if (o.lesson) s.lesson = (s.lesson || []).concat(o.lesson);
+    if (o.qs) s.qs = (s.qs || []).concat(o.qs);
+    if (o.cards) s.cards = (s.cards || []).concat(o.cards);
+    if (o.labs) s.labs = (s.labs || []).concat(o.labs);
+    if (o.gateN) s.gateN = o.gateN;
+  },
+  insertAfter: function (id, stage) { var i = COURSE.stages.indexOf(this.st(id)); COURSE.stages.splice(i + 1, 0, stage); }
+};
+
+;
+/* Python depth pack: deeper lessons, more questions, build + find-and-fix labs, and a debugging stage */
+(function () {
+  var X = window.X, Q = window.Q, T = window.TYPE, P = window.PRED, L = COURSE.labs;
+  function lab(id, o) { o.kind = 'code'; o.lang = 'py'; L[id] = o; }
+
+  // ---------------- py1: values, variables & control flow ----------------
+  X.add('py1', { gateN: 16,
+    lesson: [{ h: 'Deep dive: f-strings, numbers and the traps that bite beginners', html: '<pre>price = 19.5\nqty = 3\nprint(f"{qty} x ${price:.2f} = ${qty * price:.2f}")   # 3 x $19.50 = $58.50\nprint(f"{0.25:.0%}")        # 25%\nprint(f"{1234567:,}")       # 1,234,567\nprint(f"|{\'hi\':>6}|")      # |    hi|  right-align in 6 chars</pre><ul><li><code>/</code> always gives a float (<code>7 / 2 == 3.5</code>); <code>//</code> floors (<code>7 // 2 == 3</code>, <code>-7 // 2 == -4</code>); <code>%</code> is the remainder.</li><li>Floats are binary approximations: <code>0.1 + 0.2 == 0.30000000000000004</code>. Compare with <code>round()</code> or <code>math.isclose()</code>; use <code>decimal.Decimal</code> for money.</li><li><code>input()</code> always returns a <b>string</b> — convert with <code>int()</code>/<code>float()</code> before doing math.</li><li><code>=</code> assigns, <code>==</code> compares. <code>is</code> checks identity — use it only for <code>None</code> (<code>if x is None</code>).</li><li>Truthiness: <code>0</code>, <code>""</code>, <code>[]</code>, <code>{}</code>, <code>None</code> are falsy; almost everything else is truthy.</li><li><code>while</code> loops need something that changes or they run forever; <code>break</code> leaves a loop, <code>continue</code> skips to the next round, and <code>for … else</code> runs the else only if no break happened.</li></ul>' }],
+    qs: [
+      P('print(7 // 2, 7 % 2, 7 / 2)', '3 1 3.5', ['3.5 1 3.5', '3 1 3', '4 1 3.5'], '// floors, % is the remainder, / is true division.', 'Python'),
+      P('print(-7 // 2)', '-4', ['-3', '-3.5', '3'], 'Floor division rounds toward negative infinity.', 'Python'),
+      P('x = "5"\ny = 3\nprint(x * y)', '555', ['15', 'error', '8'], 'A string times an int repeats it.', 'Python'),
+      P('print(f"{3.14159:.2f}")', '3.14', ['3.14159', '3.1', '3.142'], 'Two decimal places.', 'Python'),
+      P('print(bool(""), bool("0"), bool([]))', 'False True False', ['False False False', 'True True False', 'False True True'], '"0" is a non-empty string, so it is truthy.', 'Python'),
+      P('for i in range(5):\n    if i == 3:\n        break\n    print(i, end=" ")', '0 1 2 ', ['0 1 2 3 ', '0 1 2 3 4 ', '1 2 3 '], 'break leaves the loop before printing 3.', 'Python'),
+      P('for i in range(5):\n    if i % 2 == 0:\n        continue\n    print(i, end=" ")', '1 3 ', ['0 2 4 ', '1 3 5 ', '0 1 2 3 4 '], 'continue skips even numbers.', 'Python'),
+      P('n = 0\nwhile n < 3:\n    n += 1\nprint(n)', '3', ['2', '4', '0'], 'Loop stops when n reaches 3.', 'Python'),
+      Q('age = input("Age: ") then age + 1 raises an error. Why?', 'input() returns a string; convert it with int(age) first', ['input() returns None', 'You must use float only', 'Python cannot add numbers'], 'Always convert input before math.', 0),
+      Q('Why is 0.1 + 0.2 == 0.3 False in Python?', 'Floats are binary approximations; compare with round() or math.isclose()', ['Python has a bug', '0.3 is not a number', 'Addition is not allowed on floats'], 'Never compare floats with == for money or measurements.', 0),
+      Q('How should you check whether a variable holds None?', 'if x is None:', ['if x == "None":', 'if x = None:', 'if None(x):'], 'Identity check for None.', 0),
+      T('Type the f-string expression that prints the variable total with exactly two decimals (inside the braces).', ['total:.2f', '{total:.2f}'], 'total:.2f', 0, 'total:...')
+    ],
+    labs: ['pyx-receipt', 'pyx-fix-grades'] });
+
+  lab('pyx-receipt', { title: 'Build a receipt', brief: 'Read item prices from input, one per line, until a line that says <code>done</code>. Print the <b>subtotal</b>, the <b>tax</b> at 8.25%, and the <b>total</b>, each formatted to two decimals exactly like:<pre>Subtotal: $12.50\nTax: $1.03\nTotal: $13.53</pre>',
+    starter: '# read prices until "done"\n', stdin: '5.00\n7.50\ndone',
+    tests: [
+      { name: '5.00 + 7.50', stdin: '5.00\n7.50\ndone', expect: 'Subtotal: $12.50\nTax: $1.03\nTotal: $13.53' },
+      { name: 'One item', stdin: '100\ndone', expect: 'Subtotal: $100.00\nTax: $8.25\nTotal: $108.25' },
+      { name: 'No items', stdin: 'done', expect: 'Subtotal: $0.00\nTax: $0.00\nTotal: $0.00' }
+    ],
+    hints: ['Loop forever with <code>while True:</code>, read <code>line = input()</code>, and <code>break</code> when it equals <code>"done"</code>.', 'Add <code>float(line)</code> to a running subtotal.', 'Format with <code>f"Subtotal: ${subtotal:.2f}"</code>. Compute tax as <code>subtotal * 0.0825</code>.'],
+    solution: 'subtotal = 0.0\nwhile True:\n    line = input()\n    if line == "done":\n        break\n    subtotal += float(line)\ntax = subtotal * 0.0825\nprint(f"Subtotal: ${subtotal:.2f}")\nprint(f"Tax: ${tax:.2f}")\nprint(f"Total: ${subtotal + tax:.2f}")',
+    debrief: 'A sentinel loop (read until "done"), a running total, and f-string formatting — the skeleton of countless real scripts.' });
+  lab('pyx-fix-grades', { title: 'Fix it: the grade calculator', brief: 'This program reads a numeric score and should print the letter grade: <b>90+ A, 80+ B, 70+ C, 60+ D, below 60 F</b>. It has <b>two bugs</b>. Find them, fix them, and make every test pass.',
+    starter: 'score = input()\nif score >= 60:\n    print("D")\nelif score >= 70:\n    print("C")\nelif score >= 80:\n    print("B")\nelif score >= 90:\n    print("A")\nelse:\n    print("F")\n',
+    stdin: '95',
+    tests: [{ name: '95 → A', stdin: '95', expect: 'A' }, { name: '83 → B', stdin: '83', expect: 'B' }, { name: '70 → C', stdin: '70', expect: 'C' }, { name: '61 → D', stdin: '61', expect: 'D' }, { name: '12 → F', stdin: '12', expect: 'F' }],
+    hints: ['Run it first and read the error message.', 'Bug 1: <code>input()</code> returns text — convert it with <code>int()</code>.', 'Bug 2: conditions are checked top to bottom, and 95 is also ≥ 60. Check the highest threshold first.'],
+    solution: 'score = int(input())\nif score >= 90:\n    print("A")\nelif score >= 80:\n    print("B")\nelif score >= 70:\n    print("C")\nelif score >= 60:\n    print("D")\nelse:\n    print("F")',
+    debrief: 'Two of the most common real bugs: forgetting to convert input, and ordering if/elif so a broad condition swallows the specific ones.' });
+
+  // ---------------- py2: lists, dicts & functions ----------------
+  X.add('py2', { gateN: 16,
+    lesson: [{ h: 'Deep dive: references, mutation and function design', html: '<pre>a = [1, 2, 3]\nb = a          # b is the SAME list, not a copy\nb.append(4)\nprint(a)       # [1, 2, 3, 4]\nc = a.copy()   # or list(a) or a[:] — a real (shallow) copy</pre><ul><li><b>Mutable</b> (list, dict, set) objects can change in place; <b>immutable</b> ones (int, str, tuple) can\'t. Passing a list to a function lets the function change the caller\'s list.</li><li><b>Never use a mutable default argument</b>: <code>def add(x, items=[])</code> shares one list across every call. Use <code>items=None</code> then <code>if items is None: items = []</code>.</li><li>Dict tools: <code>d.get(k, default)</code>, <code>d.setdefault(k, [])</code>, <code>d.items()</code>, <code>sorted(d, key=d.get, reverse=True)</code>, <code>collections.Counter</code>, <code>collections.defaultdict(list)</code>.</li><li>Slicing: <code>xs[1:4]</code>, <code>xs[-1]</code> (last), <code>xs[::-1]</code> (reversed copy), <code>xs[::2]</code> (every other).</li><li>Good functions: one job, a clear name, inputs as parameters, a <code>return</code> value rather than printing, and a docstring. <code>*args</code> collects extra positional arguments; <code>**kwargs</code> collects extra keyword arguments.</li></ul>' }],
+    qs: [
+      P('a = [1, 2]\nb = a\nb.append(3)\nprint(a)', '[1, 2, 3]', ['[1, 2]', '[3]', 'error'], 'b refers to the same list.', 'Python'),
+      P('a = [1, 2]\nb = a.copy()\nb.append(3)\nprint(a)', '[1, 2]', ['[1, 2, 3]', '[3]', 'None'], 'copy() makes a new list.', 'Python'),
+      P('def add(x, items=[]):\n    items.append(x)\n    return items\nadd(1)\nprint(add(2))', '[1, 2]', ['[2]', '[1]', '[]'], 'The default list is shared between calls — a classic bug.', 'Python'),
+      P('xs = [10, 20, 30, 40, 50]\nprint(xs[1:3], xs[-1], xs[::-1][0])', '[20, 30] 50 50', ['[20, 30, 40] 50 10', '[10, 20] 40 50', '[20, 30] 40 10'], 'Slices exclude the end index; [::-1] reverses.', 'Python'),
+      P('d = {"a": 1}\nprint(d.get("b", 0), d.get("a"))', '0 1', ['None 1', 'error', '1 0'], 'get returns the default for missing keys.', 'Python'),
+      P('from collections import Counter\nprint(Counter("banana").most_common(1))', "[('a', 3)]", ["[('b', 1)]", "[('n', 2)]", "{'a': 3}"], 'a appears three times.', 'Python'),
+      P('def f(*args, **kwargs):\n    print(len(args), sorted(kwargs))\nf(1, 2, x=3, y=4)', "2 ['x', 'y']", ['4 []', "2 ['3', '4']", "0 ['x', 'y']"], 'args collects positionals, kwargs keywords.', 'Python'),
+      Q('What is the safe way to give a function a default empty list?', 'def f(items=None): then if items is None: items = []', ['def f(items=[]):', 'def f(items=list):', 'def f(items={}):'], 'Avoid mutable defaults.', 0),
+      Q('Which structure gives O(1) average lookup by key?', 'dict', ['list', 'tuple', 'string'], 'Hash tables.', 0),
+      Q('Sort a dict of word counts by count, highest first. Which expression returns the keys in that order?', 'sorted(counts, key=counts.get, reverse=True)', ['counts.sort()', 'sorted(counts)', 'max(counts)'], 'key= tells sorted what to compare.', 0),
+      Q('Why should most functions return a value instead of printing it?', 'Returned values can be tested and reused by other code', ['print is slower', 'Functions cannot print', 'return is required syntax'], 'Separate logic from output.', 0),
+      T('Type the expression that returns a reversed copy of the list xs using slicing.', ['xs[::-1]'], 'xs[::-1]', 0, 'xs[...]')
+    ],
+    labs: ['pyx-inventory', 'pyx-fix-mutable'] });
+
+  lab('pyx-inventory', { title: 'Inventory commands', brief: 'Write a function <code>process(commands)</code> that takes a list of strings like <code>"add apple 5"</code>, <code>"remove apple 2"</code>, and returns a <b>dict</b> of item → quantity. Items whose quantity reaches 0 are removed. Removing more than you have raises <code>ValueError</code>.',
+    starter: 'def process(commands):\n    stock = {}\n    # handle "add NAME QTY" and "remove NAME QTY"\n    return stock\n',
+    tests: [
+      { name: 'Adds accumulate', check: 'assert process(["add apple 5", "add apple 2"]) == {"apple": 7}' },
+      { name: 'Remove and drop at zero', check: 'assert process(["add pear 3", "remove pear 3", "add fig 1"]) == {"fig": 1}' },
+      { name: 'Over-removal raises ValueError', check: 'import builtins\ntry:\n    process(["add a 1", "remove a 2"])\n    raise AssertionError("no ValueError raised")\nexcept ValueError:\n    pass' },
+      { name: 'Unknown item removal raises ValueError', check: 'try:\n    process(["remove ghost 1"])\n    raise AssertionError("no ValueError raised")\nexcept ValueError:\n    pass' },
+      { name: 'Does not print', check: 'import io, contextlib\nbuf = io.StringIO()\nwith contextlib.redirect_stdout(buf):\n    process(["add a 1"])\nassert buf.getvalue() == "", "process should return, not print"' }
+    ],
+    hints: ['Split each command: <code>action, name, qty = cmd.split()</code>, then <code>qty = int(qty)</code>.', 'Add: <code>stock[name] = stock.get(name, 0) + qty</code>.', 'Remove: if <code>stock.get(name, 0) &lt; qty</code> → <code>raise ValueError(...)</code>; otherwise subtract and <code>del stock[name]</code> when it hits 0.'],
+    solution: 'def process(commands):\n    stock = {}\n    for cmd in commands:\n        action, name, qty = cmd.split()\n        qty = int(qty)\n        if action == "add":\n            stock[name] = stock.get(name, 0) + qty\n        elif action == "remove":\n            if stock.get(name, 0) < qty:\n                raise ValueError(f"not enough {name}")\n            stock[name] -= qty\n            if stock[name] == 0:\n                del stock[name]\n    return stock',
+    debrief: 'Parse, validate, update a dict, raise on invalid input, return the result — a testable function, not a script that prints.' });
+  lab('pyx-fix-mutable', { title: 'Fix it: the leaking shopping cart', brief: '<code>add_to_cart(item, cart=[])</code> is supposed to start a <b>new empty cart</b> when no cart is passed. Users report seeing other people\'s items. Fix the bug without changing how the function is called.',
+    starter: 'def add_to_cart(item, cart=[]):\n    cart.append(item)\n    return cart\n',
+    tests: [
+      { name: 'First call gets a fresh cart', check: 'assert add_to_cart("milk") == ["milk"]' },
+      { name: 'Second call does not see the first item', check: 'add_to_cart("milk")\nassert add_to_cart("eggs") == ["eggs"], "carts are being shared between calls"' },
+      { name: 'Passing a cart still appends to it', check: 'c = ["bread"]\nassert add_to_cart("jam", c) == ["bread", "jam"] and c == ["bread", "jam"]' }
+    ],
+    hints: ['Default values are created once, when the function is defined — not on every call.', 'Use <code>cart=None</code> as the default.', 'Inside: <code>if cart is None: cart = []</code>.'],
+    solution: 'def add_to_cart(item, cart=None):\n    if cart is None:\n        cart = []\n    cart.append(item)\n    return cart',
+    debrief: 'The mutable-default bug is one of the most famous Python gotchas — and one AI assistants still generate. Now you can spot it on sight.' });
+
+  // ---------------- py3: comprehensions, classes & real programs ----------------
+  X.add('py3', { gateN: 16,
+    lesson: [{ h: 'Deep dive: classes the Pythonic way', html: '<pre>class BankAccount:\n    interest_rate = 0.02          # class attribute (shared)\n\n    def __init__(self, owner, balance=0):\n        self.owner = owner          # instance attributes\n        self._balance = balance     # leading _ = "internal, please don\'t touch"\n\n    @property\n    def balance(self):              # read like an attribute: acct.balance\n        return self._balance\n\n    def deposit(self, amount):\n        if amount &lt;= 0:\n            raise ValueError("deposit must be positive")\n        self._balance += amount\n\n    def __repr__(self):             # what you see when debugging\n        return f"BankAccount({self.owner!r}, {self._balance})"\n\nclass Savings(BankAccount):         # inheritance\n    def add_interest(self):\n        self._balance += self._balance * self.interest_rate</pre><ul><li><b>Dunder methods</b> plug into Python: <code>__repr__</code>/<code>__str__</code> (printing), <code>__eq__</code> (==), <code>__len__</code>, <code>__iter__</code>, <code>__lt__</code> (sorting).</li><li><code>super().__init__(...)</code> calls the parent\'s constructor.</li><li>Prefer <b>composition</b> (an object that <i>has</i> another) over deep inheritance trees.</li><li>Comprehensions: list <code>[x*x for x in xs if x &gt; 0]</code>, dict <code>{k: v for k, v in pairs}</code>, set <code>{w.lower() for w in words}</code>. Keep them to one idea; use a loop when logic grows.</li></ul>' }],
+    qs: [
+      P('print([x * x for x in range(5) if x % 2 == 0])', '[0, 4, 16]', ['[0, 1, 4, 9, 16]', '[4, 16]', '[1, 9]'], 'Even x only: 0, 2, 4.', 'Python'),
+      P('words = ["Hi", "hi", "HEY"]\nprint(len({w.lower() for w in words}))', '2', ['3', '1', '0'], 'Set comprehension removes duplicates.', 'Python'),
+      P('print({k: len(k) for k in ["a", "bb"]})', "{'a': 1, 'bb': 2}", ["{'a': 'a', 'bb': 'bb'}", "[1, 2]", "{1: 'a', 2: 'bb'}"], 'Dict comprehension.', 'Python'),
+      P('class Dog:\n    def __init__(self, name):\n        self.name = name\n    def __repr__(self):\n        return f"Dog({self.name})"\nprint([Dog("Rex")])', '[Dog(Rex)]', ['[<Dog object>]', 'Dog(Rex)', '[Rex]'], 'Lists display items with __repr__.', 'Python'),
+      P('class A:\n    def hi(self):\n        return "A"\nclass B(A):\n    def hi(self):\n        return "B" + super().hi()\nprint(B().hi())', 'BA', ['B', 'A', 'AB'], 'super() calls the parent version.', 'Python'),
+      P('try:\n    int("x")\nexcept ValueError:\n    print("bad")\nelse:\n    print("good")\nfinally:\n    print("done")', 'bad\ndone', ['good\ndone', 'bad', 'done'], 'else runs only without an exception; finally always runs.', 'Python'),
+      Q('What does @property let you do?', 'Expose a method as a read-only attribute (acct.balance) with logic behind it', ['Make a method private', 'Create a class attribute', 'Speed up the class'], 'Computed attributes.', 0),
+      Q('Which method controls how an object looks when printed in a list or debugger?', '__repr__', ['__init__', '__len__', '__call__'], 'repr is for developers.', 0),
+      Q('When should you raise an exception in a method?', 'When the input or state makes the operation invalid (e.g. negative deposit)', ['Whenever you print', 'Never — return None instead', 'Only in __init__'], 'Fail loudly on invalid operations.', 0),
+      Q('A class variable defined in the class body (not in __init__) is:', 'Shared by all instances', ['Unique to each instance', 'Private', 'Deleted after __init__'], 'Class attributes are shared.', 0),
+      Q('Prefer composition over inheritance means:', 'Build objects that contain other objects rather than deep subclass chains', ['Never use classes', 'Always inherit from object twice', 'Use global variables'], 'Has-a beats is-a for flexibility.', 0)
+    ],
+    labs: ['pyx-bank', 'pyx-fix-comp'] });
+
+  lab('pyx-bank', { title: 'Build a BankAccount class', brief: 'Create <code>BankAccount(owner, balance=0)</code> with methods <code>deposit(amount)</code> and <code>withdraw(amount)</code>, a read-only <code>balance</code> property, and <code>history</code> — a list of <code>("deposit", amount)</code> / <code>("withdraw", amount)</code> tuples. Non-positive amounts and overdrafts raise <code>ValueError</code>.',
+    starter: 'class BankAccount:\n    def __init__(self, owner, balance=0):\n        pass\n',
+    tests: [
+      { name: 'Deposits and withdrawals change the balance', check: 'a = BankAccount("Ana", 100)\na.deposit(50)\na.withdraw(30)\nassert a.balance == 120' },
+      { name: 'History records each operation', check: 'a = BankAccount("Ana")\na.deposit(10)\na.withdraw(4)\nassert a.history == [("deposit", 10), ("withdraw", 4)]' },
+      { name: 'Overdraft raises ValueError and changes nothing', check: 'a = BankAccount("Ana", 5)\ntry:\n    a.withdraw(10)\n    raise AssertionError("no ValueError")\nexcept ValueError:\n    pass\nassert a.balance == 5 and a.history == []' },
+      { name: 'Non-positive amounts raise ValueError', check: 'a = BankAccount("Ana", 5)\nfor bad in (0, -3):\n    try:\n        a.deposit(bad)\n        raise AssertionError("no ValueError for %r" % bad)\n    except ValueError:\n        pass' },
+      { name: 'balance is read-only', check: 'a = BankAccount("Ana", 5)\ntry:\n    a.balance = 1000\n    raise AssertionError("balance could be overwritten")\nexcept AttributeError:\n    pass' },
+      { name: 'Each account has its own history', check: 'a = BankAccount("A"); b = BankAccount("B")\na.deposit(1)\nassert b.history == []' }
+    ],
+    hints: ['Store the balance in <code>self._balance</code> and expose it with <code>@property def balance(self): return self._balance</code> — without a setter it is read-only.', 'Create <code>self.history = []</code> inside <code>__init__</code> (not as a class attribute, or every account shares it).', 'Validate first, then change state: check <code>amount &lt;= 0</code> and <code>amount &gt; self._balance</code> before subtracting.'],
+    solution: 'class BankAccount:\n    def __init__(self, owner, balance=0):\n        self.owner = owner\n        self._balance = balance\n        self.history = []\n\n    @property\n    def balance(self):\n        return self._balance\n\n    def deposit(self, amount):\n        if amount <= 0:\n            raise ValueError("amount must be positive")\n        self._balance += amount\n        self.history.append(("deposit", amount))\n\n    def withdraw(self, amount):\n        if amount <= 0:\n            raise ValueError("amount must be positive")\n        if amount > self._balance:\n            raise ValueError("insufficient funds")\n        self._balance -= amount\n        self.history.append(("withdraw", amount))',
+    debrief: 'Encapsulation (a read-only property), validation before mutation, and per-instance state — the core of trustworthy classes.' });
+  lab('pyx-fix-comp', { title: 'Fix it: the report one-liners', brief: 'Three helper functions each contain one bug. Fix all three.<ul><li><code>evens(nums)</code> — return only even numbers.</li><li><code>lengths(words)</code> — return a dict word → length.</li><li><code>top_n(scores, n)</code> — return the <b>names</b> of the n highest scores, highest first.</li></ul>',
+    starter: 'def evens(nums):\n    return [n for n in nums if n % 2]\n\ndef lengths(words):\n    return {len(w): w for w in words}\n\ndef top_n(scores, n):\n    # scores is a dict name -> score\n    return sorted(scores, key=scores.get)[:n]\n',
+    tests: [
+      { name: 'evens', check: 'assert evens([1, 2, 3, 4, 6]) == [2, 4, 6]' },
+      { name: 'lengths', check: 'assert lengths(["hi", "hello"]) == {"hi": 2, "hello": 5}' },
+      { name: 'top_n', check: 'assert top_n({"ann": 90, "bo": 70, "cy": 85}, 2) == ["ann", "cy"]' }
+    ],
+    hints: ['<code>n % 2</code> is truthy for <b>odd</b> numbers. You want <code>n % 2 == 0</code>.', 'In a dict comprehension the part before the colon is the key: <code>{w: len(w) for w in words}</code>.', '<code>sorted</code> is ascending by default — add <code>reverse=True</code>.'],
+    solution: 'def evens(nums):\n    return [n for n in nums if n % 2 == 0]\n\ndef lengths(words):\n    return {w: len(w) for w in words}\n\ndef top_n(scores, n):\n    return sorted(scores, key=scores.get, reverse=True)[:n]',
+    debrief: 'Inverted conditions, swapped key/value and wrong sort direction — subtle one-character bugs that look right at a glance.' });
+
+  // ---------------- py4: generators, decorators & context managers ----------------
+  X.add('py4', { gateN: 14,
+    lesson: [{ h: 'Deep dive: building pipelines and decorators with arguments', html: '<pre>def read_lines(lines):\n    for line in lines:\n        yield line.strip()\n\ndef only_errors(lines):\n    return (l for l in lines if "ERROR" in l)   # generator expression\n\nerrors = only_errors(read_lines(open_file))     # nothing runs yet — lazy\nfirst_five = list(itertools.islice(errors, 5))  # pulls just 5 items</pre><ul><li>Generators are <b>single-use</b>: once exhausted, iterating again gives nothing.</li><li><code>yield from other()</code> delegates to another generator.</li><li>A decorator <b>with arguments</b> is a function that returns a decorator:</li></ul><pre>import functools\ndef retry(times):\n    def decorator(fn):\n        @functools.wraps(fn)          # keep the name and docstring\n        def wrapper(*args, **kwargs):\n            for attempt in range(times):\n                try:\n                    return fn(*args, **kwargs)\n                except ConnectionError:\n                    if attempt == times - 1:\n                        raise\n        return wrapper\n    return decorator\n\n@retry(3)\ndef fetch(): ...</pre><p><code>contextlib.contextmanager</code> turns a generator into a context manager: code before <code>yield</code> runs on enter, code after it (in <code>finally</code>) runs on exit.</p>' }],
+    qs: [
+      P('def gen():\n    yield 1\n    yield 2\ng = gen()\nprint(list(g), list(g))', '[1, 2] []', ['[1, 2] [1, 2]', '[] []', 'error'], 'Generators are single-use.', 'Python'),
+      P('def countdown(n):\n    while n > 0:\n        yield n\n        n -= 1\nprint(sum(countdown(4)))', '10', ['4', '0', '24'], '4+3+2+1.', 'Python'),
+      P('def outer():\n    yield from range(3)\n    yield 9\nprint(list(outer()))', '[0, 1, 2, 9]', ['[range(0, 3), 9]', '[9]', '[0, 1, 2]'], 'yield from delegates.', 'Python'),
+      P('def shout(fn):\n    def wrapper(*a):\n        return fn(*a).upper()\n    return wrapper\n@shout\ndef greet(n):\n    return "hi " + n\nprint(greet("bo"))', 'HI BO', ['hi bo', 'Hi Bo', 'error'], 'The decorator wraps greet.', 'Python'),
+      Q('Why use functools.wraps inside a decorator?', 'So the wrapped function keeps its original name and docstring', ['To make it faster', 'It is required for decorators to run', 'To catch exceptions'], 'Preserves metadata for debugging and tools.', 0),
+      Q('A decorator that takes arguments, like @retry(3), is structured as:', 'A function that returns a decorator, which returns a wrapper', ['A single wrapper function', 'A class only', 'A generator'], 'Three layers.', 0),
+      Q('Why process a 20 GB log with generators instead of reading it into a list?', 'Generators handle one line at a time, so memory stays small', ['Lists cannot hold strings', 'Generators are always faster to write', 'Lists are read-only'], 'Lazy evaluation.', 0),
+      Q('With @contextmanager, where does cleanup code go?', 'After the yield, ideally inside a finally block', ['Before the yield', 'In __init__', 'Nowhere — Python cleans up automatically'], 'finally guarantees cleanup even on errors.', 0),
+      Q('itertools.islice(gen, 5) does what?', 'Takes the first 5 items from any iterator lazily', ['Deletes 5 items', 'Sorts the first 5', 'Copies the generator'], 'Slicing for iterators.', 0)
+    ],
+    labs: ['pyx-pipeline', 'pyx-retry'] });
+
+  lab('pyx-pipeline', { title: 'A lazy log pipeline', brief: 'Write three <b>generator</b> functions and chain them:<ul><li><code>parse(lines)</code> yields <code>(level, message)</code> tuples from lines like <code>"ERROR disk full"</code> (first word is the level).</li><li><code>only(level, records)</code> yields records whose level matches (case-insensitive).</li><li><code>first(n, records)</code> yields at most n records.</li></ul>They must be lazy: they must work on an infinite stream.',
+    starter: 'def parse(lines):\n    pass\n\ndef only(level, records):\n    pass\n\ndef first(n, records):\n    pass\n',
+    tests: [
+      { name: 'parse splits level and message', check: 'assert list(parse(["ERROR disk full", "INFO ok"])) == [("ERROR", "disk full"), ("INFO", "ok")]' },
+      { name: 'only filters case-insensitively', check: 'recs = [("ERROR", "a"), ("INFO", "b"), ("error", "c")]\nassert list(only("error", recs)) == [("ERROR", "a"), ("error", "c")]' },
+      { name: 'first stops after n', check: 'assert list(first(2, iter([1, 2, 3, 4]))) == [1, 2]' },
+      { name: 'Works lazily on an infinite stream', check: 'import itertools\ninf = ("ERROR e%d" % i if i % 3 == 0 else "INFO i%d" % i for i in itertools.count())\nassert list(first(3, only("ERROR", parse(inf)))) == [("ERROR", "e0"), ("ERROR", "e3"), ("ERROR", "e6")]' },
+      { name: 'parse is a generator', check: 'import types\nassert isinstance(parse([]), types.GeneratorType)' }
+    ],
+    hints: ['<code>level, message = line.split(" ", 1)</code> then <code>yield (level, message)</code>.', '<code>only</code>: <code>for rec in records: if rec[0].lower() == level.lower(): yield rec</code>.', '<code>first</code>: use <code>enumerate</code> and <code>return</code> when you have yielded n items — never call <code>list()</code> on the input.'],
+    solution: 'def parse(lines):\n    for line in lines:\n        level, message = line.split(" ", 1)\n        yield (level, message)\n\ndef only(level, records):\n    for rec in records:\n        if rec[0].lower() == level.lower():\n            yield rec\n\ndef first(n, records):\n    if n <= 0:\n        return\n    for i, rec in enumerate(records, 1):\n        yield rec\n        if i >= n:\n            return',
+    debrief: 'Composable lazy stages process unbounded data in constant memory — exactly how tools like grep|head work, and how big-data pipelines are built.' });
+  lab('pyx-retry', { title: 'Write a @retry decorator', brief: 'Write <code>retry(times)</code>, a decorator factory. The decorated function is called up to <code>times</code> attempts; if it raises <code>ConnectionError</code> it is retried; any other exception propagates immediately; if every attempt fails, the last <code>ConnectionError</code> is re-raised. Use <code>functools.wraps</code>.',
+    starter: 'import functools\n\ndef retry(times):\n    pass\n',
+    tests: [
+      { name: 'Succeeds after transient failures', check: 'calls = []\n@retry(3)\ndef flaky():\n    calls.append(1)\n    if len(calls) < 3:\n        raise ConnectionError("down")\n    return "ok"\nassert flaky() == "ok" and len(calls) == 3' },
+      { name: 'Gives up after the limit and re-raises', check: 'calls = []\n@retry(2)\ndef dead():\n    calls.append(1)\n    raise ConnectionError("down")\ntry:\n    dead()\n    raise AssertionError("should have raised")\nexcept ConnectionError:\n    pass\nassert len(calls) == 2' },
+      { name: 'Other exceptions are not retried', check: 'calls = []\n@retry(5)\ndef bad():\n    calls.append(1)\n    raise ValueError("bug")\ntry:\n    bad()\nexcept ValueError:\n    pass\nassert len(calls) == 1' },
+      { name: 'Arguments and return values pass through', check: '@retry(2)\ndef add(a, b=0):\n    return a + b\nassert add(2, b=3) == 5' },
+      { name: 'Keeps the function name (functools.wraps)', check: '@retry(2)\ndef my_task():\n    "doc"\nassert my_task.__name__ == "my_task" and my_task.__doc__ == "doc"' }
+    ],
+    hints: ['Three layers: <code>def retry(times): def decorator(fn): @functools.wraps(fn) def wrapper(*args, **kwargs): ...</code>', 'Inside wrapper loop <code>for attempt in range(times):</code> and <code>try: return fn(*args, **kwargs)</code>.', '<code>except ConnectionError:</code> — re-raise with a bare <code>raise</code> on the last attempt.'],
+    solution: 'import functools\n\ndef retry(times):\n    def decorator(fn):\n        @functools.wraps(fn)\n        def wrapper(*args, **kwargs):\n            for attempt in range(times):\n                try:\n                    return fn(*args, **kwargs)\n                except ConnectionError:\n                    if attempt == times - 1:\n                        raise\n        return wrapper\n    return decorator',
+    debrief: 'Retry-on-transient-error is a real production pattern (network calls, cloud APIs). Retrying only the right exception type is what keeps it from hiding bugs.' });
+
+  // ---------------- py5: typing, errors, testing & stdlib ----------------
+  X.add('py5', { gateN: 14,
+    lesson: [{ h: 'Deep dive: writing tests and using the standard library well', html: '<pre># test_slug.py — run with:  pytest -q\nfrom slug import slugify\n\ndef test_basic():\n    assert slugify("Hello World") == "hello-world"\n\ndef test_punctuation_removed():\n    assert slugify("C++ & Python!") == "c-python"\n\nimport pytest\n@pytest.mark.parametrize("raw,expected", [("  a  ", "a"), ("A--B", "a-b")])\ndef test_cases(raw, expected):\n    assert slugify(raw) == expected\n\ndef test_rejects_empty():\n    with pytest.raises(ValueError):\n        slugify("")</pre><ul><li>Test the <b>contract</b>: normal cases, edge cases (empty, huge, unicode), and error cases.</li><li>Standard library highlights: <code>pathlib</code> (paths), <code>json</code>, <code>csv</code>, <code>re</code>, <code>datetime</code>, <code>collections</code> (Counter, defaultdict, deque, namedtuple), <code>itertools</code>, <code>functools</code> (lru_cache, partial), <code>logging</code>, <code>argparse</code>, <code>subprocess</code>.</li><li>Raise specific exceptions with clear messages; define your own with <code>class ConfigError(Exception): pass</code>; never use a bare <code>except:</code> that hides bugs.</li></ul>' }],
+    qs: [
+      P('import re\nprint(re.findall(r"\\d+", "a1b22c333"))', "['1', '22', '333']", ["[1, 22, 333]", "['1', '2', '2', '3', '3', '3']", "['a', 'b', 'c']"], 'findall returns all matches as strings.', 'Python'),
+      P('import json\nprint(json.dumps({"a": [1, True, None]}))', '{"a": [1, true, null]}', ["{'a': [1, True, None]}", '{"a": [1, "true", "null"]}', 'error'], 'JSON uses true/null.', 'Python'),
+      P('from collections import defaultdict\nd = defaultdict(list)\nd["x"].append(1)\nprint(dict(d))', "{'x': [1]}", ['{}', 'error', "{'x': 1}"], 'Missing keys get a fresh list.', 'Python'),
+      P('from functools import lru_cache\n@lru_cache\ndef fib(n):\n    return n if n < 2 else fib(n-1) + fib(n-2)\nprint(fib(30))', '832040', ['1346269', '514229', 'error'], 'Memoization makes this instant.', 'Python'),
+      Q('In pytest, how do you assert that a call raises ValueError?', 'with pytest.raises(ValueError): call()', ['assert raises ValueError', 'try: call() except: pass', 'pytest.expect(ValueError)'], 'Context manager for expected exceptions.', 0),
+      Q('Why is a bare except: dangerous?', 'It catches everything, including bugs and Ctrl+C, hiding real problems', ['It is slower', 'It is a syntax error', 'It only catches ValueError'], 'Catch specific exceptions.', 0),
+      Q('Which module handles file-system paths in a modern, object-oriented way?', 'pathlib', ['os.walk only', 'sys', 'string'], 'Path objects.', 0),
+      Q('Type hints like def f(x: int) -> str: are checked by:', 'Static tools like mypy or your editor — Python does not enforce them at runtime', ['Python at runtime automatically', 'The operating system', 'pytest only'], 'Hints document and enable tooling.', 0),
+      Q('What should a good test suite cover?', 'Normal cases, edge cases and error cases', ['Only the happy path', 'Only cases that already pass', 'Random inputs only'], 'Test the contract.', 0)
+    ],
+    labs: ['pyx-slugify', 'pyx-config'] });
+
+  lab('pyx-slugify', { title: 'Make the tests pass: slugify', brief: 'Write <code>slugify(text)</code> to satisfy the test suite (the tests are the spec): lowercase, words joined by single hyphens, letters and digits only, no leading/trailing hyphens. Empty or symbols-only input raises <code>ValueError</code>.',
+    starter: 'import re\n\ndef slugify(text):\n    return text.lower().replace(" ", "-")\n',
+    tests: [
+      { name: '"Hello World" → "hello-world"', check: 'assert slugify("Hello World") == "hello-world"' },
+      { name: 'Punctuation is removed', check: 'assert slugify("C++ & Python!") == "c-python", slugify("C++ & Python!")' },
+      { name: 'Collapses repeated separators and trims', check: 'assert slugify("  Big   -- News  ") == "big-news"' },
+      { name: 'Keeps digits', check: 'assert slugify("Top 10 Tips") == "top-10-tips"' },
+      { name: 'Empty / symbols only raise ValueError', check: 'for bad in ("", "!!!", "   "):\n    try:\n        slugify(bad)\n        raise AssertionError("no ValueError for %r" % bad)\n    except ValueError:\n        pass' }
+    ],
+    hints: ['Find runs of letters/digits: <code>re.findall(r"[a-z0-9]+", text.lower())</code>.', 'Join them: <code>"-".join(words)</code>.', 'If the list of words is empty, <code>raise ValueError("nothing to slugify")</code>.'],
+    solution: 'import re\n\ndef slugify(text):\n    words = re.findall(r"[a-z0-9]+", text.lower())\n    if not words:\n        raise ValueError("nothing to slugify")\n    return "-".join(words)',
+    debrief: 'Tests as the specification: you read the assertions, wrote the smallest code that satisfies them, and covered the error path. That is test-driven development.' });
+  lab('pyx-config', { title: 'Parse a typed config file', brief: 'Write <code>parse_config(text) -> dict</code> for lines like <code>port = 8080</code>. Rules: ignore blank lines and lines starting with <code>#</code>; values that look like integers become <code>int</code>, <code>true/false</code> (any case) become <code>bool</code>, everything else stays a stripped string. A non-blank line without <code>=</code> raises <code>ValueError</code> whose message includes the line number (e.g. "line 3").',
+    starter: 'def parse_config(text: str) -> dict:\n    result = {}\n    return result\n',
+    tests: [
+      { name: 'Types are converted', check: 'c = parse_config("port = 8080\\ndebug = TRUE\\nname = web 1")\nassert c == {"port": 8080, "debug": True, "name": "web 1"}, c' },
+      { name: 'Comments and blanks ignored', check: 'assert parse_config("# hi\\n\\n  \\nx=1\\n") == {"x": 1}' },
+      { name: 'false becomes False, negative ints work', check: 'assert parse_config("on=false\\nofs=-5") == {"on": False, "ofs": -5}' },
+      { name: 'Value may contain "="', check: 'assert parse_config("url = a=b") == {"url": "a=b"}' },
+      { name: 'Bad line raises ValueError with its line number', check: 'try:\n    parse_config("a=1\\n# c\\noops")\n    raise AssertionError("no error")\nexcept ValueError as e:\n    assert "line 3" in str(e), str(e)' }
+    ],
+    hints: ['Loop with <code>for n, line in enumerate(text.splitlines(), 1):</code> and <code>line = line.strip()</code>.', 'Split once: <code>key, _, value = line.partition("=")</code> — check that "=" was present.', 'Convert: try <code>int(value)</code> in a try/except; compare <code>value.lower()</code> to "true"/"false".'],
+    solution: 'def parse_config(text: str) -> dict:\n    result = {}\n    for n, raw in enumerate(text.splitlines(), 1):\n        line = raw.strip()\n        if not line or line.startswith("#"):\n            continue\n        if "=" not in line:\n            raise ValueError(f"line {n}: expected key = value")\n        key, _, value = line.partition("=")\n        key, value = key.strip(), value.strip()\n        if value.lower() in ("true", "false"):\n            result[key] = value.lower() == "true"\n        else:\n            try:\n                result[key] = int(value)\n            except ValueError:\n                result[key] = value\n    return result',
+    debrief: 'Real parsers: tolerate comments, convert types, and report errors with locations users can act on.' });
+
+  // ---------------- py6: concurrency ----------------
+  X.add('py6', { gateN: 12,
+    lesson: [{ h: 'Deep dive: asyncio patterns you will actually use', html: '<pre>import asyncio\n\nasync def fetch(i):\n    await asyncio.sleep(0.1)       # stands in for network I/O\n    return i * 10\n\nasync def main():\n    results = await asyncio.gather(*(fetch(i) for i in range(5)))   # run concurrently\n    print(results)                 # [0, 10, 20, 30, 40] — gather keeps input order\n\n    sem = asyncio.Semaphore(2)     # at most 2 at a time (rate limiting)\n    async def limited(i):\n        async with sem:\n            return await fetch(i)\n\n    try:\n        await asyncio.wait_for(fetch(1), timeout=0.5)\n    except asyncio.TimeoutError:\n        print("too slow")\n\nasyncio.run(main())</pre><ul><li><code>gather</code> runs awaitables concurrently and returns results <b>in the order given</b>, not completion order.</li><li>Use <code>return_exceptions=True</code> to collect errors instead of failing on the first.</li><li>Never call blocking code (<code>time.sleep</code>, <code>requests.get</code>) inside async functions — it freezes the event loop; use async libraries or <code>asyncio.to_thread</code>.</li><li>Threads for blocking I/O, processes (<code>concurrent.futures.ProcessPoolExecutor</code>) for CPU-heavy work.</li></ul>' }],
+    qs: [
+      Q('asyncio.gather(a(), b(), c()) returns results in which order?', 'The order the awaitables were passed in', ['The order they finished', 'Random order', 'Reverse order'], 'Order is preserved.', 0),
+      Q('An async function calls time.sleep(5). What happens?', 'The whole event loop is blocked for 5 seconds', ['Only that coroutine pauses', 'Python converts it to asyncio.sleep', 'It raises an error'], 'Blocking calls freeze the loop.', 0),
+      Q('Limit an async crawler to 10 concurrent requests. Use:', 'asyncio.Semaphore(10)', ['time.sleep(10)', 'A global variable', 'asyncio.run 10 times'], 'Semaphores cap concurrency.', 0),
+      Q('CPU-heavy image resizing on 8 cores is best parallelized with:', 'A process pool (multiprocessing / ProcessPoolExecutor)', ['asyncio', 'Threads only', 'A bigger for loop'], 'Processes sidestep the GIL.', 0),
+      Q('With gather(..., return_exceptions=True), a failed task:', 'Returns its exception object in the results list instead of raising', ['Stops the program', 'Is retried automatically', 'Is silently dropped'], 'Collect failures.', 0)
+    ],
+    labs: ['pyx-gather'] });
+
+  lab('pyx-gather', { title: 'Concurrent fetches with a limit', brief: '<code>fetch(i)</code> simulates a network call. Write <code>async def fetch_all(ids, limit)</code> that fetches every id <b>concurrently</b> but never more than <code>limit</code> at once, and returns the results <b>in the same order as ids</b>. Failed fetches (they raise <code>ValueError</code>) should appear as <code>None</code> in the results.',
+    starter: 'import asyncio\n\nactive = 0\npeak = 0\n\nasync def fetch(i):\n    global active, peak\n    active += 1\n    peak = max(peak, active)\n    await asyncio.sleep(0.01 * (5 - i % 5))\n    active -= 1\n    if i < 0:\n        raise ValueError("bad id")\n    return i * 10\n\nasync def fetch_all(ids, limit):\n    results = []\n    for i in ids:\n        results.append(await fetch(i))\n    return results\n',
+    tests: [
+      { name: 'Results in input order', check: 'import asyncio\nassert asyncio.run(fetch_all([3, 1, 2], 3)) == [30, 10, 20]' },
+      { name: 'Runs concurrently (peak above 1)', check: 'import asyncio\nglobal peak\npeak = 0\nasyncio.run(fetch_all(list(range(6)), 3))\nassert peak > 1, "fetches ran one at a time"' },
+      { name: 'Never exceeds the limit', check: 'import asyncio\nglobal peak\npeak = 0\nasyncio.run(fetch_all(list(range(10)), 2))\nassert peak <= 2, "peak was %d" % peak' },
+      { name: 'Failures become None', check: 'import asyncio\nassert asyncio.run(fetch_all([1, -1, 2], 2)) == [10, None, 20]' }
+    ],
+    hints: ['Create <code>sem = asyncio.Semaphore(limit)</code> inside <code>fetch_all</code>.', 'Wrap each call: <code>async def one(i): async with sem: try: return await fetch(i) except ValueError: return None</code>.', '<code>return await asyncio.gather(*(one(i) for i in ids))</code> keeps the order.'],
+    solution: 'import asyncio\n\nactive = 0\npeak = 0\n\nasync def fetch(i):\n    global active, peak\n    active += 1\n    peak = max(peak, active)\n    await asyncio.sleep(0.01 * (5 - i % 5))\n    active -= 1\n    if i < 0:\n        raise ValueError("bad id")\n    return i * 10\n\nasync def fetch_all(ids, limit):\n    sem = asyncio.Semaphore(limit)\n\n    async def one(i):\n        async with sem:\n            try:\n                return await fetch(i)\n            except ValueError:\n                return None\n\n    return await asyncio.gather(*(one(i) for i in ids))',
+    debrief: 'Bounded concurrency with ordered results and per-task error handling — the shape of every real API crawler and batch client.' });
+
+  // ---------------- py7: capstone ----------------
+  X.add('py7', { gateN: 12,
+    qs: [
+      Q('A script mixes parsing, calculations and printing in one 200-line block. The first refactor is:', 'Split it into small functions with one job each, then test them', ['Add more comments', 'Rename variables to single letters', 'Convert it to a class immediately'], 'Small testable functions.', 0),
+      Q('Where should a CLI script start running its main logic?', 'Under if __name__ == "__main__": main()', ['At the top of the file', 'Inside every function', 'In a global try/except: pass'], 'Lets the module be imported and tested.', 0),
+      Q('Which module parses command-line options like --limit 10?', 'argparse', ['sys.path', 'pickle', 'random'], 'Standard CLI parsing.', 0)
+    ],
+    labs: ['pyx-csvreport'] });
+
+  lab('pyx-csvreport', { title: 'CSV sales report', brief: 'Read CSV from input (header <code>region,product,units,price</code>). Print revenue (units × price) per region, <b>highest first</b>, formatted <code>Region: $1,234.50</code>, then a final line <code>TOTAL: $…</code>. Skip rows where units or price is not a valid number and print, at the end, <code>Skipped N bad rows</code> if any were skipped.',
+    starter: 'import sys, csv\n\nrows = list(csv.DictReader(sys.stdin))\n',
+    stdin: 'region,product,units,price\nWest,Keyboard,12,29.99\nEast,Mouse,30,14.50\nWest,Monitor,5,199.00\nNorth,Cable,50,4.25\nEast,Keyboard,x,29.99',
+    tests: [
+      { name: 'Revenue per region, highest first', stdin: 'region,product,units,price\nWest,Keyboard,12,29.99\nEast,Mouse,30,14.50\nWest,Monitor,5,199.00\nNorth,Cable,50,4.25\nEast,Keyboard,x,29.99', expect: 'West: $1,354.88\nEast: $435.00\nNorth: $212.50\nTOTAL: $2,002.38\nSkipped 1 bad rows' },
+      { name: 'No bad rows → no skipped line', stdin: 'region,product,units,price\nA,x,1,10\nB,y,3,10', expect: 'B: $30.00\nA: $10.00\nTOTAL: $40.00' }
+    ],
+    hints: ['Use <code>csv.DictReader(sys.stdin)</code>; each row is a dict.', 'Wrap the conversion in <code>try: units = int(row["units"]); price = float(row["price"]) except ValueError: skipped += 1; continue</code>.', 'Sort with <code>sorted(totals.items(), key=lambda kv: kv[1], reverse=True)</code> and format with <code>f"{name}: ${amount:,.2f}"</code>.'],
+    solution: 'import sys, csv\nfrom collections import defaultdict\n\ntotals = defaultdict(float)\nskipped = 0\nfor row in csv.DictReader(sys.stdin):\n    try:\n        units = int(row["units"])\n        price = float(row["price"])\n    except (ValueError, TypeError):\n        skipped += 1\n        continue\n    totals[row["region"]] += units * price\n\nfor region, amount in sorted(totals.items(), key=lambda kv: kv[1], reverse=True):\n    print(f"{region}: ${amount:,.2f}")\nprint(f"TOTAL: ${sum(totals.values()):,.2f}")\nif skipped:\n    print(f"Skipped {skipped} bad rows")',
+    debrief: 'csv + defaultdict + sorted + formatted output, with bad data handled instead of crashing — a report generator you could actually use at work.' });
+
+  // ---------------- new stage: reading & debugging real code ----------------
+  X.insertAfter('py7', {
+    id: 'py8', track: 'py', tier: 'py-exp', title: 'Reading & debugging real Python', code: 'print(repr(x)) then breakpoint()', gateN: 12,
+    goal: 'Read unfamiliar code quickly, read tracebacks bottom-up, use logging and the debugger, and repair multi-bug programs — the skill that makes AI-written code safe to use.',
+    lesson: [
+      { h: 'Read a traceback from the bottom', html: '<pre>Traceback (most recent call last):\n  File "report.py", line 30, in &lt;module&gt;\n    main()\n  File "report.py", line 24, in main\n    avg = total / count\nZeroDivisionError: division by zero</pre><ol><li>Last line: the <b>exception type</b> and message — what went wrong.</li><li>Line above it: the <b>exact line</b> in <i>your</i> file where it happened.</li><li>Walk upward to see <b>how you got there</b> (who called whom).</li><li>Ask: what value did the variable have? Here, <code>count</code> was 0 — so where should an empty input be handled?</li></ol><p>Common types: <code>NameError</code> (typo / not defined), <code>TypeError</code> (wrong type, e.g. str + int), <code>KeyError</code> (missing dict key), <code>IndexError</code> (past the end), <code>AttributeError</code> (no such method — often <code>None</code>), <code>ValueError</code> (right type, bad value).</p>' },
+      { h: 'Read unfamiliar code in five passes', html: '<ol><li><b>Purpose</b>: names of the file, functions and the docstring. What is it for?</li><li><b>Entry point</b>: find <code>main()</code> / <code>if __name__ == "__main__"</code> and follow the calls.</li><li><b>Data</b>: what goes in, what comes out, what shape (list of dicts? strings?).</li><li><b>Control flow</b>: loops, branches, early returns, exceptions.</li><li><b>Edge cases</b>: empty input, missing keys, None, huge values, wrong types.</li></ol><p>Then test your understanding: predict the output for one input, run it, and compare.</p>' },
+      { h: 'Debugging tools', html: '<ul><li><code>print(f"{x=}")</code> prints <code>x=...</code>; use <code>repr()</code> to see hidden whitespace (<code>\'5\\n\'</code> vs <code>5</code>).</li><li><code>breakpoint()</code> drops into pdb: <code>n</code> next line, <code>s</code> step in, <code>c</code> continue, <code>p var</code> print, <code>l</code> list code, <code>w</code> where (stack), <code>q</code> quit.</li><li><code>logging</code> instead of print in real programs: <code>logging.basicConfig(level=logging.INFO)</code>, <code>log.debug/info/warning/error</code>, with timestamps and levels you can turn on and off.</li><li><b>Minimize</b> the failing case: smallest input that still breaks it. <b>Bisect</b>: comment out half, see which half has the bug.</li><li>Write a <b>failing test first</b> that reproduces the bug, then fix it — the test prevents regressions.</li></ul>' }
+    ],
+    cards: [['Traceback, read bottom-up', 'Last line = error type; line above = where in your code.'], ['NameError', 'A name is not defined — typo or missing import.'], ['TypeError', 'Operation on the wrong type, e.g. "a" + 1.'], ['KeyError', 'Dict key does not exist.'], ['IndexError', 'List index out of range.'], ['AttributeError', 'Object has no such attribute — often None.'], ['print(f"{x=}")', 'Prints the variable name and value.'], ['repr(x)', 'Shows hidden characters like newlines.'], ['breakpoint()', 'Starts the pdb debugger at that line.'], ['pdb: n / s / c / p', 'Next, step into, continue, print a value.'], ['logging', 'Leveled, timestamped messages you can turn on and off.'], ['Minimize the repro', 'Smallest input that still fails.'], ['Failing test first', 'Reproduce the bug in a test, then fix it.']],
+    qs: [
+      Q('A traceback ends with "KeyError: \'email\'". What happened?', 'The code looked up a dict key "email" that does not exist', ['The email server is down', 'A list index was too large', 'The variable email is misspelled'], 'KeyError = missing key.', 0),
+      Q('"AttributeError: \'NoneType\' object has no attribute \'strip\'" usually means:', 'A variable you expected to be a string is None — often a function returned nothing', ['strip is misspelled', 'Strings cannot be stripped', 'The file is empty'], 'Look for a missing return.', 0),
+      Q('Which line of a traceback tells you where the error occurred in your code?', 'The line just above the exception message', ['The first line', 'The middle line', 'None of them'], 'Read bottom-up.', 0),
+      Q('In pdb, which command prints the value of a variable named total?', 'p total', ['show total', 'n total', 'echo total'], 'p = print.', 0),
+      Q('Why use repr(x) when debugging input?', 'It reveals hidden characters like trailing newlines or spaces', ['It converts to int', 'It makes x shorter', 'It hides errors'], 'See exactly what is there.', 0),
+      Q('The best first step when fixing a reported bug is to:', 'Reproduce it with the smallest failing input (ideally as a test)', ['Rewrite the whole program', 'Add try/except: pass', 'Ask users to stop using it'], 'Reproduce, then fix.', 0),
+      Q('Why prefer logging over print in a long-running service?', 'Levels, timestamps and configurable output without editing code', ['print does not work in services', 'logging is faster to type', 'print only works in notebooks'], 'Production-grade diagnostics.', 0),
+      P('x = "5\\n"\nprint(repr(x), len(x))', "'5\\n' 2", ["'5' 1", '5 2', "'5\\\\n' 3"], 'repr shows the newline; length is 2.', 'Python'),
+      P('def f(items):\n    for i in items:\n        if i > 2:\n            return i\nprint(f([1, 2]))', 'None', ['2', '0', 'error'], 'No return reached → None.', 'Python'),
+      P('data = {"a": 1}\ntry:\n    print(data["b"])\nexcept KeyError as e:\n    print("missing", e)', "missing 'b'", ['missing b', 'None', 'KeyError'], 'The KeyError message is the repr of the key.', 'Python'),
+      Q('You must understand a 500-line script fast. Where should you start?', 'Its purpose and entry point (main / __name__ guard), then follow the calls', ['Line 1, reading every line in order', 'The longest function', 'The comments only'], 'Top-down reading.', 0),
+      Q('Bisecting a bug means:', 'Repeatedly narrowing the search space in half (code or commits) until the cause is isolated', ['Splitting the file into two files', 'Deleting half the tests', 'Running the code twice'], 'Binary search for bugs.', 0)
+    ],
+    labs: ['pyx-fix-report', 'pyx-fix-ai']
+  });
+
+  lab('pyx-fix-report', { title: 'Debug: the attendance report', brief: 'This program reads <code>name,minutes</code> lines until a blank line, then prints each person\'s total minutes (alphabetical), the average per person (1 decimal) and who attended most. It has <b>four bugs</b>. Read the tracebacks and wrong outputs and fix them all.',
+    starter: 'def read_rows():\n    rows = []\n    while True:\n        line = input()\n        if line == "":\n            break\n        name, minutes = line.split(",")\n        rows.append((name, minutes))\n    return rows\n\ndef totals(rows):\n    t = {}\n    for name, minutes in rows:\n        t[name] = t[name] + minutes\n    return t\n\ndef main():\n    t = totals(read_rows())\n    for name in t:\n        print(f"{name}: {t[name]}")\n    avg = sum(t.values()) / len(t)\n    print(f"Average: {avg:.1f}")\n    best = min(t, key=t.get)\n    print(f"Most: {best}")\n\nmain()\n',
+    stdin: 'zoe,30\nal,45\nzoe,20\n\n',
+    tests: [
+      { name: 'Sample input', stdin: 'zoe,30\nal,45\nzoe,20\n\n', expect: 'al: 45\nzoe: 50\nAverage: 47.5\nMost: zoe' },
+      { name: 'Spaces around values are tolerated', stdin: 'bo, 10\nann ,5\n\n', expect: 'ann: 5\nbo: 10\nAverage: 7.5\nMost: bo' },
+      { name: 'No rows prints a friendly message', stdin: '\n', expect: 'No data' }
+    ],
+    hints: ['Bug 1: <code>minutes</code> is a string — convert with <code>int(minutes.strip())</code> (and strip the name too).', 'Bug 2: <code>t[name] + …</code> fails the first time a name appears — use <code>t.get(name, 0)</code>.', 'Bug 3: output must be alphabetical — loop over <code>sorted(t)</code>. Bug 4: "most" needs <code>max</code>, and empty input must print <code>No data</code> before dividing by zero.'],
+    solution: 'def read_rows():\n    rows = []\n    while True:\n        line = input()\n        if line.strip() == "":\n            break\n        name, minutes = line.split(",")\n        rows.append((name.strip(), int(minutes.strip())))\n    return rows\n\ndef totals(rows):\n    t = {}\n    for name, minutes in rows:\n        t[name] = t.get(name, 0) + minutes\n    return t\n\ndef main():\n    t = totals(read_rows())\n    if not t:\n        print("No data")\n        return\n    for name in sorted(t):\n        print(f"{name}: {t[name]}")\n    avg = sum(t.values()) / len(t)\n    print(f"Average: {avg:.1f}")\n    best = max(t, key=t.get)\n    print(f"Most: {best}")\n\nmain()',
+    debrief: 'Type conversion, missing-key handling, ordering, min/max mix-up and the empty case — four bug classes you will meet weekly in real code.' });
+  lab('pyx-fix-ai', { title: 'Review & fix: AI-generated password checker', brief: 'An AI assistant wrote <code>check_password(pw)</code>. It should return a <b>list of problems</b> (empty list = OK). Rules: at least 12 characters; at least one uppercase, one lowercase, one digit; must not contain the word "password" in any case. It looks fine and is wrong in several ways. Fix it so the tests pass.',
+    starter: 'def check_password(pw):\n    problems = []\n    if len(pw) > 12:\n        problems.append("too short")\n    if not any(c.isupper() for c in pw):\n        problems.append("needs uppercase")\n    if not any(c.islower for c in pw):\n        problems.append("needs lowercase")\n    if not any(c.isdigit() for c in pw):\n        problems.append("needs digit")\n    if "password" in pw:\n        problems.append("contains password")\n    return problems\n',
+    tests: [
+      { name: 'Strong password passes', check: 'assert check_password("Correct7HorseBattery") == []' },
+      { name: 'Exactly 12 characters is OK', check: 'assert check_password("Abcdefghij12") == []' },
+      { name: '11 characters is too short', check: 'assert "too short" in check_password("Abcdefghi12")' },
+      { name: 'Missing lowercase is detected', check: 'assert "needs lowercase" in check_password("ABCDEFGHIJ123")' },
+      { name: '"PassWord" in any case is rejected', check: 'assert "contains password" in check_password("MyPassWord123x")' }
+    ],
+    hints: ['Length: "at least 12" is <code>len(pw) &lt; 12</code> → too short. The original condition is reversed.', '<code>c.islower</code> without parentheses is a method object — always truthy. Call it: <code>c.islower()</code>.', 'Case-insensitive check: <code>"password" in pw.lower()</code>.'],
+    solution: 'def check_password(pw):\n    problems = []\n    if len(pw) < 12:\n        problems.append("too short")\n    if not any(c.isupper() for c in pw):\n        problems.append("needs uppercase")\n    if not any(c.islower() for c in pw):\n        problems.append("needs lowercase")\n    if not any(c.isdigit() for c in pw):\n        problems.append("needs digit")\n    if "password" in pw.lower():\n        problems.append("contains password")\n    return problems',
+    debrief: 'Reversed comparison, a method referenced but not called (always truthy), and a case-sensitive check — exactly the confident-looking mistakes to hunt for in generated code.' });
 })();
 
 ;
