@@ -725,7 +725,9 @@ body.pc .editor{min-height:300px}
       'Downloads': D({}),
       '.bashrc': F('# ~/.bashrc\nexport GREETING="hello"\nalias ll="ls -la"\nalias ..="cd .."\n')
     };
-    Object.keys(extra || {}).forEach(function (k) { h[k] = extra[k]; });
+    // Deep-copy the lab's starting files so commands never edit the lab definition itself (keeps Reset clean).
+    var copy = JSON.parse(JSON.stringify(extra || {}));
+    Object.keys(copy).forEach(function (k) { h[k] = copy[k]; });
     return h;
   }
 
