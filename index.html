@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0a0e13">
-<meta name="description" content="Read code effortlessly: Linux, Windows, SQL, Python, JavaScript, C++, Git and AI prompting with real runnable labs.">
+<meta name="description" content="Read code effortlessly: Linux, Windows, Active Directory, SQL, Python, JavaScript, C++, Git and AI prompting with real runnable labs.">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -2462,6 +2462,7 @@ window.COURSE = {
     { id: 'zero', name: 'Code from Zero', short: 'ZERO', subtitle: 'Never written a line? Start here — plain-language, one tiny step at a time' },
     { id: 'linux', name: 'Linux', short: 'LNX', subtitle: 'Bash & the Linux command line — navigate, pipe, script, automate' },
     { id: 'win', name: 'Windows', short: 'WIN', subtitle: 'CMD and PowerShell for the Windows command line' },
+    { id: 'ad', name: 'Windows Active Directory', short: 'AD', subtitle: 'Domains, users, groups, Group Policy, Kerberos and securing AD — with a live PowerShell domain-controller sandbox' },
     { id: 'sql', name: 'SQL', short: 'SQL', subtitle: 'Query real databases — SELECT to window functions' },
     { id: 'py', name: 'Python', short: 'PY', subtitle: 'The language you will use most — write real programs' },
     { id: 'js', name: 'JavaScript', short: 'JS', subtitle: 'The language of the web and automation' },
@@ -2480,6 +2481,10 @@ window.COURSE = {
     { id: 'lnx-x', track: 'linux', name: 'Expert', desc: 'awk, sed and find mastery for real admin work.' },
     { id: 'win-f', track: 'win', name: 'CMD Basics', desc: 'The classic Windows command prompt.' },
     { id: 'win-c', track: 'win', name: 'PowerShell', desc: 'Objects, cmdlets, the pipeline.' },
+    { id: 'ad-f', track: 'ad', name: 'Foundations', desc: 'Domains, controllers, objects, OUs, groups, account lifecycle.' },
+    { id: 'ad-c', track: 'ad', name: 'Everyday administration', desc: 'PowerShell AD module, helpdesk tickets, groups and permissions.' },
+    { id: 'ad-p', track: 'ad', name: 'Policy & authentication', desc: 'Group Policy, Kerberos, NTLM and Security event IDs.' },
+    { id: 'ad-x', track: 'ad', name: 'Expert', desc: 'FSMO, replication, recovery, trusts, and attack/defense.' },
     { id: 'sql-f', track: 'sql', name: 'Querying', desc: 'SELECT, WHERE, ORDER, LIMIT.' },
     { id: 'sql-c', track: 'sql', name: 'Aggregation & Joins', desc: 'GROUP BY, JOIN, subqueries.' },
     { id: 'sql-p', track: 'sql', name: 'Pro', desc: 'Window functions, CTEs, indexes, data modeling.' },
@@ -5961,6 +5966,1407 @@ window.X = {
     labs: []
   });
 })();
+
+;
+/* AdSim — a PowerShell + Active Directory sandbox (a constrained, deterministic emulation).
+   Supports the ActiveDirectory module core cmdlets, a few GroupPolicy cmdlets, and the object pipeline. */
+(function (root) {
+  'use strict';
+  var DOMAIN = 'corp.local', BASE = 'DC=corp,DC=local';
+
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  function lc(s) { return String(s == null ? '' : s).toLowerCase(); }
+  function dnOf(name, ou, cls) { return (cls === 'ou' ? 'OU=' : 'CN=') + name + ',' + (ou || BASE); }
+  function parentOf(dn) { var i = dn.indexOf(','); return i < 0 ? '' : dn.slice(i + 1); }
+
+  /* ---------- domain model ---------- */
+  function newDomain(seed) {
+    var d = { users: {}, groups: {}, computers: {}, ous: {}, gpos: {}, links: [], deleted: [], nextRid: 1100, now: '2026-10-27', events: [] };
+    d.ous[BASE] = { name: DOMAIN, dn: BASE, builtin: true };
+    ['Users', 'Computers'].forEach(function (c) { d.ous['CN=' + c + ',' + BASE] = { name: c, dn: 'CN=' + c + ',' + BASE, container: true, builtin: true }; });
+    d.ous['OU=Domain Controllers,' + BASE] = { name: 'Domain Controllers', dn: 'OU=Domain Controllers,' + BASE, builtin: true };
+    ['Domain Admins', 'Domain Users', 'Enterprise Admins', 'Schema Admins', 'Protected Users'].forEach(function (g) { addGroup(d, { name: g, scope: g === 'Enterprise Admins' || g === 'Schema Admins' ? 'Universal' : 'Global', category: 'Security', path: 'CN=Users,' + BASE, builtin: true }); });
+    addGroup(d, { name: 'Administrators', scope: 'DomainLocal', category: 'Security', path: 'CN=Builtin,' + BASE, builtin: true });
+    addUser(d, { name: 'Administrator', sam: 'Administrator', path: 'CN=Users,' + BASE, builtin: true, member: ['Domain Admins', 'Enterprise Admins', 'Schema Admins', 'Domain Users'], desc: 'Built-in account for administering the domain' });
+    addGroup(d, { name: 'DC01', _skip: 1 }); delete d.groups[lc('DC01')];
+    d.computers[lc('DC01')] = { name: 'DC01', sam: 'DC01$', dn: 'CN=DC01,OU=Domain Controllers,' + BASE, dns: 'DC01.' + DOMAIN, enabled: true, os: 'Windows Server 2022 Standard', lastLogon: '2026-10-27' };
+    d.gpos[lc('Default Domain Policy')] = { name: 'Default Domain Policy', status: 'AllSettingsEnabled' };
+    d.links.push({ gpo: 'Default Domain Policy', target: BASE, enforced: false, enabled: true });
+    d.gpos[lc('Default Domain Controllers Policy')] = { name: 'Default Domain Controllers Policy', status: 'AllSettingsEnabled' };
+    d.links.push({ gpo: 'Default Domain Controllers Policy', target: 'OU=Domain Controllers,' + BASE, enforced: false, enabled: true });
+    d.blocked = {};
+    return d;
+  }
+  function addGroup(d, o) {
+    var path = o.path || ('CN=Users,' + BASE);
+    d.groups[lc(o.name)] = { name: o.name, sam: o.sam || o.name, dn: 'CN=' + o.name + ',' + path, scope: o.scope || 'Global', category: o.category || 'Security', members: [], desc: o.desc || '', builtin: !!o.builtin };
+    return d.groups[lc(o.name)];
+  }
+  function addUser(d, o) {
+    var path = o.path || ('CN=Users,' + BASE);
+    var u = {
+      name: o.name, sam: o.sam, given: o.given || '', sur: o.sur || '', dn: 'CN=' + o.name + ',' + path,
+      upn: o.upn || (o.sam + '@' + DOMAIN), enabled: o.enabled !== false, locked: !!o.locked, desc: o.desc || '',
+      dept: o.dept || '', title: o.title || '', email: o.email || '', pwNeverExpires: !!o.pwNeverExpires, noPreAuth: !!o.noPreAuth,
+      spn: o.spn || [], lastLogon: o.lastLogon || '2026-10-26', pwLastSet: o.pwLastSet || '2026-09-01', mustChange: !!o.mustChange, expires: o.expires || null,
+      sid: 'S-1-5-21-3623811015-3361044348-30300820-' + (o.sam === 'Administrator' ? 500 : d.nextRid++), builtin: !!o.builtin, pw: o.pw || 'Passw0rd!'
+    };
+    d.users[lc(o.sam)] = u;
+    (o.member || ['Domain Users']).forEach(function (g) { var G = d.groups[lc(g)]; if (G && G.members.indexOf(u.sam) < 0) G.members.push(u.sam); });
+    return u;
+  }
+  function build(spec) {
+    var d = newDomain();
+    spec = spec || {};
+    (spec.ous || []).forEach(function (n) { var p = typeof n === 'string' ? { name: n } : n; var par = p.path || BASE; d.ous['OU=' + p.name + ',' + par] = { name: p.name, dn: 'OU=' + p.name + ',' + par, desc: p.desc || '', protect: p.protect !== false }; });
+    (spec.groups || []).forEach(function (g) { addGroup(d, g); });
+    (spec.users || []).forEach(function (u) { addUser(d, u); });
+    (spec.computers || []).forEach(function (c) { d.computers[lc(c.name)] = { name: c.name, sam: c.name + '$', dn: 'CN=' + c.name + ',' + (c.path || 'CN=Computers,' + BASE), dns: c.name + '.' + DOMAIN, enabled: c.enabled !== false, os: c.os || 'Windows 11 Enterprise', lastLogon: c.lastLogon || '2026-10-25' }; });
+    (spec.gpos || []).forEach(function (g) { d.gpos[lc(g.name)] = { name: g.name, status: 'AllSettingsEnabled' }; (g.links || []).forEach(function (t) { d.links.push({ gpo: g.name, target: t, enforced: false, enabled: true }); }); });
+    (spec.deleted || []).forEach(function (x) { d.deleted.push(x); });
+    return d;
+  }
+
+  /* ---------- tokenizer / parser ---------- */
+  function splitPipes(line) {
+    var parts = [], cur = '', q = null, depth = 0;
+    for (var i = 0; i < line.length; i++) {
+      var c = line[i];
+      if (q) { cur += c; if (c === q) q = null; continue; }
+      if (c === '"' || c === "'") { q = c; cur += c; continue; }
+      if (c === '{' || c === '(') depth++;
+      if (c === '}' || c === ')') depth--;
+      if (c === '|' && depth === 0) { parts.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    parts.push(cur); return parts.map(function (s) { return s.trim(); });
+  }
+  function tokenize(s) {
+    var toks = [], i = 0;
+    while (i < s.length) {
+      var c = s[i];
+      if (/\s/.test(c)) { i++; continue; }
+      if (c === '"' || c === "'") {
+        var j = i + 1, out = '';
+        while (j < s.length && s[j] !== c) { if (s[j] === '`' && c === '"' && j + 1 < s.length) { out += s[j + 1]; j += 2; continue; } out += s[j++]; }
+        toks.push({ t: 'str', v: out, interp: c === '"' }); i = j + 1; continue;
+      }
+      if (c === '{') {
+        var d = 1, k = i + 1; while (k < s.length && d > 0) { if (s[k] === '{') d++; else if (s[k] === '}') d--; k++; }
+        toks.push({ t: 'block', v: s.slice(i + 1, k - 1).trim() }); i = k; continue;
+      }
+      if (c === '(') {
+        var dd = 1, kk = i + 1; while (kk < s.length && dd > 0) { if (s[kk] === '(') dd++; else if (s[kk] === ')') dd--; kk++; }
+        toks.push({ t: 'sub', v: s.slice(i + 1, kk - 1).trim() }); i = kk; continue;
+      }
+      var m = /^[^\s"'{(]+/.exec(s.slice(i)); toks.push({ t: 'word', v: m[0] }); i += m[0].length;
+    }
+    return toks;
+  }
+
+  /* ---------- expression evaluator (for Where-Object blocks and -Filter strings) ---------- */
+  function exTok(s) {
+    var t = [], i = 0;
+    while (i < s.length) {
+      var c = s[i];
+      if (/\s/.test(c)) { i++; continue; }
+      if (c === '"' || c === "'") { var j = i + 1, o = ''; while (j < s.length && s[j] !== c) { o += s[j++]; } t.push({ k: 'str', v: o, interp: c === '"' }); i = j + 1; continue; }
+      if (c === '(' || c === ')' || c === ',') { t.push({ k: c }); i++; continue; }
+      if (c === '$') { var m = /^\$[A-Za-z_][\w]*/.exec(s.slice(i)); if (m) { t.push({ k: 'var', v: m[0].slice(1) }); i += m[0].length; continue; } }
+      var mm;
+      if ((mm = /^-(eq|ne|ceq|gt|ge|lt|le|like|notlike|match|notmatch|contains|notcontains|in|notin|and|or|not|xor|is|isnot|le)\b/i.exec(s.slice(i)))) { t.push({ k: 'op', v: mm[1].toLowerCase() }); i += mm[0].length; continue; }
+      if ((mm = /^!/.exec(s.slice(i)))) { t.push({ k: 'op', v: 'not' }); i++; continue; }
+      if ((mm = /^-?\d+(\.\d+)?/.exec(s.slice(i)))) { t.push({ k: 'num', v: parseFloat(mm[0]) }); i += mm[0].length; continue; }
+      if ((mm = /^\.[A-Za-z_]\w*(\([^)]*\))?/.exec(s.slice(i)))) { t.push({ k: 'prop', v: mm[0] }); i += mm[0].length; continue; }
+      if ((mm = /^[A-Za-z_][\w.\-]*/.exec(s.slice(i)))) { t.push({ k: 'id', v: mm[0] }); i += mm[0].length; continue; }
+      i++;
+    }
+    return t;
+  }
+  function getProp(o, name) {
+    if (o == null) return null;
+    if (typeof o !== 'object') return null;
+    var key = Object.keys(o).filter(function (k) { return lc(k) === lc(name); })[0];
+    return key ? o[key] : null;
+  }
+  function interp(str, vars) {
+    return str.replace(/\$\(([^)]*)\)|\$([A-Za-z_]\w*)(\.[A-Za-z_]\w*)?/g, function (m, expr, v, p) {
+      if (expr !== undefined) { try { var r = evalExpr(expr, vars); return fmtVal(r); } catch (e) { return ''; } }
+      var val = v === '_' ? vars._ : (lc(v) === 'true' ? true : lc(v) === 'false' ? false : lc(v) === 'null' ? null : vars[lc(v)]); if (p) val = getProp(val, p.slice(1)); return fmtVal(val);
+    });
+  }
+  function fmtVal(v) { if (v == null) return ''; if (Array.isArray(v)) return v.map(fmtVal).join(' '); if (v === true) return 'True'; if (v === false) return 'False'; return String(v); }
+  function likeToRe(p) { return new RegExp('^' + p.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i'); }
+  function evalExpr(src, vars) {
+    var t = exTok(src), p = 0;
+    function peek() { return t[p]; }
+    function primary() {
+      var x = t[p++]; if (!x) return null;
+      if (x.k === 'op' && (x.v === 'not')) return !truthy(unary());
+      if (x.k === '(') { var v = orE(); if (peek() && peek().k === ')') p++; return postfix(v); }
+      if (x.k === 'num') return x.v;
+      if (x.k === 'str') return x.interp ? interp(x.v, vars) : x.v;
+      if (x.k === 'var') {
+        var n = lc(x.v), val;
+        if (n === 'true') val = true; else if (n === 'false') val = false; else if (n === 'null') val = null; else if (x.v === '_' ) val = vars._; else val = vars[n];
+        return postfix(val);
+      }
+      if (x.k === 'id') {
+        if (/^\d+$/.test(x.v)) return +x.v;
+        if (lc(x.v) === 'get-date') return postfix(vars.__date || '2026-10-27');
+        return x.v;
+      }
+      return null;
+    }
+    function postfix(v) {
+      while (peek() && peek().k === 'prop') {
+        var pr = t[p++].v; var m = /^\.([A-Za-z_]\w*)(\((.*)\))?$/.exec(pr);
+        if (m[2] !== undefined) { v = method(v, m[1], m[3]); } else {
+          if (Array.isArray(v) && lc(m[1]) === 'count') v = v.length;
+          else if (typeof v === 'string' && lc(m[1]) === 'length') v = v.length;
+          else v = getProp(v, m[1]);
+        }
+      }
+      return v;
+    }
+    function method(v, name, arg) {
+      name = lc(name); var a = arg ? evalExpr(arg, vars) : null;
+      if (typeof v === 'string' && /^\d{4}-\d\d-\d\d$/.test(v) && name === 'adddays') { var dt = new Date(v + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + a); return dt.toISOString().slice(0, 10); }
+      if (typeof v === 'string') {
+        if (name === 'tolower') return v.toLowerCase(); if (name === 'toupper') return v.toUpperCase();
+        if (name === 'contains') return v.toLowerCase().indexOf(lc(a)) >= 0; if (name === 'startswith') return lc(v).indexOf(lc(a)) === 0;
+        if (name === 'endswith') return lc(v).slice(-String(a).length) === lc(a); if (name === 'trim') return v.trim();
+      }
+      if (Array.isArray(v) && name === 'contains') return v.some(function (x) { return lc(x) === lc(a); });
+      return null;
+    }
+    function truthy(v) { if (Array.isArray(v)) return v.length > 0; return !!v && v !== 0 && v !== '0'; }
+    function unary() { return primary(); }
+    function cmpE() {
+      var l = unary();
+      while (peek() && peek().k === 'op' && ['eq', 'ne', 'ceq', 'gt', 'ge', 'lt', 'le', 'like', 'notlike', 'match', 'notmatch', 'contains', 'notcontains', 'in', 'notin'].indexOf(peek().v) >= 0) {
+        var op = t[p++].v, r = unary();
+        l = compare(op, l, r);
+      }
+      return l;
+    }
+    function compare(op, l, r) {
+      function scalar(op2, a, b) {
+        var an = a, bn = b;
+        if (typeof a === 'string' && typeof b === 'number' && /^-?\d+(\.\d+)?$/.test(a)) an = parseFloat(a);
+        if (typeof a === 'boolean' && typeof b === 'string') bn = lc(b) === 'true';
+        if (typeof a === 'number' && typeof b === 'string' && /^-?\d+/.test(b)) bn = parseFloat(b);
+        var sa = typeof an === 'string' ? an.toLowerCase() : an, sb = typeof bn === 'string' ? bn.toLowerCase() : bn;
+        switch (op2) {
+          case 'eq': case 'ceq': return (an == null && bn == null) || sa === sb || (an != null && bn != null && String(sa) === String(sb));
+          case 'ne': return !scalar('eq', a, b);
+          case 'gt': return an > bn; case 'ge': return an >= bn; case 'lt': return an < bn; case 'le': return an <= bn;
+          case 'like': return likeToRe(String(b)).test(String(a == null ? '' : a));
+          case 'notlike': return !likeToRe(String(b)).test(String(a == null ? '' : a));
+          case 'match': try { return new RegExp(String(b), 'i').test(String(a == null ? '' : a)); } catch (e) { return false; }
+          case 'notmatch': try { return !new RegExp(String(b), 'i').test(String(a == null ? '' : a)); } catch (e) { return true; }
+        }
+        return false;
+      }
+      if (op === 'contains') return Array.isArray(l) && l.some(function (x) { return lc(x) === lc(r); });
+      if (op === 'notcontains') return !(Array.isArray(l) && l.some(function (x) { return lc(x) === lc(r); }));
+      if (op === 'in') return Array.isArray(r) && r.some(function (x) { return lc(x) === lc(l); });
+      if (op === 'notin') return !(Array.isArray(r) && r.some(function (x) { return lc(x) === lc(l); }));
+      if (Array.isArray(l)) { var hit = l.some(function (x) { return scalar(op, x, r); }); return /^(ne|notlike|notmatch)$/.test(op) ? l.every(function (x) { return scalar(op, x, r); }) : hit; }
+      return scalar(op, l, r);
+    }
+    function andE() { var l = cmpE(); while (peek() && peek().k === 'op' && peek().v === 'and') { p++; var r = cmpE(); l = truthy(l) && truthy(r); } return l; }
+    function orE() { var l = andE(); while (peek() && peek().k === 'op' && (peek().v === 'or' || peek().v === 'xor')) { p++; var r = andE(); l = truthy(l) || truthy(r); } return l; }
+    var res = orE();
+    return res;
+  }
+  function truthyV(v) { if (Array.isArray(v)) return v.length > 0; return !!v && v !== 0; }
+
+  /* ---------- views (objects exposed to the pipeline) ---------- */
+  function memberOf(d, sam) { return Object.keys(d.groups).filter(function (k) { return d.groups[k].members.indexOf(sam) >= 0 || d.groups[k].members.indexOf(sam + '$') >= 0; }).map(function (k) { return d.groups[k].dn; }); }
+  function userObj(d, u, props) {
+    var o = {
+      DistinguishedName: u.dn, Enabled: u.enabled, GivenName: u.given, Name: u.name, ObjectClass: 'user', ObjectGUID: guid(u.sam), SamAccountName: u.sam, SID: u.sid, Surname: u.sur, UserPrincipalName: u.upn,
+      _type: 'user'
+    };
+    var all = {
+      Description: u.desc, Department: u.dept, Title: u.title, EmailAddress: u.email, LockedOut: u.locked, PasswordNeverExpires: u.pwNeverExpires, DoesNotRequirePreAuth: u.noPreAuth,
+      ServicePrincipalNames: u.spn.slice(), LastLogonDate: u.lastLogon, PasswordLastSet: u.pwLastSet, PasswordExpired: false, MemberOf: memberOf(d, u.sam), AccountExpirationDate: u.expires, ChangePasswordAtLogon: u.mustChange,
+      SamAccountNameLower: undefined, DisplayName: u.name, CN: u.name, whenCreated: '2026-01-15'
+    };
+    delete all.SamAccountNameLower;
+    all.PasswordExpired = false;
+    if (props) { props.forEach(function (p) { if (p === '*') { Object.keys(all).forEach(function (k) { o[k] = all[k]; }); } else { var k = Object.keys(all).filter(function (x) { return lc(x) === lc(p); })[0]; if (k) o[k] = all[k]; } }); }
+    // ServicePrincipalName alias
+    if (o.ServicePrincipalNames) o.ServicePrincipalName = o.ServicePrincipalNames;
+    return o;
+  }
+  function guid(s) { var h = 0, out = ''; for (var i = 0; i < 32; i++) { h = (h * 31 + s.charCodeAt(i % s.length) + i * 7) >>> 0; out += (h & 15).toString(16); if (i === 7 || i === 11 || i === 15 || i === 19) out += '-'; } return out; }
+  function groupObj(d, g) { return { DistinguishedName: g.dn, GroupCategory: g.category, GroupScope: g.scope, Name: g.name, ObjectClass: 'group', ObjectGUID: guid(g.name), SamAccountName: g.sam, SID: 'S-1-5-21-3623811015-3361044348-30300820-' + (1000 + g.name.length * 13), Description: g.desc, Members: g.members.slice(), _type: 'group' }; }
+  function compObj(c) { return { DistinguishedName: c.dn, DNSHostName: c.dns, Enabled: c.enabled, Name: c.name, ObjectClass: 'computer', SamAccountName: c.sam, OperatingSystem: c.os, LastLogonDate: c.lastLogon, _type: 'computer' }; }
+  function ouObj(o) { return { DistinguishedName: o.dn, Name: o.name, ObjectClass: o.container ? 'container' : 'organizationalUnit', Description: o.desc || '', ProtectedFromAccidentalDeletion: !!o.protect, _type: 'ou' }; }
+  function gpoObj(g, d) { return { DisplayName: g.name, GpoStatus: g.status, Id: guid(g.name), DomainName: DOMAIN, Description: '', _type: 'gpo' }; }
+
+  var DEFAULT_PROPS = { user: ['DistinguishedName', 'Enabled', 'GivenName', 'Name', 'ObjectClass', 'ObjectGUID', 'SamAccountName', 'SID', 'Surname', 'UserPrincipalName'],
+    group: ['DistinguishedName', 'GroupCategory', 'GroupScope', 'Name', 'ObjectClass', 'ObjectGUID', 'SamAccountName', 'SID'],
+    computer: ['DistinguishedName', 'DNSHostName', 'Enabled', 'Name', 'ObjectClass', 'SamAccountName'],
+    ou: ['DistinguishedName', 'Name', 'ObjectClass', 'ProtectedFromAccidentalDeletion'], gpo: ['DisplayName', 'DomainName', 'GpoStatus', 'Id'] };
+  var TABLE_PROPS = { user: ['Name', 'SamAccountName', 'Enabled'], group: ['Name', 'GroupScope', 'GroupCategory'], computer: ['Name', 'DNSHostName', 'Enabled'], ou: ['Name', 'DistinguishedName'], gpo: ['DisplayName', 'GpoStatus', 'Id'] };
+
+  /* ---------- shell ---------- */
+  function Shell(spec) {
+    this.d = build(spec || {});
+    this.history = []; this.vars = {}; this.lastExit = 0;
+    this.d.vars = this.vars;
+  }
+  Shell.prototype.user = function (sam) { return this.d.users[lc(sam)] || null; };
+  Shell.prototype.group = function (n) { return this.d.groups[lc(n)] || null; };
+  Shell.prototype.isMember = function (g, sam) { var G = this.group(g); return !!G && G.members.indexOf(sam) >= 0; };
+  Shell.prototype.ran = function (re) { return this.history.some(function (h) { return re.test(h); }); };
+  Shell.prototype.ou = function (dn) { return findOU(this.d, dn); };
+  Shell.prototype.deletedCount = function () { return this.d.deleted.length; };
+  Shell.prototype.reset = function (spec) { this.d = build(spec || {}); this.vars = {}; this.history = []; };
+
+  function PSError(msg, hint) { this.msg = msg; this.hint = hint; }
+  PSError.prototype = Object.create(Error.prototype);
+  function fail(cmd, msg, tgt) { throw new PSError(cmd + ' : ' + msg + (tgt ? '\nCategoryInfo : ObjectNotFound: (' + tgt + '), ADIdentityNotFoundException' : '')); }
+
+  /* argument parsing: returns {pos:[], named:{}, switches:{}} */
+  var SWITCHES = { enabled: 1, force: 1, all: 1, recurse: 1, passthru: 1, whatif: 1, confirm: 1, lockedout: 1, accountdisabled: 1, accountinactive: 1, usersonly: 1, computersonly: 1, passwordneverexpires: 1, passwordexpired: 1, reset: 1, descending: 1, unique: 1, includedeletedobjects: 1, noheader: 1, wrap: 1, autosize: 1, expandproperty: 0, isblocked: 0, accountnotdelegated: 1, changepasswordatlogon: 1, protectedfromaccidentaldeletion: 0, nopreauth: 1, last: 0 };
+  function parseArgs(shell, toks, vars) {
+    var a = { pos: [], named: {}, sw: {} };
+    function listWord(w) { return /^[\w.*@\-]+(,[\w.*@\-]+)+$/.test(w) ? w.split(',') : null; }
+    function takeValue(i) { // returns [value, nextIndex]
+      var vals = [], j = i;
+      while (toks[j]) {
+        var t = toks[j], raw = t.t === 'word' ? t.v : null;
+        if (raw === ',') { j++; continue; }
+        var endsComma = raw !== null && /,$/.test(raw);
+        if (raw !== null) {
+          var w = raw.replace(/^,+/, '').replace(/,$/, ''), lw = listWord(w);
+          if (lw) lw.forEach(function (x) { vals.push(x); }); else if (w) vals.push(valOfWord(shell, w, vars));
+        } else vals.push(valOf(shell, t, vars));
+        j++;
+        if (endsComma) continue;
+        if (toks[j] && toks[j].t === 'word' && (toks[j].v === ',' || /^,/.test(toks[j].v))) continue;
+        break;
+      }
+      return [vals.length === 1 ? vals[0] : vals, j];
+    }
+    for (var i = 0; i < toks.length;) {
+      var t = toks[i];
+      if (t.t === 'word' && /^-[A-Za-z]/.test(t.v)) {
+        var nm = lc(t.v.slice(1)), colon = nm.indexOf(':');
+        if (colon > 0) { a.named[nm.slice(0, colon)] = valOfWord(shell, t.v.slice(colon + 2), vars); i++; continue; }
+        var nxt = toks[i + 1];
+        if (SWITCHES[nm] === 1) {
+          if (nxt && nxt.t === 'word' && /^\$(true|false)$/i.test(nxt.v)) { var bv = lc(nxt.v) === '$true'; a.named[nm] = bv; if (bv) a.sw[nm] = true; i += 2; continue; }
+          a.sw[nm] = true; a.named[nm] = true; i++; continue;
+        }
+        if (nxt && !(nxt.t === 'word' && /^-[A-Za-z]/.test(nxt.v))) { var r = takeValue(i + 1); a.named[nm] = r[0]; i = r[1]; if (SWITCHES[nm] === 0) a.sw[nm] = true; }
+        else { a.sw[nm] = true; a.named[nm] = true; i++; }
+      } else { var r2 = takeValue(i); a.pos.push(r2[0]); i = r2[1]; }
+    }
+    return a;
+  }
+  function valOfWord(shell, w, vars) { return valOf(shell, { t: 'word', v: w }, vars); }
+  function valOf(shell, t, vars) {
+    if (!t) return null;
+    if (t.t === 'str') return t.interp ? interp(t.v, vars) : t.v;
+    if (t.t === 'block') return { __block: t.v };
+    if (t.t === 'sub') { var r = shell.evalPipelineValue(t.v, vars); return r; }
+    var w = t.v;
+    if (/^\$(true|false|null)$/i.test(w)) return lc(w) === '$true' ? true : lc(w) === '$false' ? false : null;
+    if (/^\$[A-Za-z_]\w*(\.\w+)*$/.test(w)) { var parts = w.slice(1).split('.'); var v = parts[0] === '_' ? vars._ : vars[lc(parts[0])]; for (var i = 1; i < parts.length; i++) v = getProp(v, parts[i]); return v; }
+    if (/^@\(.*\)$/.test(w)) return w.slice(2, -1).split(',').map(function (x) { return x.trim().replace(/^["']|["']$/g, ''); });
+    if (/^-?\d+(\.\d+)?$/.test(w)) return parseFloat(w);
+    return w;
+  }
+
+  /* find objects */
+  function findUser(d, id) {
+    if (id == null) return null;
+    if (typeof id === 'object') { if (id.SamAccountName) return d.users[lc(id.SamAccountName)] || null; if (id.DistinguishedName) id = id.DistinguishedName; else return null; }
+    id = String(id); var k = lc(id);
+    if (d.users[k]) return d.users[k];
+    var all = Object.keys(d.users).map(function (x) { return d.users[x]; });
+    return all.filter(function (u) { return lc(u.dn) === k || lc(u.name) === k || lc(u.upn) === k || lc(u.sid) === k; })[0] || null;
+  }
+  function findGroup(d, id) {
+    if (id == null) return null;
+    if (typeof id === 'object') { if (id.Name) id = id.Name; else if (id.DistinguishedName) id = id.DistinguishedName; else return null; }
+    var k = lc(id); if (d.groups[k]) return d.groups[k];
+    return Object.keys(d.groups).map(function (x) { return d.groups[x]; }).filter(function (g) { return lc(g.dn) === k || lc(g.sam) === k; })[0] || null;
+  }
+  function findComp(d, id) {
+    if (typeof id === 'object' && id) id = id.Name || id.DistinguishedName;
+    var k = lc(id).replace(/\$$/, ''); if (d.computers[k]) return d.computers[k];
+    return Object.keys(d.computers).map(function (x) { return d.computers[x]; }).filter(function (c) { return lc(c.dn) === k; })[0] || null;
+  }
+  function findOU(d, id) {
+    if (typeof id === 'object' && id) id = id.DistinguishedName || id.Name;
+    var k = lc(id); return Object.keys(d.ous).map(function (x) { return d.ous[x]; }).filter(function (o) { return lc(o.dn) === k || lc(o.name) === k; })[0] || null;
+  }
+  function findGpo(d, id) { if (typeof id === 'object' && id) id = id.DisplayName; return d.gpos[lc(id)] || null; }
+  function underDn(dn, base) { return !base || lc(dn).slice(-lc(base).length) === lc(base); }
+  function ouExists(d, dn) { return !!findOU(d, dn); }
+
+  /* filter strings: PowerShell-style "Name -like '*x*' -and Enabled -eq $true" */
+  function filterMatch(d, obj, filter, shell) {
+    if (filter == null || filter === '*' ) return true;
+    if (typeof filter === 'object' && filter.__block) filter = filter.__block;
+    var src = String(filter).replace(/\b([A-Za-z][A-Za-z0-9]*)\s+(-(?:eq|ne|like|notlike|match|gt|ge|lt|le|contains|notlike|ceq)\b)/gi, function (m, prop, op) { return '$__o.' + prop + ' ' + op; });
+    src = src.replace(/\$__o\.\$__o\./g, '$__o.');
+    var vars = {}; Object.keys(shell.vars).forEach(function (k) { vars[k] = shell.vars[k]; }); vars.__o = obj; vars.__date = d.now;
+    try { return truthyV(evalExpr(src, vars)); } catch (e) { throw new PSError('Get-ADObject : The search filter cannot be recognized'); }
+  }
+
+  /* ---------- cmdlet table ---------- */
+  var ALIASES = { gci: 'get-childitem', where: 'where-object', '?': 'where-object', select: 'select-object', sort: 'sort-object', '%': 'foreach-object', foreach: 'foreach-object', ft: 'format-table', fl: 'format-list', measure: 'measure-object', echo: 'write-output', write: 'write-output', cls: 'clear-host', clear: 'clear-host', gm: 'get-member', man: 'get-help', help: 'get-help' };
+
+  Shell.prototype.evalPipelineValue = function (src, vars) {
+    var items = this.runPipeline(src, vars, true);
+    if (!items.length) return null; if (items.length === 1) return items[0]; return items;
+  };
+
+  Shell.prototype.run = function (line) {
+    line = String(line).trim();
+    if (!line) return { out: '' };
+    this.history.push(line);
+    var out = '';
+    try {
+      var stmts = splitStatements(line);
+      for (var i = 0; i < stmts.length; i++) out += this.runStatement(stmts[i]);
+    } catch (e) {
+      if (e instanceof PSError) return { out: '✖ ' + e.msg + '\n', err: true };
+      return { out: '✖ ' + (e && e.message || e) + '\n', err: true };
+    }
+    if (out === '__CLEAR__') return { out: '', clear: true };
+    return { out: out };
+  };
+  function splitStatements(line) {
+    var parts = [], cur = '', q = null, depth = 0;
+    for (var i = 0; i < line.length; i++) { var c = line[i];
+      if (q) { cur += c; if (c === q) q = null; continue; }
+      if (c === '"' || c === "'") { q = c; cur += c; continue; }
+      if (c === '{' || c === '(') depth++; if (c === '}' || c === ')') depth--;
+      if (c === ';' && depth === 0) { parts.push(cur); cur = ''; continue; }
+      cur += c; }
+    parts.push(cur); return parts.map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+  Shell.prototype.runStatement = function (stmt) {
+    // assignment
+    var am = /^\$([A-Za-z_]\w*)\s*=\s*(.+)$/.exec(stmt);
+    if (am) { var val = this.evalPipelineValue(am[2], this.vars); this.vars[lc(am[1])] = val; return ''; }
+    // foreach loop: foreach ($x in <expr>) { body }
+    var fm = /^foreach\s*\(\s*\$([A-Za-z_]\w*)\s+in\s+(.+?)\s*\)\s*\{([\s\S]*)\}\s*$/i.exec(stmt);
+    if (fm) {
+      var coll = this.runPipeline(fm[2], this.vars, true), out = '', self = this;
+      coll.forEach(function (it) { self.vars[lc(fm[1])] = it; var body = splitStatements(fm[3]); body.forEach(function (b) { out += self.runStatement(b); }); });
+      return out;
+    }
+    var items = this.runPipeline(stmt, this.vars, false);
+    return this.render(items);
+  };
+
+  Shell.prototype.render = function (items) {
+    if (!items.length) return '';
+    var self = this, out = '';
+    var fmt = items.__fmt;
+    if (items.__text) return items.__text.replace(/\n?$/, '\n');
+    var allObjs = items.every(function (x) { return x && typeof x === 'object' && !Array.isArray(x); });
+    if (!allObjs) return items.map(function (x) { return Array.isArray(x) ? x.map(fmtVal).join('\n') : fmtVal(x); }).join('\n') + '\n';
+    var type = items[0]._type, cols;
+    var keys = Object.keys(items[0]).filter(function (k) { return k.charAt(0) !== '_'; });
+    var explicitSelect = items.__selected;
+    if (fmt === 'list' || (!fmt && items.length === 1 && !explicitSelect && type)) {
+      var props = explicitSelect ? keys : (type && items[0]['Description'] === undefined && keys.length ? keys : keys);
+      var order = !explicitSelect && type ? sortProps(keys, type) : keys;
+      var w = Math.max.apply(null, order.map(function (k) { return k.length; }));
+      return items.map(function (o) { return order.map(function (k) { var v = o[k]; if (Array.isArray(v)) v = '{' + v.join(', ') + '}'; return pad(k, w) + ' : ' + fmtVal(v); }).join('\n'); }).join('\n\n') + '\n';
+    }
+    if (explicitSelect || fmt === 'table') cols = fmt === 'table' && items.__cols ? items.__cols : keys;
+    else cols = (TABLE_PROPS[type] || keys.slice(0, 5)).filter(function (c) { return c in items[0] || true; });
+    if (items.__cols) cols = items.__cols;
+    var rows = items.map(function (o) { return cols.map(function (c) { var v = getProp(o, c); if (Array.isArray(v)) v = '{' + v.join(', ') + '}'; return fmtVal(v); }); });
+    var widths = cols.map(function (c, i) { return Math.max(c.length, Math.max.apply(null, rows.map(function (r) { return r[i].length; }))); });
+    var h = cols.map(function (c, i) { return pad(c, widths[i]); }).join('  ');
+    var ul = cols.map(function (c, i) { return new Array(c.length + 1).join('-') + new Array(widths[i] - c.length + 1).join(' '); }).join('  ');
+    return '\n' + h.replace(/\s+$/, '') + '\n' + ul.replace(/\s+$/, '') + '\n' + rows.map(function (r) { return r.map(function (c, i) { return pad(c, widths[i]); }).join('  ').replace(/\s+$/, ''); }).join('\n') + '\n\n';
+  };
+  function sortProps(keys, type) { var def = DEFAULT_PROPS[type] || []; var first = def.filter(function (k) { return keys.indexOf(k) >= 0; }); return first.concat(keys.filter(function (k) { return def.indexOf(k) < 0; }).sort()); }
+  function pad(s, n) { s = String(s); while (s.length < n) s += ' '; return s; }
+
+  /* run a pipeline; returns array of output items */
+  Shell.prototype.runPipeline = function (src, vars, quiet) {
+    var stages = splitPipes(src), items = null, self = this;
+    for (var i = 0; i < stages.length; i++) items = this.runStage(stages[i], items, vars, i === 0);
+    return items || [];
+  };
+
+  Shell.prototype.runStage = function (stage, input, vars, first) {
+    var d = this.d, self = this;
+    var toks = tokenize(stage);
+    if (!toks.length) return input || [];
+    var first0 = toks[0];
+    // expression-first stages: ($x).Prop, "string", number
+    if (first0.t === 'str') { return [first0.interp ? interp(first0.v, vars) : first0.v]; }
+    if (first0.t === 'sub') { var e = evalSub(self, stage, vars); return e; }
+    if (first0.t === 'word' && /^\$/.test(first0.v) && !/\s/.test(first0.v) && toks.length === 1) {
+      var v = valOf(this, first0, vars); return v == null ? [] : Array.isArray(v) ? v : [v];
+    }
+    var name = lc(first0.v); name = ALIASES[name] || name;
+    var a = parseArgs(this, toks.slice(1), vars);
+    var cm = CMDLETS[name];
+    if (!cm) {
+      var ext = EXTERNAL[name];
+      if (ext) return ext.call(this, a, toks.slice(1));
+      throw new PSError("The term '" + first0.v + "' is not recognized as the name of a cmdlet, function, script file, or operable program.\nCheck the spelling of the name, or if a path was included, verify that the path is correct and try again.");
+    }
+    var o = cm.call(this, a, input, vars);
+    return o || [];
+  };
+  function evalSub(shell, stage, vars) {
+    // handles "(Get-ADUser x).Name" style and "(...)" alone
+    var m = /^\(([\s\S]*)\)((?:\.\w+(?:\([^)]*\))?)*)$/.exec(stage);
+    if (!m) { var r = shell.evalPipelineValue(stage.slice(1, -1), vars); return r == null ? [] : Array.isArray(r) ? r : [r]; }
+    var inner = shell.runPipeline(m[1], vars, true), v = inner.length === 1 ? inner[0] : inner;
+    var chain = m[2].match(/\.\w+(?:\([^)]*\))?/g) || [];
+    chain.forEach(function (c) { var pm = /^\.(\w+)(\((.*)\))?$/.exec(c); if (pm[2] !== undefined) { v = evalExpr('$__v.' + pm[1] + '(' + pm[3] + ')', { __v: v }); } else if (Array.isArray(v) && lc(pm[1]) === 'count') v = v.length; else v = getProp(v, pm[1]); });
+    return v == null ? [] : Array.isArray(v) ? v : [v];
+  }
+
+  function pwOk(pw) {
+    pw = String(pw || ''); if (pw.length < 8) return false;
+    var classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter(function (r) { return r.test(pw); }).length;
+    return classes >= 3;
+  }
+  function arr(x) { return x == null ? [] : Array.isArray(x) ? x : [x]; }
+  function idOf(a, input) { return a.named.identity != null ? a.named.identity : (a.pos[0] != null ? a.pos[0] : null); }
+  function needId(cmd, id) { if (id == null) throw new PSError(cmd + " : Cannot validate argument: Identity is required."); }
+  function propsList(a) { var p = a.named.properties; if (p == null) return null; return arr(p).map(String); }
+  function pipeIds(input, a) { if (a.named.identity != null || a.pos[0] != null) return null; return input; }
+
+  var CMDLETS = {
+    /* ----- users ----- */
+    'get-aduser': function (a, input) {
+      var d = this.d, props = propsList(a), res = [];
+      var id = idOf(a);
+      if (id != null) { var u = findUser(d, id); if (!u) throw new PSError("Get-ADUser : Cannot find an object with identity: '" + fmtVal(typeof id === 'object' ? id.Name : id) + "' under: '" + BASE + "'.\nCategoryInfo : ObjectNotFound: (" + fmtVal(typeof id === 'object' ? id.Name : id) + ":ADUser) [Get-ADUser], ADIdentityNotFoundException"); return [userObj(d, u, props)]; }
+      if (input && input.length && a.named.filter == null) { return input.map(function (x) { var u = findUser(d, x.SamAccountName || x); if (!u) throw new PSError('Get-ADUser : Cannot find an object with identity: ' + fmtVal(x.Name || x)); return userObj(d, u, props); }); }
+      if (a.named.filter == null && a.named.ldapfilter == null) throw new PSError("Get-ADUser : Either -Identity or -Filter is required.\nExample: Get-ADUser -Filter * or Get-ADUser -Identity jsmith");
+      var base = a.named.searchbase;
+      Object.keys(d.users).forEach(function (k) {
+        var u = d.users[k]; if (base && !underDn(u.dn, base)) return;
+        if (a.named.searchscope && lc(a.named.searchscope) === 'onelevel' && parentOf(u.dn) !== base) return;
+        var o = userObj(d, u, ['*']);
+        if (a.named.ldapfilter) { if (!ldapMatch(o, a.named.ldapfilter)) return; }
+        else if (!filterMatch(d, o, a.named.filter, this)) return;
+        res.push(userObj(d, u, props));
+      }, this);
+      res.sort(function (x, y) { return x.Name < y.Name ? -1 : 1; });
+      return res;
+    },
+    'new-aduser': function (a) {
+      var d = this.d, name = a.named.name || a.pos[0], sam = a.named.samaccountname || (name ? String(name).replace(/\s+/g, '.').toLowerCase().slice(0, 20) : null);
+      if (!name) throw new PSError('New-ADUser : Missing required parameter: -Name');
+      if (findUser(d, sam)) throw new PSError('New-ADUser : The specified account already exists');
+      var path = a.named.path || ('CN=Users,' + BASE);
+      if (!ouExists(d, path)) throw new PSError("New-ADUser : Directory object not found. The OU '" + path + "' does not exist.");
+      var enabled = a.named.enabled === true || a.sw.enabled === true;
+      if (enabled && a.named.accountpassword == null) throw new PSError('New-ADUser : The password does not meet the length, complexity, or history requirement of the domain.\nTip: to create an ENABLED account supply -AccountPassword (ConvertTo-SecureString "Str0ng!Pass2026" -AsPlainText -Force), or create it disabled and enable it later.');
+      if (enabled && !pwOk(a.named.accountpassword)) throw new PSError('New-ADUser : The password does not meet the length, complexity, or history requirement of the domain.');
+      var u = addUser(d, { name: name, sam: sam, given: a.named.givenname || '', sur: a.named.surname || '', path: path, upn: a.named.userprincipalname, enabled: enabled, desc: a.named.description || '', dept: a.named.department || '', title: a.named.title || '', email: a.named.emailaddress || '', mustChange: !!(a.named.changepasswordatlogon), member: ['Domain Users'], lastLogon: '', pwLastSet: d.now });
+      if (a.named.accountpassword) u.pw = fmtVal(a.named.accountpassword);
+      if (a.named.accountpassword == null) u.pw = '';
+      if (a.sw.passthru) return [userObj(d, u)];
+      return [];
+    },
+    'set-aduser': function (a, input) {
+      var d = this.d, targets = a.named.identity != null || a.pos[0] != null ? [findUser(d, idOf(a))] : arr(input).map(function (x) { return findUser(d, x.SamAccountName || x); });
+      if (!targets.length || !targets[0] && a.named.identity != null) throw new PSError('Set-ADUser : Cannot find an object with identity: ' + fmtVal(idOf(a)));
+      targets.forEach(function (u) {
+        if (!u) return;
+        var n = a.named;
+        if (n.description != null) u.desc = fmtVal(n.description); if (n.department != null) u.dept = fmtVal(n.department); if (n.title != null) u.title = fmtVal(n.title);
+        if (n.emailaddress != null) u.email = fmtVal(n.emailaddress); if (n.givenname != null) u.given = n.givenname; if (n.surname != null) u.sur = n.surname;
+        if (n.userprincipalname != null) u.upn = n.userprincipalname;
+        if (n.enabled != null) u.enabled = !!n.enabled;
+        if (n.passwordneverexpires != null) u.pwNeverExpires = !!n.passwordneverexpires;
+        if (n.changepasswordatlogon != null) u.mustChange = !!n.changepasswordatlogon;
+        if (n.accountexpirationdate != null) u.expires = fmtVal(n.accountexpirationdate);
+        if (n.clear && /description/i.test(fmtVal(n.clear))) u.desc = '';
+        if (n.replace && typeof n.replace === 'object') { /* hashtable form unsupported */ }
+        if (n.doesnotrequirepreauth != null) u.noPreAuth = !!n.doesnotrequirepreauth;
+        if (n.serviceprincipalnames) { /* @{Add=...} unsupported */ }
+      });
+      return a.sw.passthru ? targets.filter(Boolean).map(function (u) { return userObj(d, u); }) : [];
+    },
+    'remove-aduser': function (a, input) {
+      var d = this.d, ids = a.named.identity != null || a.pos[0] != null ? [idOf(a)] : arr(input);
+      ids.forEach(function (id) {
+        var u = findUser(d, id); if (!u) throw new PSError('Remove-ADUser : Cannot find an object with identity: ' + fmtVal(id && id.Name || id));
+        if (u.builtin) throw new PSError('Remove-ADUser : Access is denied. Built-in accounts cannot be deleted.');
+        delete d.users[lc(u.sam)]; Object.keys(d.groups).forEach(function (g) { d.groups[g].members = d.groups[g].members.filter(function (m) { return m !== u.sam; }); });
+        d.deleted.push({ kind: 'user', name: u.name, sam: u.sam, upn: u.upn, dn: u.dn, dept: u.dept, title: u.title, groups: memberOf(d, u.sam), when: d.now, u: clone(u) });
+      });
+      return [];
+    },
+    'disable-adaccount': function (a, input) { return setEnabled.call(this, a, input, false); },
+    'enable-adaccount': function (a, input) { return setEnabled.call(this, a, input, true); },
+    'set-adaccountcontrol': function (a, input) {
+      var d = this.d, ids = a.named.identity != null || a.pos[0] != null ? [idOf(a)] : arr(input), n = a.named;
+      ids.forEach(function (id) { var u = findUser(d, id); if (!u) throw new PSError('Set-ADAccountControl : Cannot find an object with identity: ' + fmtVal(id && id.Name || id));
+        if (n.doesnotrequirepreauth != null) u.noPreAuth = !!n.doesnotrequirepreauth; if (n.passwordneverexpires != null) u.pwNeverExpires = !!n.passwordneverexpires; if (n.enabled != null) u.enabled = !!n.enabled; });
+      return [];
+    },
+    'unlock-adaccount': function (a, input) {
+      var d = this.d, ids = a.named.identity != null || a.pos[0] != null ? [idOf(a)] : arr(input);
+      ids.forEach(function (id) { var u = findUser(d, id); if (!u) throw new PSError('Unlock-ADAccount : Cannot find an object with identity: ' + fmtVal(id && id.Name || id)); u.locked = false; u.badPw = 0; });
+      return [];
+    },
+    'set-adaccountpassword': function (a, input) {
+      var d = this.d, id = idOf(a), u = id != null ? findUser(d, id) : findUser(d, arr(input)[0]);
+      if (!u) throw new PSError('Set-ADAccountPassword : Cannot find an object with identity: ' + fmtVal(id));
+      if (!a.sw.reset && !a.named.reset) throw new PSError('Set-ADAccountPassword : Without -Reset you must supply -OldPassword and -NewPassword.\nTo reset someone else’s password use -Reset with -NewPassword.');
+      var np = a.named.newpassword; if (np == null) throw new PSError('Set-ADAccountPassword : -NewPassword is required.\nTip: -NewPassword (ConvertTo-SecureString "P@ssw0rd!2026" -AsPlainText -Force)');
+      var pw = fmtVal(np); if (!pwOk(pw)) throw new PSError('Set-ADAccountPassword : The password does not meet the length, complexity, or history requirement of the domain.');
+      u.pw = pw; u.pwLastSet = d.now; u.pwResetBy = 'admin'; return [];
+    },
+    'convertto-securestring': function (a, input) { var s = a.pos[0] != null ? a.pos[0] : arr(input)[0]; return [{ __secure: true, toString: function () { return s; }, value: s }].map(function (o) { return String(s); }); },
+    'search-adaccount': function (a) {
+      var d = this.d, res = [], base = a.named.searchbase;
+      Object.keys(d.users).forEach(function (k) {
+        var u = d.users[k]; if (base && !underDn(u.dn, base)) return;
+        var ok = true;
+        if (a.sw.lockedout) ok = ok && u.locked; if (a.sw.accountdisabled) ok = ok && !u.enabled;
+        if (a.sw.passwordneverexpires) ok = ok && u.pwNeverExpires;
+        if (a.sw.accountinactive) { var days = a.named.timespan != null ? parseInt(String(a.named.timespan), 10) : 90; ok = ok && u.enabled && inactive(d, u.lastLogon, days); }
+        if (ok) res.push(userObj(d, u));
+      });
+      res.sort(function (x, y) { return x.Name < y.Name ? -1 : 1; });
+      res.forEach(function (o) { o.LockedOut = d.users[lc(o.SamAccountName)].locked; o.LastLogonDate = d.users[lc(o.SamAccountName)].lastLogon; });
+      res.__cols = ['Name', 'SamAccountName', 'Enabled', 'LockedOut', 'LastLogonDate']; res.__fmt = 'table';
+      return res;
+    },
+    /* ----- groups ----- */
+    'get-adgroup': function (a, input) {
+      var d = this.d, id = idOf(a), res = [];
+      if (id != null) { var g = findGroup(d, id); if (!g) throw new PSError("Get-ADGroup : Cannot find an object with identity: '" + fmtVal(id) + "' under: '" + BASE + "'."); return [groupObj(d, g)]; }
+      if (a.named.filter == null && a.named.ldapfilter == null) throw new PSError('Get-ADGroup : Either -Identity or -Filter is required.');
+      Object.keys(d.groups).forEach(function (k) { var g = d.groups[k]; var o = groupObj(d, g); if (a.named.searchbase && !underDn(g.dn, a.named.searchbase)) return; if (a.named.ldapfilter ? ldapMatch(o, a.named.ldapfilter) : filterMatch(d, o, a.named.filter, this)) res.push(o); }, this);
+      res.sort(function (x, y) { return x.Name < y.Name ? -1 : 1; }); return res;
+    },
+    'new-adgroup': function (a) {
+      var d = this.d, name = a.named.name || a.pos[0]; if (!name) throw new PSError('New-ADGroup : Missing required parameter: -Name');
+      if (findGroup(d, name)) throw new PSError('New-ADGroup : The specified group already exists');
+      var scope = a.named.groupscope; if (!scope) throw new PSError('New-ADGroup : Missing required parameter: -GroupScope (DomainLocal, Global or Universal)');
+      var sc = { domainlocal: 'DomainLocal', global: 'Global', universal: 'Universal' }[lc(scope)]; if (!sc) throw new PSError("New-ADGroup : Cannot validate argument on parameter 'GroupScope'. The argument \"" + scope + '" does not belong to the set "DomainLocal,Global,Universal".');
+      var path = a.named.path || ('CN=Users,' + BASE); if (!ouExists(d, path)) throw new PSError("New-ADGroup : Directory object not found. The OU '" + path + "' does not exist.");
+      var g = addGroup(d, { name: name, scope: sc, category: a.named.groupcategory ? (lc(a.named.groupcategory) === 'distribution' ? 'Distribution' : 'Security') : 'Security', path: path, desc: a.named.description || '' });
+      return a.sw.passthru ? [groupObj(d, g)] : [];
+    },
+    'remove-adgroup': function (a) { var d = this.d, g = findGroup(d, idOf(a)); if (!g) throw new PSError('Remove-ADGroup : Cannot find an object with identity: ' + fmtVal(idOf(a))); if (g.builtin) throw new PSError('Remove-ADGroup : Access is denied. Built-in groups cannot be deleted.'); delete d.groups[lc(g.name)]; return []; },
+    'add-adgroupmember': function (a, input) { return changeMembers.call(this, a, input, true); },
+    'remove-adgroupmember': function (a, input) { return changeMembers.call(this, a, input, false); },
+    'get-adgroupmember': function (a) {
+      var d = this.d, g = findGroup(d, idOf(a)); if (!g) throw new PSError("Get-ADGroupMember : Cannot find an object with identity: '" + fmtVal(idOf(a)) + "' under: '" + BASE + "'.");
+      var res = []; var seen = {};
+      (function walk(gr) { gr.members.forEach(function (m) {
+        var u = d.users[lc(m)], sub = d.groups[lc(m)];
+        if (u && !seen['u:' + u.sam]) { seen['u:' + u.sam] = 1; var o = userObj(d, u); o.objectClass = 'user'; res.push(o); }
+        else if (sub && a.sw.recursive !== undefined && (a.named.recursive || a.sw.recurse)) walk(sub);
+        else if (sub && !seen['g:' + sub.name]) { seen['g:' + sub.name] = 1; res.push(groupObj(d, sub)); }
+        else if (!u && !sub && d.computers[lc(m).replace(/\$$/, '')]) res.push(compObj(d.computers[lc(m).replace(/\$$/, '')]));
+      }); })(g);
+      if (a.sw.recursive || a.named.recursive) { res = []; seen = {}; (function w2(gr) { gr.members.forEach(function (m) { var u = d.users[lc(m)], sub = d.groups[lc(m)]; if (u && !seen[u.sam]) { seen[u.sam] = 1; res.push(userObj(d, u)); } else if (sub) w2(sub); }); })(g); }
+      res.__cols = ['Name', 'SamAccountName', 'ObjectClass']; res.__fmt = 'table';
+      res.forEach(function (o) { o.ObjectClass = o._type === 'group' ? 'group' : o._type === 'computer' ? 'computer' : 'user'; });
+      return res;
+    },
+    'get-adprincipalgroupmembership': function (a, input) {
+      var d = this.d, u = findUser(d, idOf(a) != null ? idOf(a) : arr(input)[0]); if (!u) throw new PSError('Get-ADPrincipalGroupMembership : Cannot find an object with identity: ' + fmtVal(idOf(a)));
+      var res = Object.keys(d.groups).filter(function (k) { return d.groups[k].members.indexOf(u.sam) >= 0; }).map(function (k) { return groupObj(d, d.groups[k]); });
+      // nested
+      var more = true; while (more) { more = false; Object.keys(d.groups).forEach(function (k) { var g = d.groups[k]; if (!res.some(function (r) { return r.Name === g.name; }) && res.some(function (r) { return g.members.indexOf(r.Name) >= 0 || g.members.indexOf(r.SamAccountName) >= 0; })) { res.push(groupObj(d, g)); more = true; } }); }
+      res.__cols = ['Name', 'GroupScope', 'GroupCategory']; res.__fmt = 'table'; return res;
+    },
+    /* ----- computers / OUs ----- */
+    'get-adcomputer': function (a) {
+      var d = this.d, id = idOf(a), res = [];
+      if (id != null) { var c = findComp(d, id); if (!c) throw new PSError("Get-ADComputer : Cannot find an object with identity: '" + fmtVal(id) + "' under: '" + BASE + "'."); return [compObj(c)]; }
+      if (a.named.filter == null) throw new PSError('Get-ADComputer : Either -Identity or -Filter is required.');
+      Object.keys(d.computers).forEach(function (k) { var o = compObj(d.computers[k]); if (a.named.searchbase && !underDn(d.computers[k].dn, a.named.searchbase)) return; if (filterMatch(d, o, a.named.filter, this)) res.push(o); }, this);
+      res.sort(function (x, y) { return x.Name < y.Name ? -1 : 1; }); return res;
+    },
+    'new-adcomputer': function (a) { var d = this.d, n = a.named.name || a.pos[0]; if (!n) throw new PSError('New-ADComputer : Missing required parameter: -Name'); var path = a.named.path || 'CN=Computers,' + BASE; if (!ouExists(d, path)) throw new PSError("New-ADComputer : Directory object not found. The OU '" + path + "' does not exist."); d.computers[lc(n)] = { name: n, sam: n + '$', dn: 'CN=' + n + ',' + path, dns: n + '.' + DOMAIN, enabled: true, os: '', lastLogon: '' }; return []; },
+    'get-adorganizationalunit': function (a) {
+      var d = this.d, id = idOf(a), res = [];
+      if (id != null) { var o = findOU(d, id); if (!o) throw new PSError("Get-ADOrganizationalUnit : Cannot find an object with identity: '" + fmtVal(id) + "' under: '" + BASE + "'."); return [ouObj(o)]; }
+      if (a.named.filter == null) throw new PSError('Get-ADOrganizationalUnit : Either -Identity or -Filter is required.');
+      Object.keys(d.ous).forEach(function (k) { var o = d.ous[k]; if (o.container) return; var ob = ouObj(o); if (a.named.searchbase && !underDn(o.dn, a.named.searchbase)) return; if (filterMatch(d, ob, a.named.filter, this)) res.push(ob); }, this);
+      res.sort(function (x, y) { return x.DistinguishedName < y.DistinguishedName ? -1 : 1; }); return res;
+    },
+    'new-adorganizationalunit': function (a) {
+      var d = this.d, n = a.named.name || a.pos[0]; if (!n) throw new PSError('New-ADOrganizationalUnit : Missing required parameter: -Name');
+      var path = a.named.path || BASE; if (!ouExists(d, path)) throw new PSError("New-ADOrganizationalUnit : Directory object not found. The path '" + path + "' does not exist.");
+      var dn = 'OU=' + n + ',' + path; if (d.ous[dn]) throw new PSError('New-ADOrganizationalUnit : An OU with that name already exists at this path.');
+      d.ous[dn] = { name: n, dn: dn, desc: a.named.description || '', protect: a.named.protectedfromaccidentaldeletion === false ? false : true };
+      return [];
+    },
+    'move-adobject': function (a, input) {
+      var d = this.d, target = a.named.targetpath; if (!target) throw new PSError('Move-ADObject : Missing required parameter: -TargetPath');
+      if (!ouExists(d, target)) throw new PSError("Move-ADObject : Directory object not found. Target '" + target + "' does not exist.");
+      var ids = a.named.identity != null || a.pos[0] != null ? [idOf(a)] : arr(input);
+      ids.forEach(function (id) {
+        var key = typeof id === 'object' && id ? (id.DistinguishedName || id.Name) : id;
+        var u = findUser(d, id), c = !u && findComp(d, id);
+        if (u) u.dn = 'CN=' + u.name + ',' + findOU(d, target).dn; else if (c) c.dn = 'CN=' + c.name + ',' + findOU(d, target).dn;
+        else throw new PSError('Move-ADObject : Cannot find an object with identity: ' + fmtVal(key));
+      });
+      return [];
+    },
+    'get-addomain': function () {
+      var d = this.d; return [{ DNSRoot: DOMAIN, DistinguishedName: BASE, DomainMode: 'Windows2016Domain', Forest: DOMAIN, InfrastructureMaster: 'DC01.' + DOMAIN, Name: 'corp', NetBIOSName: 'CORP', PDCEmulator: 'DC01.' + DOMAIN, RIDMaster: 'DC01.' + DOMAIN, _type: 'domain' }];
+    },
+    'get-addefaultdomainpasswordpolicy': function () {
+      return [{ ComplexityEnabled: true, LockoutDuration: '00:30:00', LockoutObservationWindow: '00:30:00', LockoutThreshold: 5, MaxPasswordAge: '42.00:00:00', MinPasswordAge: '1.00:00:00', MinPasswordLength: 8, PasswordHistoryCount: 24, ReversibleEncryptionEnabled: false, _type: 'policy' }];
+    },
+    /* ----- recycle bin ----- */
+    'get-adobject': function (a) {
+      var d = this.d;
+      if (!a.sw.includedeletedobjects) { var res = []; return res; }
+      var res2 = d.deleted.filter(function (x) { if (a.named.filter == null) return true; var o = { Name: x.name, isDeleted: true, ObjectClass: x.kind, SamAccountName: x.sam }; try { return filterMatch(d, o, a.named.filter, this); } catch (e) { return true; } }, this).map(function (x) { return { Name: x.name + '\nDEL:' + guid(x.name), DistinguishedName: 'CN=' + x.name + '\\0ADEL:' + guid(x.name) + ',CN=Deleted Objects,' + BASE, ObjectClass: x.kind, Deleted: true, SamAccountName: x.sam, _del: x, _type: 'del' }; });
+      res2.__cols = ['SamAccountName', 'ObjectClass', 'Deleted']; res2.__fmt = 'table';
+      res2.forEach(function (o) { o.Name = o._del.name; });
+      return res2;
+    },
+    'restore-adobject': function (a, input) {
+      var d = this.d, items = arr(input).length ? arr(input) : [];
+      if (!items.length) throw new PSError('Restore-ADObject : Missing required parameter. Pipe a deleted object in: Get-ADObject -IncludeDeletedObjects -Filter ... | Restore-ADObject');
+      items.forEach(function (it) {
+        var rec = it._del; if (!rec) throw new PSError('Restore-ADObject : The object is not a deleted object.');
+        var idx = d.deleted.indexOf(rec); if (idx < 0) throw new PSError('Restore-ADObject : The object has already been restored.');
+        d.deleted.splice(idx, 1);
+        var u = rec.u; d.users[lc(u.sam)] = u;
+        (rec.groups || []).forEach(function (gdn) { var g = findGroup(d, gdn); if (g && g.members.indexOf(u.sam) < 0) g.members.push(u.sam); });
+      });
+      return [];
+    },
+    /* ----- Group Policy ----- */
+    'get-gpo': function (a) {
+      var d = this.d;
+      if (a.named.name || a.pos[0]) { var g = findGpo(d, a.named.name || a.pos[0]); if (!g) throw new PSError("Get-GPO : A GPO named '" + (a.named.name || a.pos[0]) + "' was not found in domain " + DOMAIN + '.'); return [gpoObj(g)]; }
+      if (!a.sw.all) throw new PSError('Get-GPO : Specify -Name <gpo> or -All.');
+      var r = Object.keys(d.gpos).map(function (k) { return gpoObj(d.gpos[k]); }); r.sort(function (x, y) { return x.DisplayName < y.DisplayName ? -1 : 1; }); return r;
+    },
+    'new-gpo': function (a) { var d = this.d, n = a.named.name || a.pos[0]; if (!n) throw new PSError('New-GPO : Missing required parameter: -Name'); if (d.gpos[lc(n)]) throw new PSError("New-GPO : A GPO named '" + n + "' already exists."); d.gpos[lc(n)] = { name: n, status: 'AllSettingsEnabled' }; return [gpoObj(d.gpos[lc(n)])]; },
+    'remove-gpo': function (a) { var d = this.d, n = a.named.name || a.pos[0]; if (!findGpo(d, n)) throw new PSError("Remove-GPO : A GPO named '" + n + "' was not found."); delete d.gpos[lc(n)]; d.links = d.links.filter(function (l) { return lc(l.gpo) !== lc(n); }); return []; },
+    'new-gplink': function (a) {
+      var d = this.d, n = a.named.name || a.pos[0], tgt = a.named.target; if (!findGpo(d, n)) throw new PSError("New-GPLink : A GPO named '" + n + "' was not found."); if (!tgt) throw new PSError('New-GPLink : Missing required parameter: -Target (a domain, OU or site DN)');
+      var o = findOU(d, tgt); if (!o) throw new PSError("New-GPLink : The target '" + tgt + "' does not exist."); tgt = o.dn;
+      if (d.links.some(function (l) { return lc(l.gpo) === lc(n) && lc(l.target) === lc(tgt); })) throw new PSError('New-GPLink : The GPO is already linked to this container.');
+      d.links.push({ gpo: findGpo(d, n).name, target: tgt, enforced: lc(a.named.enforced) === 'yes' || a.sw.enforced === true, enabled: true });
+      return [];
+    },
+    'set-gplink': function (a) {
+      var d = this.d, n = a.named.name || a.pos[0], tgt = a.named.target; var o = findOU(d, tgt); var l = d.links.filter(function (x) { return lc(x.gpo) === lc(n) && o && lc(x.target) === lc(o.dn); })[0];
+      if (!l) throw new PSError('Set-GPLink : That GPO is not linked to the target. Use New-GPLink first.');
+      if (a.named.enforced != null) l.enforced = lc(fmtVal(a.named.enforced)) === 'yes'; if (a.named.linkenabled != null) l.enabled = lc(fmtVal(a.named.linkenabled)) === 'yes'; return [];
+    },
+    'remove-gplink': function (a) { var d = this.d, n = a.named.name || a.pos[0], o = findOU(d, a.named.target); var before = d.links.length; d.links = d.links.filter(function (x) { return !(lc(x.gpo) === lc(n) && o && lc(x.target) === lc(o.dn)); }); if (d.links.length === before) throw new PSError('Remove-GPLink : No such link.'); return []; },
+    'set-gpinheritance': function (a) { var d = this.d, o = findOU(d, a.named.target); if (!o) throw new PSError("Set-GPInheritance : The target '" + a.named.target + "' does not exist."); d.blocked[lc(o.dn)] = lc(fmtVal(a.named.isblocked)) === 'yes'; return []; },
+    'get-gpinheritance': function (a) {
+      var d = this.d, o = findOU(d, a.named.target); if (!o) throw new PSError("Get-GPInheritance : The target '" + a.named.target + "' does not exist.");
+      var chain = [], dn = o.dn; var out = [];
+      while (dn) { chain.push(dn); dn = parentOf(dn); if (lc(dn) === 'dc=local') break; }
+      var order = []; var blocked = !!d.blocked[lc(o.dn)];
+      d.links.filter(function (l) { return lc(l.target) === lc(o.dn); }).forEach(function (l) { order.push({ DisplayName: l.gpo, Target: l.target, Enforced: l.enforced, Enabled: l.enabled, Type: 'linked' }); });
+      var inh = []; chain.slice(1).forEach(function (c) { d.links.filter(function (l) { return lc(l.target) === lc(c); }).forEach(function (l) { if (!blocked || l.enforced) inh.push({ DisplayName: l.gpo, Target: c, Enforced: l.enforced, Enabled: l.enabled, Type: 'inherited' }); }); });
+      var all = order.concat(inh); all.__cols = ['DisplayName', 'Target', 'Type', 'Enforced']; all.__fmt = 'table';
+      all.forEach(function (x) { x._type = 'link'; });
+      return all;
+    },
+    /* ----- generic pipeline cmdlets ----- */
+    'where-object': function (a, input, vars) {
+      var self = this, blk = a.pos[0] || a.named.filterscript; var inp = arr(input);
+      if (!blk || !blk.__block) {
+        // simple form: Where-Object Prop -eq value
+        var prop = a.pos[0]; if (prop == null) return inp;
+        var opn = ['eq', 'ne', 'like', 'notlike', 'match', 'notmatch', 'gt', 'ge', 'lt', 'le', 'contains', 'notcontains', 'in', 'notin'].filter(function (o) { return o in a.named; })[0];
+        var simple = inp.filter(function (it) {
+          var v = getProp(it, prop);
+          if (!opn) return truthyV(v);
+          var vars2 = { __a: v, __b: a.named[opn] };
+          return truthyV(evalExpr('$__a -' + opn + ' $__b', vars2));
+        });
+        if (inp.__fmt) { simple.__fmt = inp.__fmt; simple.__cols = inp.__cols; }
+        return simple;
+      }
+      var res = inp.filter(function (it) {
+        var v = {}; Object.keys(vars).forEach(function (k) { v[k] = vars[k]; }); v._ = it; v.__date = self.d.now;
+        return truthyV(evalExpr(blk.__block, v));
+      });
+      if (inp.__fmt) { res.__fmt = inp.__fmt; res.__cols = inp.__cols; }
+      return res;
+    },
+    'select-object': function (a, input) {
+      var inp = arr(input), props = [];
+      if (a.named.first != null) inp = inp.slice(0, a.named.first);
+      if (a.named.last != null) inp = inp.slice(-a.named.last);
+      if (a.named.skip != null) inp = inp.slice(a.named.skip);
+      var raw = a.named.property != null ? arr(a.named.property) : a.pos.reduce(function (acc, x) { return acc.concat(arr(x)); }, []);
+      raw.forEach(function (p) { props = props.concat(String(p).split(',')); });
+      props = props.map(function (s) { return s.trim(); }).filter(Boolean);
+      if (a.named.expandproperty) { var ep = a.named.expandproperty; var out = []; inp.forEach(function (it) { arr(getProp(it, ep)).forEach(function (x) { out.push(x); }); }); return out; }
+      if (!props.length) return inp;
+      var res = inp.map(function (it) {
+        var o = {}; if (it && it._type) o._type = it._type;
+        props.forEach(function (p) { if (p === '*') { Object.keys(it).forEach(function (k) { o[k] = it[k]; }); } else { var key = Object.keys(it).filter(function (k) { return lc(k) === lc(p); })[0]; o[key || p] = key ? it[key] : null; } });
+        return o;
+      });
+      res.__selected = true; res.__fmt = 'table'; res.__cols = props.indexOf('*') >= 0 ? null : props.map(function (p) { var k = inp[0] ? Object.keys(inp[0]).filter(function (kk) { return lc(kk) === lc(p); })[0] : p; return k || p; });
+      if (!res.__cols) delete res.__cols;
+      return res;
+    },
+    'sort-object': function (a, input) {
+      var inp = arr(input).slice(), prop = a.named.property != null ? a.named.property : a.pos[0]; var desc = !!a.sw.descending;
+      if (prop == null) { inp.sort(); return inp; }
+      var p = Array.isArray(prop) ? prop[0] : prop;
+      inp.sort(function (x, y) { var vx = getProp(x, p), vy = getProp(y, p); if (typeof vx === 'string') vx = vx.toLowerCase(); if (typeof vy === 'string') vy = vy.toLowerCase(); var r = vx < vy ? -1 : vx > vy ? 1 : 0; return desc ? -r : r; });
+      if (arr(input).__fmt) { inp.__fmt = arr(input).__fmt; inp.__cols = arr(input).__cols; inp.__selected = arr(input).__selected; }
+      return inp;
+    },
+    'measure-object': function (a, input) {
+      var inp = arr(input), n = inp.length; var prop = a.named.property != null ? a.named.property : a.pos[0];
+      var o = { Count: n, _type: 'measure' };
+      if (prop) { var vals = inp.map(function (x) { return +getProp(x, prop); }).filter(function (x) { return !isNaN(x); }); o.Sum = vals.reduce(function (s, x) { return s + x; }, 0); o.Average = vals.length ? o.Sum / vals.length : null; o.Property = prop; }
+      var r = [o]; r.__fmt = 'list'; return r;
+    },
+    'foreach-object': function (a, input, vars) {
+      var self = this, blk = a.pos[0]; if (!blk || !blk.__block) throw new PSError('ForEach-Object : Provide a script block: ForEach-Object { ... }');
+      var out = [];
+      arr(input).forEach(function (it) {
+        var v = {}; Object.keys(vars).forEach(function (k) { v[k] = vars[k]; }); v._ = it;
+        var stmts = splitStatements(blk.__block);
+        stmts.forEach(function (st) {
+          var res = self.runPipeline(st, v, true);
+          res.forEach(function (r) { out.push(r); });
+        });
+      });
+      return out;
+    },
+    'format-table': function (a, input) { var inp = arr(input).slice(); inp.__fmt = 'table'; var props = a.pos.reduce(function (acc, x) { return acc.concat(arr(x)); }, []).map(function (p) { return String(p).split(','); }).reduce(function (x, y) { return x.concat(y); }, []).map(function (s) { return s.trim(); }).filter(Boolean); if (a.named.property) props = arr(a.named.property); if (props.length) { inp.__cols = props; inp.__selected = true; } else if (input && input.__cols) inp.__cols = input.__cols; if (input && input.__selected) inp.__selected = true; return inp; },
+    'format-list': function (a, input) { var inp = arr(input).slice(); inp.__fmt = 'list'; var props = a.pos.reduce(function (acc, x) { return acc.concat(arr(x)); }, []).map(function (p) { return String(p).split(','); }).reduce(function (x, y) { return x.concat(y); }, []).map(function (s) { return s.trim(); }).filter(Boolean); if (props.length) { var res = inp.map(function (it) { var o = {}; props.forEach(function (p) { if (p === '*') Object.keys(it).forEach(function (k) { o[k] = it[k]; }); else { var key = Object.keys(it).filter(function (k) { return lc(k) === lc(p); })[0]; o[key || p] = key ? it[key] : null; } }); return o; }); res.__fmt = 'list'; res.__selected = true; return res; } return inp; },
+    'write-output': function (a) { return a.pos.length ? a.pos.reduce(function (acc, x) { return acc.concat(arr(x)); }, []) : []; },
+    'write-host': function (a) { return a.pos.length ? [a.pos.map(fmtVal).join(' ')] : []; },
+    'clear-host': function () { var r = []; r.__text = '__CLEAR__'; return r; },
+    'get-date': function () { return [this.d.now]; },
+    'get-member': function (a, input) { var it = arr(input)[0]; if (!it) return []; var r = Object.keys(it).filter(function (k) { return k.charAt(0) !== '_'; }).sort().map(function (k) { return { Name: k, MemberType: 'Property', _type: 'm' }; }); r.__fmt = 'table'; r.__cols = ['Name', 'MemberType']; return r; },
+    'get-help': function (a) {
+      var t = a.pos[0] ? lc(a.pos[0]) : '';
+      var r = []; r.__text = t ? 'NAME\n    ' + a.pos[0] + '\n\nThis sandbox runs a subset of PowerShell. Try: Get-Command  to list the supported cmdlets.\nOn a real server, run Get-Help ' + a.pos[0] + ' -Examples.' : 'Supported AD cmdlets: type  Get-Command  for the full list.'; return r;
+    },
+    'get-command': function (a) { var names = Object.keys(CMDLETS).filter(function (n) { return n !== 'convertto-securestring' || true; }).sort(); if (a.pos[0]) { var rx = likeToRe(String(a.pos[0])); names = names.filter(function (n) { return rx.test(n); }); } var r = names.map(function (n) { return { CommandType: 'Cmdlet', Name: n.replace(/(^|-)([a-z])/g, function (m, p, c) { return p + c.toUpperCase(); }).replace(/ad(\w)/i, function (m) { return m; }), _type: 'c' }; }); r.__fmt = 'table'; r.__cols = ['CommandType', 'Name']; return r; }
+  };
+  CMDLETS['get-aduser'] = CMDLETS['get-aduser'];
+
+  /* external-style commands (cmd tools) */
+  var EXTERNAL = {
+    whoami: function (a, toks) { var r = []; var t = toks.map(function (x) { return x.v; }).join(' ').toLowerCase(); r.__text = /\/groups/.test(t) ? 'GROUP INFORMATION\n-----------------\nGroup Name                  Type\n=========================== ================\nEveryone                    Well-known group\nCORP\\Domain Users           Group\nBUILTIN\\Users               Alias' : /\/upn/.test(t) ? 'administrator@corp.local' : 'corp\\administrator'; return r; },
+    hostname: function () { var r = []; r.__text = 'DC01'; return r; },
+    gpupdate: function () { var r = []; r.__text = 'Updating policy...\n\nComputer Policy update has completed successfully.\nUser Policy update has completed successfully.'; return r; },
+    gpresult: function () { var self = this, r = []; var names = self.d.links.filter(function (l) { return underDn('OU=Domain Controllers,' + BASE, l.target) && l.enabled; }).map(function (l) { return l.gpo; }); r.__text = 'RSOP data for CORP\\Administrator on DC01 : Logging Mode\n\nApplied Group Policy Objects\n-----------------------------\n    ' + names.join('\n    '); return r; },
+    klist: function () { var r = []; r.__text = 'Current LogonId is 0:0x3e7a1\n\nCached Tickets: (2)\n#0>  Client: administrator @ CORP.LOCAL\n     Server: krbtgt/CORP.LOCAL @ CORP.LOCAL\n     KerbTicket Encryption Type: AES-256-CTS-HMAC-SHA1-96\n#1>  Client: administrator @ CORP.LOCAL\n     Server: cifs/DC01.corp.local @ CORP.LOCAL'; return r; },
+    nltest: function () { var r = []; r.__text = 'DC: \\\\DC01.corp.local\n Address: \\\\10.0.0.10\n Dom Guid: 6a6ee1e3-0d1c-4b57-9c52-8f8b0e1a42b7\n Dom Name: CORP\nThe command completed successfully'; return r; },
+    ipconfig: function () { var r = []; r.__text = 'Windows IP Configuration\n\nEthernet adapter Ethernet0:\n   IPv4 Address. . . . . . . . . . . : 10.0.0.10\n   Subnet Mask . . . . . . . . . . . : 255.255.255.0\n   DNS Servers . . . . . . . . . . . : 10.0.0.10'; return r; },
+    net: function (a, toks) {
+      var r = [], d = this.d, t = toks.map(function (x) { return x.v; }); var low = t.join(' ').toLowerCase();
+      if (/^user \S+ \/domain/.test(low)) { var u = findUser(d, t[1]); r.__text = u ? 'User name                    ' + u.sam + '\nFull Name                    ' + u.name + '\nAccount active               ' + (u.enabled ? 'Yes' : 'No') + '\nAccount locked               ' + (u.locked ? 'Yes' : 'No') + '\nPassword last set            ' + u.pwLastSet + '\nGlobal Group memberships     ' + memberOf(d, u.sam).map(function (dn) { return '*' + dn.replace(/^CN=([^,]+),.*$/, '$1'); }).join('  ') : 'The user name could not be found.'; return r; }
+      r.__text = 'The syntax of this command is:  NET USER <name> /DOMAIN'; return r;
+    }
+  };
+  EXTERNAL['dsquery'] = function () { var r = []; r.__text = 'dsquery is deprecated here — use Get-ADUser / Get-ADObject (PowerShell) instead.'; return r; };
+
+  function setEnabled(a, input, val) {
+    var d = this.d, name = val ? 'Enable-ADAccount' : 'Disable-ADAccount', ids = a.named.identity != null || a.pos[0] != null ? [idOf(a)] : arr(input);
+    if (!ids.length) throw new PSError(name + ' : Missing required parameter: -Identity');
+    ids.forEach(function (id) { var u = findUser(d, id); if (!u) { var c = findComp(d, id); if (c) { c.enabled = val; return; } throw new PSError(name + " : Cannot find an object with identity: '" + fmtVal(id && id.Name || id) + "' under: '" + BASE + "'."); } if (u.builtin && !val && u.sam === 'Administrator') { /* allowed but noted */ } u.enabled = val; });
+    return [];
+  }
+  function changeMembers(a, input, add) {
+    var d = this.d, cmd = add ? 'Add-ADGroupMember' : 'Remove-ADGroupMember', idv = idOf(a), inp = arr(input);
+    if (idv == null && inp.length && inp[0]._type === 'group') idv = inp[0];
+    var g = findGroup(d, idv);
+    if (!g) throw new PSError(cmd + " : Cannot find an object with identity: '" + fmtVal(idv && idv.Name || idv) + "' under: '" + BASE + "'.");
+    var mem = a.named.members;
+    if (mem == null) {
+      if (inp.length && inp[0]._type !== 'group') throw new PSError(cmd + ' : Users cannot be piped straight into -Members.\nUse: ' + cmd + ' -Identity "' + g.name + '" -Members (<Get-ADUser ...>)   or   <Get-ADUser ...> | ForEach-Object { ' + cmd + ' -Identity "' + g.name + '" -Members $_ }');
+      throw new PSError(cmd + ' : Missing required parameter: -Members');
+    }
+    arr(mem).forEach(function (m) {
+      var u = findUser(d, m), sub = !u && findGroup(d, m), c = !u && !sub && findComp(d, m);
+      var key = u ? u.sam : sub ? sub.name : c ? c.sam : null;
+      if (!key) throw new PSError(cmd + " : Cannot find an object with identity: '" + fmtVal(m && m.Name || m) + "' under: '" + BASE + "'.");
+      if (add) { if (g.members.indexOf(key) < 0) g.members.push(key); }
+      else g.members = g.members.filter(function (x) { return x !== key; });
+    });
+    return [];
+  }
+  function inactive(d, last, days) { if (!last) return true; var ms = new Date(d.now + 'T00:00:00Z') - new Date(last + 'T00:00:00Z'); return ms / 86400000 > days; }
+  function ldapMatch(o, f) {
+    // minimal: (&(a=b)(c=d)) and (a=b) with wildcard
+    var conds = f.match(/\(([^()&|!]+)\)/g) || [];
+    return conds.every(function (c) { var m = /\(([^=]+)=(.*)\)/.exec(c); if (!m) return true; var v = getProp(o, m[1].replace(/^sAMAccountName$/i, 'SamAccountName').replace(/^objectClass$/i, 'ObjectClass')); if (m[2] === '*') return v != null && v !== '' && !(Array.isArray(v) && !v.length); return likeToRe(m[2]).test(fmtVal(v)); });
+  }
+
+  var api = { Shell: Shell, build: build, BASE: BASE, DOMAIN: DOMAIN };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.AdSim = api;
+})(typeof window !== 'undefined' ? window : this);
+
+;
+/* Terminal lab UI for the Active Directory / PowerShell sandbox (AdSim). */
+(function () {
+  'use strict';
+  function $(s, r) { return (r || document).querySelector(s); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var PROMPT = 'PS C:\\Users\\Administrator> ';
+
+  function render(m, L, api) {
+    var saved = api.load() || { log: [] }, log = saved.log || [], wasDone = api.done();
+    var eng = new window.AdSim.Shell(L.domain || {});
+    var hist = [], hpos = 0, hintsShown = 0, outBuf = '';
+    log.forEach(function (c) { var r = eng.run(c); if (r.clear) { /* ignore */ } hist.push(c); });
+    hpos = hist.length;
+
+    m.innerHTML = '<div class="row" style="margin-bottom:8px"><button class="btn sm ghost" data-go="' + api.back + '">← Back</button><span class="grow"></span>' +
+      '<button class="btn sm ghost" id="hint">Hint</button><button class="btn sm ghost" id="sol">Solution</button><button class="btn sm warn" id="rst">Reset</button></div>' +
+      '<div class="tag">ACTIVE DIRECTORY LAB</div><h1 style="margin:4px 0 6px">' + esc(L.title) + '</h1>' +
+      '<div class="lab"><div class="stack"><div class="panel tight small">' + L.brief + '</div>' +
+      '<div class="panel tight"><div class="row"><b>Tasks</b><span class="grow"></span><span class="chip" id="tc"></span></div><ul class="tasks" id="tasks"></ul></div>' +
+      '<div class="panel tight"><div class="row"><b>Directory (corp.local)</b></div><div id="side" class="small mono" style="white-space:pre-wrap;overflow-x:auto"></div></div></div>' +
+      '<div class="termwrap"><div class="term"><div class="out" id="out" style="white-space:pre-wrap"></div>' +
+      '<div class="inl"><span class="pr" id="pr"></span><input id="cin" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="send" aria-label="PowerShell command"></div>' +
+      '<div class="keys" id="keys">' + ['Get-ADUser -Filter *', 'Get-ADGroup -Filter *', 'Get-ADOrganizationalUnit -Filter *', '| Where-Object { $_.', '| Select-Object ', '-Properties *', 'Get-Command *AD*', '↑'].map(function (k) { return '<button data-k="' + esc(k) + '">' + esc(k.trim() || k) + '</button>'; }).join('') + '</div></div>' +
+      '<p class="dim small">A simulated Windows Server domain controller with the ActiveDirectory and GroupPolicy cmdlets, the object pipeline, <code>Where-Object</code> / <code>Select-Object</code> / <code>ForEach-Object</code> and variables. Nothing here can break a real network. <code>Get-Command</code> lists every supported cmdlet.</p></div></div>';
+
+    var out = $('#out', m), cin = $('#cin', m);
+
+    function treeText() {
+      var d = eng.d, byParent = {};
+      function add(dn, label) { var p = dn.indexOf(',') < 0 ? '' : dn.slice(dn.indexOf(',') + 1); (byParent[p.toLowerCase()] = byParent[p.toLowerCase()] || []).push(label); }
+      Object.keys(d.users).forEach(function (k) { var u = d.users[k]; add(u.dn, (u.enabled ? '' : '\u2298 ') + (u.locked ? '\ud83d\udd12 ' : '') + u.name); });
+      Object.keys(d.groups).forEach(function (k) { var g = d.groups[k]; if (!g.builtin) add(g.dn, '\u25a3 ' + g.name); });
+      Object.keys(d.computers).forEach(function (k) { var c = d.computers[k]; add(c.dn, '\u25a1 ' + c.name); });
+      var lines = [];
+      var ous = Object.keys(d.ous).map(function (k) { return d.ous[k]; }).filter(function (o) { return !o.builtin || o.name === 'Domain Controllers' || o.container; }).sort(function (a, b) { return a.dn < b.dn ? -1 : 1; });
+      ous.forEach(function (o) {
+        if (o.container && !(byParent[o.dn.toLowerCase()] || []).filter(function (x) { return !/^(Administrator)$/.test(x); }).length) return;
+        var depth = (o.dn.match(/OU=/g) || []).length;
+        var kids = (byParent[o.dn.toLowerCase()] || []).filter(function (x) { return !o.container || x !== 'Administrator'; });
+        lines.push(new Array(depth).join('  ') + (o.container ? '\ud83d\udcc1 ' : '\ud83d\udcc2 ') + o.name + (kids.length ? '  \u2014 ' + kids.join(', ') : ''));
+      });
+      return lines.join('\n') + '\n\n\u2298 disabled   \ud83d\udd12 locked out   \u25a3 group   \u25a1 computer';
+    }
+    function draw() {
+      out.innerHTML = outBuf; out.scrollTop = out.scrollHeight;
+      $('#pr', m).textContent = PROMPT;
+      $('#side', m).textContent = treeText();
+      var ok = 0;
+      $('#tasks', m).innerHTML = L.tasks.map(function (t) { var r = false; try { r = !!t.c(eng); } catch (e) { } if (r) ok++; return '<li class="' + (r ? 'ok' : '') + '"><span class="ck">' + (r ? '\u2713' : '') + '</span><span>' + t.t + '</span></li>'; }).join('');
+      $('#tc', m).textContent = ok + '/' + L.tasks.length; $('#tc', m).className = 'chip ' + (ok === L.tasks.length ? 'ok' : '');
+      if (ok === L.tasks.length && !wasDone) { wasDone = true; api.complete(); api.modal('<div class="center"><div class="big" style="color:var(--ok)">\u2713</div><h2>Lab complete</h2><p class="muted">' + (L.debrief || 'All tasks verified.') + '</p><button class="btn pri" data-close>Nice</button></div>'); }
+    }
+    function run(cmd) {
+      var r = eng.run(cmd);
+      log.push(cmd); api.save({ log: log }); hist.push(cmd); hpos = hist.length;
+      if (r.clear) outBuf = '';
+      else {
+        if (outBuf.length > 60000) outBuf = outBuf.slice(-40000);
+        outBuf += '<span class="cmd">' + esc(PROMPT + cmd) + '</span>\n' + (r.out ? (r.err ? '<span style="color:var(--bad)">' + esc(r.out) + '</span>' : esc(r.out)) : '');
+      }
+      draw();
+    }
+    cin.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); var v = cin.value; cin.value = ''; if (!v.trim()) return; run(v); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); if (hpos > 0) cin.value = hist[--hpos]; }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); if (hpos < hist.length) cin.value = hist[++hpos] || ''; }
+    });
+    m.addEventListener('click', function (e) {
+      var k = e.target.closest('[data-k]'); if (!k) return;
+      var v = k.dataset.k;
+      if (v === '\u2191') { if (hpos > 0) cin.value = hist[--hpos]; }
+      else cin.value = (cin.value && !/ $/.test(cin.value) && /^[|-]/.test(v) ? cin.value + ' ' : cin.value) + (/^(Get-|Search-|New-)/.test(v) && cin.value ? '' : '') + v;
+      cin.focus({ preventScroll: true });
+    });
+    $('#rst', m).onclick = function () {
+      if (!confirm('Reset this lab to the start?')) return;
+      api.clear(); log = []; hist = []; hpos = 0; outBuf = '';
+      eng = new window.AdSim.Shell(L.domain || {});
+      draw();
+    };
+    $('#hint', m).onclick = function () { var hs = L.hints || []; if (!hs.length) return; var k = Math.min(hintsShown++, hs.length - 1); api.modal('<div class="tag">Hint ' + (k + 1) + ' of ' + hs.length + '</div><p>' + hs[k] + '</p><button class="btn" data-close>Got it</button>'); };
+    $('#sol', m).onclick = function () {
+      if (!confirm('Show the solution? Try the hints first.')) return;
+      api.modal('<h3>Solution</h3><pre class="mono small" style="background:#070b10;padding:10px;border-radius:8px;white-space:pre-wrap;overflow-x:auto">' + esc((L.solution || []).join('\n')) + '</pre>' + (L.why ? '<p class="small muted">' + L.why + '</p>' : '') + '<button class="btn" data-close style="margin-top:10px">Close</button>');
+    };
+    draw(); if (!api.lite) cin.focus();
+  }
+
+  window.LAB_KINDS = window.LAB_KINDS || {};
+  window.LAB_KINDS.ad = { render: render };
+})();
+
+;
+/* Windows Active Directory track — concepts, PowerShell AD administration, Group Policy, authentication/logging, recovery and security.
+   Labs run in the AdSim domain-controller sandbox. */
+(function () {
+  var S = COURSE.stages, Q = window.Q, T = window.TYPE, L = COURSE.labs;
+  var B = 'DC=corp,DC=local';
+  function lab(id, o) { o.kind = 'ad'; L[id] = o; }
+
+  /* ===================== 1. Fundamentals ===================== */
+  S.push({
+    id: 'ad1', track: 'ad', tier: 'ad-f', title: 'What Active Directory is', code: 'Get-ADDomain', gateN: 12,
+    goal: 'Understand what a directory service does, the parts of an AD environment (domain, controller, forest), how objects are named, and which ports it uses.',
+    lesson: [
+      { h: 'The big idea', html: `<p><b>Active Directory Domain Services (AD DS)</b> is Microsoft\u2019s <b>directory service</b>: one central database of <b>identities and resources</b> (users, computers, groups, printers) plus the services that <b>authenticate</b> (prove who you are) and <b>authorize</b> (decide what you can touch). Instead of an account on every PC, you have one account that works across the whole company.</p>
+        <ul><li><b>Domain controller (DC)</b> \u2014 a Windows Server running AD DS. It holds a writable copy of the directory and answers logons. Every serious domain has at least two.</li><li><b>Domain</b> \u2014 an administrative and replication boundary, named with DNS: <code>corp.local</code> (production uses a real registered name such as <code>ad.example.com</code>).</li><li><b>Tree</b> \u2014 domains sharing a contiguous DNS namespace (<code>corp.local</code> + <code>sales.corp.local</code>). <b>Forest</b> \u2014 one or more trees sharing a schema and Global Catalog. <b>The forest is the real security boundary.</b></li><li><b>NTDS.dit</b> \u2014 the database file (<code>C:\\Windows\\NTDS</code>) on every DC. It contains every account\u2019s password hash, which is why a stolen copy is catastrophic. <b>SYSVOL</b> is the shared folder that holds Group Policy files and logon scripts.</li></ul>` },
+      { h: 'AD runs on DNS', html: `<p>Clients find domain controllers by asking <b>DNS</b> for <b>SRV records</b> such as <code>_ldap._tcp.dc._msdcs.corp.local</code>. That is why the #1 cause of \u201cthe domain is broken\u201d is <b>DNS</b>: a domain-joined PC must use the DC (or an internal DNS server that can resolve the domain) as its DNS server \u2014 <b>never a public resolver like 8.8.8.8</b> as its only DNS.</p><pre>nslookup -type=SRV _ldap._tcp.dc._msdcs.corp.local\nnltest /dsgetdc:corp.local     # which DC am I talking to?</pre>` },
+      { h: 'Objects and how they are named', html: `<p>Everything in the directory is an <b>object</b> with <b>attributes</b>; the <b>schema</b> defines which object classes and attributes exist. Each object has several names:</p><table><tr><th>Name</th><th>Example</th><th>Notes</th></tr><tr><td><b>sAMAccountName</b></td><td><code>CORP\\jsmith</code></td><td>Legacy logon name, 20 characters max, unique in the domain</td></tr><tr><td><b>UPN</b></td><td><code>jsmith@corp.local</code></td><td>Modern logon name (looks like email)</td></tr><tr><td><b>Distinguished Name (DN)</b></td><td><code>CN=Jane Smith,OU=Sales,DC=corp,DC=local</code></td><td>Full path in the tree. <b>CN</b>=common name, <b>OU</b>=organizational unit, <b>DC</b>=domain component. Reads leaf \u2192 root.</td></tr><tr><td><b>SID</b></td><td><code>S-1-5-21-\u2026-1104</code></td><td>Security identifier used in permissions. Domain SID + a <b>RID</b> (the last number). Never reused.</td></tr><tr><td><b>GUID</b></td><td>128-bit ID</td><td>Never changes for the life of the object, even if renamed or moved</td></tr></table><p>Permissions are granted to <b>SIDs</b>, not names. Delete and re-create an account with the same name and it is a <b>different SID</b> \u2014 it will not have the old account\u2019s access.</p>` },
+      { h: 'Ports to know', html: `<table><tr><th>Port</th><th>Service</th></tr><tr><td>53 TCP/UDP</td><td>DNS</td></tr><tr><td>88 TCP/UDP</td><td><b>Kerberos</b> authentication</td></tr><tr><td>123 UDP</td><td>Time (NTP / W32Time) \u2014 Kerberos needs clocks within <b>5 minutes</b></td></tr><tr><td>135 TCP</td><td>RPC endpoint mapper (plus dynamic high ports)</td></tr><tr><td>389 TCP/UDP</td><td><b>LDAP</b> (directory queries)</td></tr><tr><td>636 TCP</td><td><b>LDAPS</b> (LDAP over TLS)</td></tr><tr><td>445 TCP</td><td><b>SMB</b> (file shares, SYSVOL, NETLOGON)</td></tr><tr><td>464 TCP/UDP</td><td>Kerberos password change (kpasswd)</td></tr><tr><td>3268 / 3269</td><td><b>Global Catalog</b> (LDAP / LDAPS)</td></tr><tr><td>3389 TCP</td><td>RDP</td></tr><tr><td>9389 TCP</td><td>Active Directory Web Services (PowerShell AD module)</td></tr></table>` },
+      { h: 'AD vs Entra ID', html: `<p><b>On-premises AD</b> speaks <b>Kerberos, NTLM, LDAP</b> and applies <b>Group Policy</b>. <b>Microsoft Entra ID</b> (formerly Azure AD) is the <b>cloud</b> identity service: it speaks <b>OAuth 2.0, OpenID Connect, SAML</b> and the Microsoft Graph API, has no OUs or GPOs, and is not a replacement for domain controllers. Most companies run <b>hybrid</b>: accounts sync from AD to Entra ID with Entra Connect so one identity works on-prem and in Microsoft 365.</p>` }
+    ],
+    cards: [
+      ['Active Directory (AD DS)', 'Microsoft directory service: central identities + authentication + authorization.'], ['Domain controller (DC)', 'Windows Server holding a writable copy of the directory and answering logons.'], ['Domain', 'Administrative and replication boundary, named with DNS (corp.local).'], ['Forest', 'One or more trees sharing a schema and Global Catalog. The true security boundary.'],
+      ['NTDS.dit', 'The AD database on each DC \u2014 contains every password hash.'], ['SYSVOL', 'DC share holding Group Policy files and logon scripts (replicated by DFSR).'], ['Schema', 'Defines the object classes and attributes allowed in the directory.'],
+      ['Distinguished Name', 'Full object path: CN=Jane Smith,OU=Sales,DC=corp,DC=local.'], ['sAMAccountName vs UPN', 'CORP\\jsmith (legacy) vs jsmith@corp.local (modern).'], ['SID vs GUID', 'SID = security identity used in ACLs (changes if re-created). GUID = permanent object ID.'],
+      ['Kerberos port', '88'], ['LDAP / LDAPS ports', '389 / 636'], ['Global Catalog ports', '3268 (LDAP) / 3269 (LDAPS)'], ['SMB port', '445'], ['AD depends on...', 'DNS (SRV records) and accurate time (Kerberos 5-minute limit).'], ['Entra ID', 'Cloud identity service (OAuth/SAML/OIDC). Not a domain controller replacement; syncs with AD via Entra Connect.']
+    ],
+    qs: [
+      Q('What is the primary job of Active Directory Domain Services?', 'Centralized identity, authentication and authorization for a network', ['Hosting company websites', 'Distributing IP addresses', 'Backing up user files'], 'AD DS is a directory of identities plus the services that authenticate and authorize them.', 0),
+      Q('Which is the true security boundary in Active Directory?', 'The forest', ['The OU', 'The domain', 'The site'], 'A domain is an administrative boundary; the forest is the real security boundary.', 0),
+      Q('Which file on a domain controller holds all account password hashes?', 'NTDS.dit', ['SAM.hiv', 'SYSVOL.dat', 'boot.ini'], 'NTDS.dit is the AD database. Protect DCs and their backups.', 0),
+      Q('In CN=Jane Smith,OU=Sales,DC=corp,DC=local, what is "OU=Sales"?', 'The organizational unit that contains the user', ['The user\u2019s password policy', 'The domain name', 'The user\u2019s group'], 'A DN reads from the object up to the root.', 0),
+      Q('Which port does Kerberos use?', '88', ['389', '445', '636'], 'Kerberos = 88. LDAP = 389, LDAPS = 636, SMB = 445.', 0),
+      Q('Which port is LDAP over TLS (LDAPS)?', '636', ['389', '3268', '88'], 'LDAPS = 636. Global Catalog over TLS = 3269.', 0),
+      Q('Clients locate domain controllers primarily by querying:', 'DNS SRV records', ['A hosts file on each PC', 'DHCP option 3', 'NetBIOS broadcast only'], 'The DC locator uses SRV records like _ldap._tcp.dc._msdcs.<domain>.', 0),
+      Q('A user is deleted and re-created with the same username. Why is their old file access gone?', 'The new account has a different SID, and permissions reference SIDs', ['The username is case sensitive', 'Group Policy removed it', 'Passwords reset ACLs'], 'ACLs store SIDs; a new account gets a new SID.', 0),
+      Q('Which identifier never changes, even when an object is renamed or moved?', 'GUID', ['sAMAccountName', 'Distinguished Name', 'UPN'], 'The objectGUID is permanent. The DN changes whenever the object is moved or renamed.', 0),
+      Q('A domain-joined PC cannot find the domain. Its DNS server is set to 8.8.8.8. The fix is to:', 'Point DNS at the domain controller / internal DNS server', ['Reinstall Windows', 'Open port 80', 'Disable the firewall'], 'AD names resolve only on internal DNS that hosts the domain\u2019s SRV records.', 0),
+      Q('Kerberos authentication fails when clocks differ by more than:', '5 minutes', ['30 seconds', '1 hour', '24 hours'], 'The default maximum tolerance for clock skew is 5 minutes.', 0),
+      Q('Which port is used by the PowerShell Active Directory module (AD Web Services)?', '9389', ['443', '5985', '3389'], 'ADWS listens on TCP 9389.', 0),
+      Q('How does Entra ID differ from on-premises AD DS?', 'It is a cloud identity service using OAuth/SAML/OIDC, with no OUs or Group Policy', ['It is the same thing, just hosted', 'It replaces all domain controllers', 'It only stores printers'], 'They are complementary; hybrid environments sync them.', 0),
+      Q('What does the SYSVOL share contain?', 'Group Policy files and logon scripts', ['The AD database', 'User home folders', 'Email archives'], 'SYSVOL is replicated between DCs (DFSR).', 0),
+      T('Type the PowerShell cmdlet that returns information about the current domain (Verb-Noun, no parameters).', [/^\s*Get-ADDomain\s*$/i], 'Get-ADDomain', 0, 'Get-AD...')
+    ],
+    labs: []
+  });
+
+  /* ===================== 2. OUs, groups, lifecycle ===================== */
+  S.push({
+    id: 'ad2', track: 'ad', tier: 'ad-f', title: 'OUs, groups & the account lifecycle', code: 'New-ADOrganizationalUnit', gateN: 12,
+    goal: 'Design OUs, pick the right group scope (AGDLP), know the built-in privileged groups, and manage accounts from joiner to leaver.',
+    lesson: [
+      { h: 'Organizational Units (OUs)', html: `<p>An <b>OU</b> is a folder inside a domain. You create OUs to (1) <b>link Group Policy</b> to a set of objects and (2) <b>delegate</b> administration (for example let the helpdesk reset passwords only in the Sales OU).</p><ul><li><b>OU vs group:</b> an OU is a <i>location</i> (an object lives in exactly one OU); a group is a <i>collection</i> (a user can be in many). <b>Group Policy is applied to OUs, not groups</b> (groups can only filter it). <b>Permissions are given to groups, not OUs.</b></li><li>The default <code>CN=Users</code> and <code>CN=Computers</code> are <b>containers</b>, not OUs \u2014 you cannot link a GPO to them. Create your own OUs and move objects out.</li><li>Turn on <b>Protect from accidental deletion</b>. New OUs created with PowerShell are protected by default.</li><li>Design OUs around <b>how you manage</b> things (Workstations, Servers, Staff by department), not around the org chart.</li></ul>` },
+      { h: 'Group types and scopes', html: `<p><b>Type:</b> <b>Security</b> groups get permissions and can be used in ACLs. <b>Distribution</b> groups only send email (no permissions).</p><table><tr><th>Scope</th><th>Members can come from</th><th>Can be used to grant permissions on</th></tr><tr><td><b>Domain Local</b></td><td>Any domain in the forest</td><td>Resources in <b>its own domain</b></td></tr><tr><td><b>Global</b></td><td><b>Its own domain</b> only</td><td>Resources in any domain in the forest</td></tr><tr><td><b>Universal</b></td><td>Any domain in the forest</td><td>Anywhere (stored in the Global Catalog; changes replicate forest-wide)</td></tr></table><p><b>Best-practice recipe \u2014 AGDLP:</b> <b>A</b>ccounts go in <b>G</b>lobal groups (organized by role: <code>G-Finance</code>); Global groups go in <b>D</b>omain <b>L</b>ocal groups (organized by resource access: <code>DL-FinanceShare-RW</code>); the Domain Local group gets the <b>P</b>ermission on the resource. To give a new hire access, you only add them to one Global group.</p>` },
+      { h: 'Privileged built-in groups', html: `<ul><li><b>Domain Admins</b> \u2014 full control of the domain. Member of every PC\u2019s local Administrators group.</li><li><b>Enterprise Admins</b> \u2014 full control of the forest; exists only in the forest root domain. <b>Should be empty</b> day-to-day.</li><li><b>Schema Admins</b> \u2014 can modify the schema. <b>Should be empty</b> except during a change.</li><li><b>Administrators</b> (built-in) \u2014 local to DCs, includes Domain/Enterprise Admins.</li><li><b>Account Operators, Server Operators, Backup Operators, Print Operators</b> \u2014 legacy partial-admin groups; <b>Backup Operators</b> can copy NTDS.dit, so treat them as Tier 0. Keep them empty if you can.</li><li><b>Domain Users</b> \u2014 every user account. <b>Authenticated Users</b> \u2014 any identity that logged on (a special identity, not a group you manage).</li><li><b>Protected Users</b> \u2014 hardening group: no NTLM, no delegation, no cached credentials, short Kerberos TGT lifetimes. Use for admins.</li></ul>` },
+      { h: 'Account states and the user lifecycle', html: `<table><tr><th>State</th><th>What it means</th><th>Fix</th></tr><tr><td><b>Disabled</b></td><td>An admin turned it off</td><td><code>Enable-ADAccount</code></td></tr><tr><td><b>Locked out</b></td><td>Too many bad passwords (policy), clears automatically after the lockout duration</td><td><code>Unlock-ADAccount</code></td></tr><tr><td><b>Account expired</b></td><td>Expiration date passed (contractors)</td><td>Extend the date</td></tr><tr><td><b>Password expired</b></td><td>Older than max password age</td><td>User changes it / admin resets it</td></tr></table><p><b>Joiner \u2192 Mover \u2192 Leaver (JML):</b> <b>Joiner</b>: create the account in the right OU, add to role groups, set a temporary password with \u201cmust change at next logon.\u201d <b>Mover</b>: swap role groups (remove old, add new). <b>Leaver</b>: <b>disable first</b>, move to a Disabled OU, strip privileged groups, note the date in the description, and <b>delete only after the retention period</b> \u2014 deleting immediately destroys the SID and any chance to recover files or mailbox.</p>` }
+    ],
+    cards: [
+      ['OU', 'Folder in a domain used for GPO linking and delegation. An object lives in one OU.'], ['Container vs OU', 'CN=Users / CN=Computers are containers: no GPO links. OUs can have GPO links.'], ['Security vs Distribution group', 'Security = permissions + email. Distribution = email only.'],
+      ['Domain Local group', 'Grants access to resources in its own domain; members from anywhere in the forest.'], ['Global group', 'Members from its own domain only; usable in permissions anywhere. Organize users by role.'], ['Universal group', 'Members from any domain; stored in the Global Catalog.'], ['AGDLP', 'Accounts \u2192 Global \u2192 Domain Local \u2192 Permissions.'],
+      ['Domain Admins', 'Full domain control. Keep membership tiny.'], ['Enterprise / Schema Admins', 'Forest-wide power. Keep empty until needed.'], ['Protected Users', 'Hardening group: no NTLM, no delegation, short TGT lifetime.'], ['Backup Operators', 'Can read NTDS.dit via backup rights \u2014 Tier 0 equivalent.'],
+      ['Disabled vs locked out', 'Disabled = admin action. Locked = bad-password threshold; auto-clears.'], ['Leaver process', 'Disable \u2192 move to Disabled OU \u2192 strip groups \u2192 retain \u2192 delete later.'], ['Accidental deletion protection', 'OU flag that blocks deleting the OU until you clear it.']
+    ],
+    qs: [
+      Q('Which can you link a Group Policy Object to?', 'An OU', ['A security group', 'The CN=Users container', 'A single file share'], 'GPOs link to sites, domains and OUs. Groups can only filter them.', 0),
+      Q('You want to grant a team access to a share. You give the permission to:', 'A group', ['An OU', 'The domain', 'A GPO'], 'Permissions go to groups (ideally via AGDLP), never to an OU.', 0),
+      Q('What does AGDLP stand for?', 'Accounts, Global, Domain Local, Permissions', ['Admins, Groups, Domains, Local, Policies', 'Accounts, GPO, Domain, Logon, Password', 'Access, Global, Directory, LDAP, Policy'], 'Users in Global groups; Global groups in Domain Local groups; Domain Local gets the permission.', 0),
+      Q('A group can hold members from only its own domain but be used to grant access anywhere in the forest. It is:', 'Global', ['Domain Local', 'Universal', 'Distribution'], 'That is the definition of a Global group.', 0),
+      Q('Which group scope is stored in the Global Catalog and can contain members from any domain?', 'Universal', ['Global', 'Domain Local', 'Built-in Local'], 'Universal groups replicate forest-wide, so keep them stable.', 0),
+      Q('Which group type cannot be used to assign permissions?', 'Distribution', ['Security', 'Global security', 'Domain Local security'], 'Distribution groups are email-only.', 0),
+      Q('Which group should normally be EMPTY outside of a specific change window?', 'Schema Admins', ['Domain Users', 'Authenticated Users', 'Print Operators in use'], 'Schema Admins (and Enterprise Admins) hold forest-wide power and should be empty day-to-day.', 0),
+      Q('Why are CN=Users and CN=Computers a poor place for your accounts?', 'They are containers, so you cannot link Group Policy to them', ['They are read-only', 'They disable password policies', 'They hide accounts from search'], 'Create real OUs and use redirusr / redircmp to change the defaults.', 0),
+      Q('An employee leaves. The best FIRST action on their account is to:', 'Disable it (and move it to a Disabled OU)', ['Delete it immediately', 'Reset the password to blank', 'Add it to Domain Admins'], 'Disabling is reversible and preserves the SID; delete later per retention policy.', 0),
+      Q('Which account state clears automatically after the lockout duration?', 'Locked out', ['Disabled', 'Account expired', 'Deleted'], 'Locked out accounts unlock after the policy duration; disabled/expired accounts need an admin.', 0),
+      Q('Which group provides extra credential protection (no NTLM, no delegation, short TGTs) for privileged users?', 'Protected Users', ['Account Operators', 'Domain Computers', 'Server Operators'], 'Put admin accounts in Protected Users.', 0),
+      Q('Why is Backup Operators considered a highly privileged group?', 'Members can back up (and thus copy) files including NTDS.dit on domain controllers', ['It can edit Group Policy only', 'It owns the schema', 'It is the only group that can log on to DCs'], 'Backup rights bypass file permissions. Treat as Tier 0.', 0),
+      Q('A user\u2019s role changed from Sales to Marketing. This is the "Mover" step. What should you do with groups?', 'Remove the Sales role groups and add the Marketing role groups', ['Add Marketing groups and keep all Sales groups', 'Delete the account and recreate it', 'Make them a Domain Admin temporarily'], 'Access creep \u2014 leftover groups \u2014 is a classic audit finding.', 0),
+      T('Which PowerShell cmdlet creates a new OU? (Verb-Noun, e.g. New-AD...)', [/^\s*New-ADOrganizationalUnit\s*$/i], 'New-ADOrganizationalUnit', 0, 'New-AD...')
+    ],
+    labs: []
+  });
+
+  /* ===================== 3. PowerShell AD module: users ===================== */
+  S.push({
+    id: 'ad3', track: 'ad', tier: 'ad-c', title: 'PowerShell AD: find, create, change users', code: 'New-ADUser -Enabled $true', gateN: 12,
+    goal: 'Use the ActiveDirectory module to query users with filters, create and modify accounts, and onboard/offboard people from the command line.',
+    lesson: [
+      { h: 'The ActiveDirectory module', html: `<p>The <b>ActiveDirectory</b> PowerShell module (installed with <b>RSAT</b>: Remote Server Administration Tools, or on any DC) talks to <b>AD Web Services (TCP 9389)</b>. The GUI equivalents are <b>Active Directory Users and Computers</b> (<code>dsa.msc</code>) and the Active Directory Administrative Center. In real life: <code>Import-Module ActiveDirectory</code>. The lab console already has it loaded.</p><pre>Get-Command *AD*          # discover cmdlets\nGet-Help Get-ADUser -Examples</pre>` },
+      { h: 'Get-ADUser: Identity vs Filter', html: `<pre>Get-ADUser jsmith                                   # -Identity (sAMAccountName, DN, SID or GUID)\nGet-ADUser -Filter *                                # everyone\nGet-ADUser -Filter "Department -eq 'Sales'" -Properties Department\nGet-ADUser -Filter "Name -like '*Smith*' -and Enabled -eq $true"\nGet-ADUser -Filter * -SearchBase "OU=IT,DC=corp,DC=local"\nGet-ADUser jsmith -Properties *                     # every attribute</pre><ul><li><b>-Identity</b> returns one exact object (errors if missing). <b>-Filter</b> returns zero or more and never errors when nothing matches.</li><li>By default only ~10 properties come back. Ask for more with <b>-Properties</b> (<code>Department,Title,LastLogonDate,MemberOf</code>) \u2014 or <code>*</code> to see everything while exploring.</li><li>Filter operators are word-style: <code>-eq -ne -like -notlike -gt -lt -and -or -not</code>; <code>-like</code> uses <code>*</code> wildcards. Wrap the filter in <b>quotes</b>.</li><li><b>-SearchBase</b> limits the search to an OU (by its DN). <b>-LDAPFilter</b> accepts raw LDAP syntax like <code>(department=IT)</code>.</li></ul>` },
+      { h: 'Create, modify, move, disable', html: `<pre>New-ADUser -Name "Maria Garcia" -SamAccountName mgarcia -GivenName Maria -Surname Garcia \`\n  -Path "OU=Sales,DC=corp,DC=local" -Department Sales -Title "Account Executive" \`\n  -AccountPassword (ConvertTo-SecureString "Welcome!2026x" -AsPlainText -Force) -Enabled $true\n\nSet-ADUser mgarcia -Description "New hire" -ChangePasswordAtLogon $true\nDisable-ADAccount tlee\nMove-ADObject (Get-ADUser tlee) -TargetPath "OU=Disabled Users,DC=corp,DC=local"\nRemove-ADUser tlee -Confirm:$false</pre><ul><li>An <b>enabled</b> account must have a password that meets the domain policy, supplied as a <b>SecureString</b> \u2014 hence <code>ConvertTo-SecureString</code>. (An account created with no password is created <b>disabled</b>.)</li><li><b>-Path</b> is the DN of the OU where the object is created. <b>-TargetPath</b> is where <code>Move-ADObject</code> puts it. Moving changes the DN (but not the GUID or SID).</li><li>Add <b>-WhatIf</b> to rehearse and <b>-Confirm</b> to be prompted. <code>-Confirm:$false</code> suppresses the prompt \u2014 only use it when you are sure.</li></ul>` },
+      { h: 'Bulk work with the pipeline', html: `<pre># All enabled Sales users and their titles\nGet-ADUser -Filter "Department -eq 'Sales' -and Enabled -eq $true" -Properties Title |\n  Select-Object Name, Title | Sort-Object Name\n\n# Disable every account in the Contractors OU\nGet-ADUser -Filter * -SearchBase "OU=Contractors,DC=corp,DC=local" | Disable-ADAccount\n\n# Count users\n(Get-ADUser -Filter *).Count\n\n# Do something to each\nGet-ADUser -Filter "Department -eq 'IT'" | ForEach-Object { Set-ADUser $_ -Description "IT staff" }</pre><p><b>Safety habit:</b> always run the <b>Get-</b> half of a pipeline <i>by itself first</i> to see exactly which objects it selects \u2014 then add the destructive cmdlet. Real admins have disabled the whole company with one wrong filter.</p>` }
+    ],
+    cards: [
+      ['Import-Module ActiveDirectory', 'Loads the AD cmdlets (RSAT on a workstation; already on a DC).'], ['Get-ADUser -Identity', 'One exact user. Errors if not found.'], ['Get-ADUser -Filter', 'Zero or more users. Silent if no matches.'], ['-Properties *', 'Returns every attribute, not just the defaults.'], ['-SearchBase', 'Limits a query to an OU (give its DN).'], ['-like "*x*"', 'Wildcard match in a filter.'],
+      ['New-ADUser -AccountPassword', 'Needs a SecureString: (ConvertTo-SecureString "..." -AsPlainText -Force).'], ['-Path vs -TargetPath', '-Path = where New-AD* creates it. -TargetPath = where Move-ADObject sends it.'], ['Set-ADUser', 'Change attributes (Description, Department, ChangePasswordAtLogon...).'], ['Disable-ADAccount / Enable-ADAccount', 'Turn an account off / on.'],
+      ['Move-ADObject', 'Move an object to another OU (the DN changes, SID/GUID do not).'], ['Remove-ADUser', 'Delete a user. Add -Confirm:$false only when sure.'], ['-WhatIf', 'Shows what would happen without doing it.'], ['(Get-ADUser -Filter *).Count', 'Quick count of matching users.'], ['Pipe Get- to Set-/Disable-', 'Powerful and dangerous: run the Get- half first.']
+    ],
+    qs: [
+      Q('Which cmdlet returns a user whose Department is Sales?', 'Get-ADUser -Filter "Department -eq \'Sales\'" -Properties Department', ['Get-ADUser -Identity Sales', 'Find-ADUser Department=Sales', 'Get-ADUser -Where Sales'], '-Filter with -eq; request the property with -Properties.', 0),
+      Q('Get-ADUser jsmith returns "Cannot find an object with identity". What does that tell you?', 'No user with that identity exists (check the name)', ['The AD module is broken', 'The user is disabled', 'The filter has a typo'], '-Identity errors when nothing matches. A -Filter would just return nothing.', 0),
+      Q('How do you see every attribute of a user?', 'Get-ADUser jsmith -Properties *', ['Get-ADUser jsmith -All', 'Get-ADUser jsmith -Full', 'Show-ADUser jsmith'], '-Properties * adds all attributes to the default set.', 0),
+      Q('Which parameter restricts a search to one OU?', '-SearchBase', ['-Path', '-Container', '-Where'], '-SearchBase takes the OU\u2019s distinguished name.', 0),
+      Q('New-ADUser -Enabled $true fails with a password error. What is missing?', '-AccountPassword with a SecureString that meets policy', ['-Credential', '-Domain', '-Force'], 'An enabled account needs a compliant password: ConvertTo-SecureString "..." -AsPlainText -Force.', 0),
+      Q('What does -Path control in New-ADUser?', 'The OU (DN) the new user is created in', ['The home folder path', 'The profile path', 'The log file'], '-Path is the container DN, e.g. "OU=Sales,DC=corp,DC=local".', 0),
+      Q('Which cmdlet moves a user to another OU?', 'Move-ADObject -TargetPath', ['Set-ADUser -OU', 'Move-ADUser', 'Rename-ADObject'], 'Move-ADObject works for users, computers and groups.', 0),
+      Q('Moving a user to a different OU changes which of these?', 'The distinguished name', ['The SID', 'The objectGUID', 'The password'], 'The DN includes the OU path. SID and GUID stay the same.', 0),
+      Q('Safest way to preview a destructive command?', 'Add -WhatIf', ['Add -Force', 'Run it twice', 'Add -Quiet'], '-WhatIf prints what would happen without doing it.', 0),
+      Q('Before piping Get-ADUser into Disable-ADAccount, you should:', 'Run the Get-ADUser half alone to confirm exactly which users match', ['Add -Confirm:$false', 'Run as a different user', 'Restart ADWS'], 'Verify the selection first \u2014 a wrong filter can disable everyone.', 0),
+      Q('Which returns the number of users in the domain?', '(Get-ADUser -Filter *).Count', ['Count-ADUser', 'Get-ADUser -Count', 'Measure-AD'], 'Parentheses make the pipeline a value; .Count reads its size.', 0),
+      Q('Which operator does a wildcard match in an AD filter?', '-like', ['-eq', '-contains', '-match =='], '-like "*Smith*". -eq is exact equality.', 0),
+      Q('A leaver\u2019s account should first be:', 'Disabled and moved to a Disabled Users OU', ['Removed from the domain', 'Renamed to "deleted"', 'Given Domain Admin rights'], 'Disable-ADAccount + Move-ADObject, delete later.', 0),
+      T('Type the cmdlet that turns an account OFF (Verb-Noun).', [/^\s*Disable-ADAccount\s*$/i], 'Disable-ADAccount', 0, 'Disable-...')
+    ],
+    labs: ['ad-users']
+  });
+
+  lab('ad-users', {
+    title: 'Onboard and offboard',
+    sum: 'Create a new hire, add them to a group, and offboard a leaver',
+    brief: `It is Monday at <b>corp.local</b>. Two requests:<br><b>1.</b> Create <b>Maria Garcia</b> (<code>mgarcia</code>) in <code>OU=Sales</code>, <b>enabled</b>, Department <b>Sales</b>, Title <b>Account Executive</b>.<br><b>2.</b> Add <code>mgarcia</code> to the <b>SalesTeam</b> group.<br><b>3.</b> Offboard <code>tlee</code> (left today): <b>disable</b> the account, <b>move</b> it to <code>OU=Disabled Users</code>, and set the Description to <b>Left 2026-10-27</b>.`,
+    domain: { ous: ['Sales', 'IT', 'Disabled Users'], groups: [{ name: 'SalesTeam', scope: 'Global', path: 'OU=Sales,' + B }],
+      users: [{ name: 'Jane Smith', sam: 'jsmith', given: 'Jane', sur: 'Smith', path: 'OU=Sales,' + B, dept: 'Sales', title: 'Sales Manager', member: ['Domain Users', 'SalesTeam'] }, { name: 'Tom Lee', sam: 'tlee', given: 'Tom', sur: 'Lee', path: 'OU=IT,' + B, dept: 'IT', title: 'Support Technician' }] },
+    tasks: [
+      { t: 'mgarcia exists in OU=Sales and is enabled', c: function (e) { var u = e.user('mgarcia'); return u && u.enabled && /^CN=Maria Garcia,OU=Sales,/i.test(u.dn); } },
+      { t: 'mgarcia has Department "Sales" and Title "Account Executive"', c: function (e) { var u = e.user('mgarcia'); return u && u.dept === 'Sales' && u.title === 'Account Executive'; } },
+      { t: 'mgarcia is a member of SalesTeam', c: function (e) { return e.isMember('SalesTeam', 'mgarcia'); } },
+      { t: 'tlee is disabled', c: function (e) { var u = e.user('tlee'); return u && !u.enabled; } },
+      { t: 'tlee is in OU=Disabled Users', c: function (e) { var u = e.user('tlee'); return u && /OU=Disabled Users,/i.test(u.dn); } },
+      { t: 'tlee Description is "Left 2026-10-27"', c: function (e) { var u = e.user('tlee'); return u && u.desc === 'Left 2026-10-27'; } }
+    ],
+    hints: ['Enabled accounts need a password: <code>-AccountPassword (ConvertTo-SecureString "Welcome!2026x" -AsPlainText -Force)</code>.', 'Department and Title are parameters of New-ADUser: <code>-Department Sales -Title "Account Executive"</code>.', '<code>Add-ADGroupMember -Identity SalesTeam -Members mgarcia</code>', 'Offboarding: <code>Disable-ADAccount tlee</code>, then <code>Move-ADObject (Get-ADUser tlee) -TargetPath "OU=Disabled Users,DC=corp,DC=local"</code>, then <code>Set-ADUser tlee -Description "Left 2026-10-27"</code>.'],
+    solution: ['New-ADUser -Name "Maria Garcia" -SamAccountName mgarcia -GivenName Maria -Surname Garcia -Path "OU=Sales,DC=corp,DC=local" -Department Sales -Title "Account Executive" -AccountPassword (ConvertTo-SecureString "Welcome!2026x" -AsPlainText -Force) -Enabled $true', 'Add-ADGroupMember -Identity SalesTeam -Members mgarcia', 'Disable-ADAccount tlee', 'Set-ADUser tlee -Description "Left 2026-10-27"', 'Move-ADObject (Get-ADUser tlee) -TargetPath "OU=Disabled Users,DC=corp,DC=local"', 'Get-ADUser tlee | Select-Object Name,Enabled,DistinguishedName'],
+    debrief: 'That is the joiner/leaver loop every IT team runs weekly. The leaver was disabled and parked, not deleted \u2014 recoverable and auditable until the retention period ends.'
+  });
+
+  /* ===================== 4. Helpdesk ===================== */
+  S.push({
+    id: 'ad4', track: 'ad', tier: 'ad-c', title: 'Helpdesk: lockouts, passwords & common tickets', code: 'Unlock-ADAccount', gateN: 12,
+    goal: 'Diagnose and fix the tickets you will see every day: locked accounts, forgotten passwords, disabled accounts, trust-relationship errors, clock and DNS problems.',
+    lesson: [
+      { h: 'Account lockout, step by step', html: `<p>A lockout policy has three numbers: the <b>lockout threshold</b> (bad attempts before locking, e.g. 5), the <b>observation window</b> (how long failed attempts are counted) and the <b>lockout duration</b> (how long it stays locked; 0 = until an admin unlocks). A domain with a threshold of <b>0 never locks</b> accounts \u2014 and is wide open to password guessing.</p><pre>Search-ADAccount -LockedOut                          # who is locked right now?\nGet-ADUser jsmith -Properties LockedOut, LastLogonDate\nUnlock-ADAccount -Identity jsmith</pre><p><b>Unlocking is not the fix \u2014 find the source.</b> If it re-locks in minutes, something is still sending the old password: a phone mail app, a mapped drive, a Windows service or scheduled task, a saved RDP credential, another PC with a stale session. On the PDC emulator, <b>Event ID 4740</b> names the <b>Caller Computer</b> that caused the lockout.</p>` },
+      { h: 'Resetting a password the right way', html: `<ol><li><b>Verify identity first</b> (callback number, manager approval, security questions). Social engineering of helpdesks is a top attack path.</li><li>Reset to a temporary password and <b>force a change at next logon</b>:</li></ol><pre>Set-ADAccountPassword -Identity bwong -Reset -NewPassword (ConvertTo-SecureString "Temp#Pass2026!" -AsPlainText -Force)\nSet-ADUser bwong -ChangePasswordAtLogon $true</pre><ul><li><code>-Reset</code> = an admin sets the password without knowing the old one (needs the \u201cReset password\u201d right). Without <code>-Reset</code> the cmdlet expects <code>-OldPassword</code> (the user changing their own).</li><li>The new password must meet the domain policy (length, complexity, history) or the reset fails.</li><li>Never send a password by email/chat in clear text. Prefer self-service password reset (SSPR) with MFA.</li><li>Reset \u2260 unlock: a locked account stays locked after a reset until you also unlock it.</li></ul>` },
+      { h: 'Classic tickets and what is usually wrong', html: `<table><tr><th>Symptom</th><th>Likely cause \u2192 fix</th></tr><tr><td>"The trust relationship between this workstation and the primary domain failed"</td><td>Computer account password out of sync (old image/snapshot restore). <code>Test-ComputerSecureChannel -Repair -Credential</code> or rejoin the domain.</td></tr><tr><td>"We can\u2019t sign you in" / cannot contact the domain</td><td>No network, wrong <b>DNS</b>, DC down. Check <code>ipconfig /all</code>, <code>nslookup corp.local</code>.</td></tr><tr><td>Kerberos / odd auth errors on one PC</td><td><b>Clock skew</b> over 5 min \u2192 <code>w32tm /resync</code></td></tr><tr><td>Can log on but a drive/setting is missing</td><td>GPO not applied: <code>gpupdate /force</code>, <code>gpresult /r</code></td></tr><tr><td>"Your account has been disabled"</td><td>Disabled (leaver? mistake?) \u2192 confirm with manager, then <code>Enable-ADAccount</code></td></tr><tr><td>"This user account has expired"</td><td>Account expiration date passed (contractor) \u2192 extend the date</td></tr><tr><td>"You must change your password"</td><td>Password expired or flagged \u2192 user changes it (Ctrl+Alt+Del)</td></tr><tr><td>"The user cannot log on to this workstation"</td><td>"Log on to" workstation restriction on the account</td></tr></table>` },
+      { h: 'Tools of the trade', html: `<pre>whoami /groups              # my groups (token) on this PC\nnet user jsmith /domain     # quick account status\ngpresult /r                 # which GPOs applied?\ngpupdate /force             # refresh Group Policy now\nklist                       # my Kerberos tickets\nklist purge                 # throw them away (picks up new group membership)\nnltest /dsgetdc:corp.local  # which DC am I using?</pre><p><b>Group changes need a new token:</b> adding someone to a group does not help their current session. They must <b>log off and on</b> (or <code>klist purge</code>) to get a fresh ticket with the new group. Document each ticket: what, when, what you changed, who verified \u2014 that is also your audit trail.</p>` }
+    ],
+    cards: [
+      ['Lockout threshold', 'Failed attempts before an account locks. 0 = never locks (insecure).'], ['Observation window', 'How long failed attempts are counted before the counter resets.'], ['Lockout duration', 'How long a lock lasts; 0 means until an admin unlocks it.'], ['Event 4740', 'Account locked out \u2014 shows the Caller Computer that caused it (check on the PDC emulator).'], ['Search-ADAccount -LockedOut', 'Lists currently locked accounts.'], ['Unlock-ADAccount', 'Clears a lockout. Does not change the password.'],
+      ['Set-ADAccountPassword -Reset', 'Admin password reset without the old password.'], ['-ChangePasswordAtLogon $true', 'Forces the user to pick a new password at next sign-in.'], ['Verify before reset', 'Confirm identity first \u2014 helpdesk social engineering is a top attack.'], ['Trust relationship failed', 'Machine account password mismatch. Test-ComputerSecureChannel -Repair or rejoin.'], ['Kerberos clock skew', 'More than 5 minutes breaks authentication. w32tm /resync.'],
+      ['gpupdate /force', 'Re-applies Group Policy now.'], ['gpresult /r', 'Shows which GPOs applied to the user/computer.'], ['klist purge', 'Clears Kerberos tickets to pick up new group membership.'], ['New group membership', 'Takes effect at next logon (new token).']
+    ],
+    qs: [
+      Q('A user is locked out. Which cmdlet unlocks the account?', 'Unlock-ADAccount', ['Enable-ADAccount', 'Reset-ADAccount', 'Restore-ADObject'], 'Unlock clears the lockout; Enable is for disabled accounts.', 0),
+      Q('Which cmdlet lists all currently locked-out accounts?', 'Search-ADAccount -LockedOut', ['Get-ADUser -Locked', 'Find-Lockouts', 'Get-ADLock'], 'Search-ADAccount has -LockedOut, -AccountDisabled and -AccountInactive switches.', 0),
+      Q('An account keeps locking again minutes after you unlock it. What is the most likely cause?', 'A device or service is still using the old password', ['The unlock command is cached', 'The account is expired', 'The OU is protected'], 'Find the source (Event 4740 Caller Computer): phone, mapped drive, service, scheduled task.', 0),
+      Q('Which Event ID records an account lockout?', '4740', ['4624', '4720', '4672'], '4740 = account locked out; 4625 = failed logon; 4624 = success.', 0),
+      Q('Where do you look for the lockout event for a domain account?', 'On the PDC emulator domain controller', ['On the user\u2019s laptop only', 'On the print server', 'In the SYSVOL share'], 'The PDC emulator receives lockout notifications, so it is the best starting point.', 0),
+      Q('Which switch lets an admin set a new password without knowing the old one?', '-Reset', ['-Force', '-Override', '-Replace'], 'Set-ADAccountPassword -Reset -NewPassword ...', 0),
+      Q('After resetting a password, how do you make the user choose their own at next sign-in?', 'Set-ADUser -ChangePasswordAtLogon $true', ['Add -Temporary to the reset', 'Disable then enable the account', 'Remove from Domain Users'], 'The flag forces a change at next logon.', 0),
+      Q('A caller asks you to reset their password. What do you do FIRST?', 'Verify their identity', ['Reset it and email the password', 'Add them to Domain Admins', 'Disable the account'], 'Helpdesk impersonation is a common social-engineering path.', 0),
+      Q('"The trust relationship between this workstation and the primary domain failed." Best fix?', 'Repair the secure channel or rejoin the PC to the domain', ['Reset the user\u2019s password', 'Delete the user account', 'Unlock the user'], 'The computer account\u2019s password is out of sync with AD.', 0),
+      Q('Authentication fails only on one PC and its clock is 12 minutes off. Why?', 'Kerberos allows only 5 minutes of clock skew', ['DNS caches are corrupt', 'Group Policy is disabled', 'LDAP uses UDP'], 'Resync time (w32tm /resync) with the domain hierarchy.', 0),
+      Q('You added a user to a group but the share still denies them. What fixes it?', 'The user logs off and on (or purges tickets) to get a new token', ['Reboot the DC', 'Re-link the GPO', 'Delete the share'], 'Group membership is baked into the logon token/ticket.', 0),
+      Q('Which command shows which Group Policy Objects applied?', 'gpresult /r', ['gpfix /scan', 'gplist', 'net policy'], 'gpresult /r (summary) or /h report.html (full report).', 0),
+      Q('A reset password still cannot log in because the account is locked. You also need to:', 'Unlock the account', ['Move the user to another OU', 'Change the UPN', 'Rejoin the domain'], 'Reset and unlock are separate operations.', 0),
+      T('Type the cmdlet that clears an account lockout (Verb-Noun).', [/^\s*Unlock-ADAccount\s*$/i], 'Unlock-ADAccount', 0, 'Unlock-...')
+    ],
+    labs: ['ad-helpdesk']
+  });
+
+  lab('ad-helpdesk', {
+    title: 'Work the ticket queue',
+    sum: 'Locked accounts, a password reset, and a re-enable',
+    brief: `Four tickets are waiting:<br><b>#1</b> Find <b>every locked-out account</b> in the domain and unlock them (there are two).<br><b>#2</b> <code>bwong</code> forgot their password: <b>reset</b> it to a compliant temporary password and force a <b>change at next logon</b>.<br><b>#3</b> <code>kpatel</code> returned from leave and cannot sign in: <b>re-enable</b> the account.<br>Use <code>Search-ADAccount</code> to discover the locked accounts \u2014 do not guess.`,
+    domain: { ous: ['Staff'], users: [
+      { name: 'Jane Smith', sam: 'jsmith', path: 'OU=Staff,' + B, locked: true }, { name: 'Dan Chen', sam: 'dchen', path: 'OU=Staff,' + B, locked: true },
+      { name: 'Betty Wong', sam: 'bwong', path: 'OU=Staff,' + B, pw: 'OldPassw0rd!' }, { name: 'Karan Patel', sam: 'kpatel', path: 'OU=Staff,' + B, enabled: false },
+      { name: 'Lena Ortiz', sam: 'lortiz', path: 'OU=Staff,' + B }] },
+    tasks: [
+      { t: 'You used Search-ADAccount -LockedOut to find the locked accounts', c: function (e) { return e.ran(/Search-ADAccount\s+.*-LockedOut/i); } },
+      { t: 'jsmith and dchen are unlocked', c: function (e) { return !e.user('jsmith').locked && !e.user('dchen').locked; } },
+      { t: 'bwong\u2019s password was reset (changed from the old one)', c: function (e) { var u = e.user('bwong'); return u && u.pw !== 'OldPassw0rd!' && u.pwResetBy === 'admin'; } },
+      { t: 'bwong must change password at next logon', c: function (e) { return e.user('bwong').mustChange === true; } },
+      { t: 'kpatel is enabled', c: function (e) { return e.user('kpatel').enabled === true; } },
+      { t: 'No other accounts were disturbed (lortiz still enabled)', c: function (e) { return e.user('lortiz').enabled === true; } }
+    ],
+    hints: ['<code>Search-ADAccount -LockedOut</code> lists them. Then <code>Unlock-ADAccount -Identity jsmith</code> and again for dchen \u2014 or pipe: <code>Search-ADAccount -LockedOut | Unlock-ADAccount</code>.', '<code>Set-ADAccountPassword -Identity bwong -Reset -NewPassword (ConvertTo-SecureString "Temp#Pass2026!" -AsPlainText -Force)</code>', '<code>Set-ADUser bwong -ChangePasswordAtLogon $true</code>', '<code>Enable-ADAccount -Identity kpatel</code>'],
+    solution: ['Search-ADAccount -LockedOut', 'Search-ADAccount -LockedOut | Unlock-ADAccount', 'Set-ADAccountPassword -Identity bwong -Reset -NewPassword (ConvertTo-SecureString "Temp#Pass2026!" -AsPlainText -Force)', 'Set-ADUser bwong -ChangePasswordAtLogon $true', 'Enable-ADAccount -Identity kpatel', 'Search-ADAccount -LockedOut'],
+    debrief: 'Discover \u2192 fix \u2192 verify. In production you would also ask why the two accounts locked (Event 4740) so the problem does not repeat, and you would verify each caller\u2019s identity before touching their account.'
+  });
+
+  /* ===================== 5. Groups, permissions, delegation ===================== */
+  S.push({
+    id: 'ad5', track: 'ad', tier: 'ad-c', title: 'Groups, permissions & delegation', code: 'Add-ADGroupMember', gateN: 12,
+    goal: 'Apply AGDLP with PowerShell, understand how share and NTFS permissions combine, and delegate tasks without handing out Domain Admin.',
+    lesson: [
+      { h: 'AGDLP with PowerShell', html: `<pre>New-ADGroup -Name "G-Finance" -GroupScope Global -Path "OU=Groups,DC=corp,DC=local"\nNew-ADGroup -Name "DL-FinanceShare-RW" -GroupScope DomainLocal -Path "OU=Groups,DC=corp,DC=local"\n\nAdd-ADGroupMember -Identity "G-Finance" -Members jdoe, rkim\nAdd-ADGroupMember -Identity "DL-FinanceShare-RW" -Members "G-Finance"   # Global into Domain Local\n\nGet-ADGroupMember "G-Finance"\nGet-ADGroupMember "DL-FinanceShare-RW" -Recursive           # expands nested groups to users\nGet-ADPrincipalGroupMembership jdoe                          # every group jdoe is in</pre><ul><li><b>-GroupScope</b> is required: <code>DomainLocal</code>, <code>Global</code> or <code>Universal</code>.</li><li>Users do <b>not</b> pipe straight into <code>Add-ADGroupMember -Members</code>. Use <code>-Members (Get-ADUser ...)</code> or loop with <code>ForEach-Object</code>.</li><li>Naming conventions make groups self-documenting: <code>G-</code> role groups, <code>DL-</code> resource/permission groups, <code>U-</code> universal.</li></ul>` },
+      { h: 'Share + NTFS permissions', html: `<p>Accessing a file over the network passes <b>two</b> permission checks: the <b>share</b> permission and the <b>NTFS</b> permission. The result is the <b>most restrictive</b> of the two. Within NTFS, permissions from all your groups <b>add up</b>, but an explicit <b>Deny beats Allow</b>.</p><ul><li><b>Inheritance:</b> folders pass permissions to children unless blocked.</li><li><b>Common practice:</b> set the share to \u201cAuthenticated Users: Change/Full\u201d and do all real control with NTFS ACLs on groups.</li><li>Standard NTFS levels: Read, Read &amp; Execute, Modify, Full Control. <b>Never give Full Control or Everyone-write widely.</b></li><li>Use <b>icacls</b> or the Security tab; check <b>Effective Access</b> to see what a specific user would really get.</li></ul>` },
+      { h: 'Delegating without Domain Admin', html: `<p>The <b>Delegation of Control Wizard</b> (right-click an OU in ADUC) writes ACL entries so a group can do specific jobs on that OU \u2014 typically <b>reset passwords</b>, <b>unlock accounts</b>, <b>create/delete users</b>, <b>manage group membership</b>. The helpdesk gets only what it needs, only where it needs it.</p><ul><li>Delegate to a <b>group</b> (<code>G-Helpdesk</code>), never to individuals.</li><li>Delegation at the OU level is why OU design matters.</li><li>Members of protected groups (Domain Admins etc.) get their ACLs reset hourly by <b>AdminSDHolder/SDProp</b>, so helpdesk delegation will <i>not</i> work on admin accounts \u2014 by design.</li></ul>` },
+      { h: 'Pitfalls', html: `<ul><li><b>Token bloat:</b> too many (nested) groups can overflow the Kerberos token (about 1,000+ groups) and break logon.</li><li><b>Circular nesting</b> and deep nesting make audits painful. Keep it to AGDLP \u2014 two levels.</li><li><b>Stale membership:</b> review quarterly. Access creep from movers is the most common audit finding.</li><li><b>Direct user ACLs:</b> permissions assigned to individuals instead of groups become unmanageable.</li><li>Group changes apply at the user\u2019s <b>next logon</b>.</li></ul>` }
+    ],
+    cards: [
+      ['New-ADGroup -GroupScope', 'Required: DomainLocal, Global or Universal.'], ['Add-ADGroupMember -Members', 'Adds users, groups or computers. Users cannot be piped straight into -Members.'], ['Remove-ADGroupMember', 'Removes members from a group.'], ['Get-ADGroupMember -Recursive', 'Expands nested groups to the actual users.'], ['Get-ADPrincipalGroupMembership', 'Every group a user belongs to.'],
+      ['Share vs NTFS', 'Effective network access = most restrictive of the two.'], ['NTFS permissions add up', 'But an explicit Deny wins over Allow.'], ['Inheritance', 'Child folders inherit ACLs unless inheritance is blocked.'], ['Effective Access tab', 'Shows what a given user would really get.'], ['Delegation of Control wizard', 'Gives a group specific rights (e.g. reset passwords) on an OU.'],
+      ['Delegate to groups', 'Never to individuals.'], ['AdminSDHolder / SDProp', 'Resets ACLs on protected admin accounts every 60 min, defeating helpdesk delegation on them.'], ['Token bloat', 'Too many groups overflow the Kerberos token and break logon.'], ['Naming', 'G- (global role), DL- (domain-local resource), U- (universal).']
+    ],
+    qs: [
+      Q('Which parameter is REQUIRED when creating a group with New-ADGroup?', '-GroupScope', ['-Members', '-Domain', '-Owner'], 'You must choose DomainLocal, Global or Universal.', 0),
+      Q('In AGDLP, who gets the permission on the folder?', 'The Domain Local group', ['The user account', 'The Global group', 'The OU'], 'Permissions go on the Domain Local group, which contains Global groups, which contain accounts.', 0),
+      Q('Which command lists all the groups a user is in, including nested?', 'Get-ADPrincipalGroupMembership', ['Get-ADGroupMember', 'Get-ADUser -Groups', 'Find-ADGroup'], 'Get-ADPrincipalGroupMembership jdoe', 0),
+      Q('Which switch expands nested groups into individual users?', '-Recursive', ['-Expand', '-Nested', '-Deep'], 'Get-ADGroupMember "DL-X" -Recursive', 0),
+      Q('A user has Read via share but Modify via NTFS. Over the network they get:', 'Read', ['Modify', 'Full Control', 'Nothing'], 'The most restrictive of share and NTFS applies.', 0),
+      Q('A user is in a group with Allow Write and another group with explicit Deny Write. Result?', 'Denied \u2014 explicit Deny overrides Allow', ['Allowed', 'Allowed only on weekdays', 'Depends on alphabetical order'], 'Deny wins in NTFS.', 0),
+      Q('You added a user to a group and they still cannot access the share. Why?', 'Their current logon token does not yet include the new group', ['Group changes need Domain Admin approval', 'Groups only work on Mondays', 'DNS cache'], 'They must sign out and in (or purge Kerberos tickets).', 0),
+      Q('Delegation of Control is best given to:', 'A group such as G-Helpdesk, scoped to an OU', ['One named person', 'The Everyone group', 'The domain root'], 'Delegate least privilege to groups at the OU level.', 0),
+      Q('Why can\u2019t helpdesk (with delegated password reset) reset a Domain Admin\u2019s password?', 'AdminSDHolder/SDProp resets ACLs on protected accounts', ['Domain Admins have no passwords', 'The wizard excludes users', 'Kerberos blocks it'], 'Protected accounts keep a locked-down ACL on purpose.', 0),
+      Q('Which problem comes from users belonging to thousands of nested groups?', 'Kerberos token bloat can break logon', ['The domain stops replicating', 'DNS fails', 'Passwords cannot be changed'], 'MaxTokenSize limits how many SIDs fit in the ticket.', 0),
+      Q('Why prefer assigning permissions to groups instead of individual users?', 'Group membership is easier to audit and change as people join and leave', ['Windows forbids user ACLs', 'Groups encrypt files', 'It is faster to log in'], 'Manage membership, not ACL sprawl.', 0),
+      Q('"Add-ADGroupMember" fails when you pipe Get-ADUser results straight in. The fix is to:', 'Use -Members (Get-ADUser ...) or ForEach-Object', ['Add -Force', 'Use Set-ADGroup instead', 'Run PowerShell as SYSTEM'], 'Users bind to -Members as an argument, not from the pipeline.', 0),
+      Q('Which tab shows what permissions a specific user would actually receive on a folder?', 'Effective Access', ['Sharing', 'Previous Versions', 'Customize'], 'Security \u2192 Advanced \u2192 Effective Access.', 0),
+      T('Type the cmdlet that adds users to an AD group (Verb-Noun).', [/^\s*Add-ADGroupMember\s*$/i], 'Add-ADGroupMember', 0, 'Add-AD...')
+    ],
+    labs: ['ad-groups']
+  });
+
+  lab('ad-groups', {
+    title: 'Build AGDLP for the Finance share',
+    sum: 'Global + Domain Local groups and nested membership',
+    brief: `Finance needs read/write access to the <code>\\\\FS01\\Finance</code> share. Set it up the AGDLP way:<br><b>1.</b> Create a <b>Global</b> security group <code>G-Finance</code> in <code>OU=Groups</code>.<br><b>2.</b> Put <b>every user in OU=Finance</b> into <code>G-Finance</code> (there are three \u2014 do not add anyone from other OUs).<br><b>3.</b> Create a <b>Domain Local</b> security group <code>DL-FinanceShare-RW</code> in <code>OU=Groups</code>.<br><b>4.</b> Make <code>G-Finance</code> a <b>member of</b> <code>DL-FinanceShare-RW</code>.<br>(The folder ACL would then be given to the Domain Local group.)`,
+    domain: { ous: ['Finance', 'IT', 'Groups'], users: [
+      { name: 'Jo Doe', sam: 'jdoe', path: 'OU=Finance,' + B }, { name: 'Rae Kim', sam: 'rkim', path: 'OU=Finance,' + B }, { name: 'Sam Ito', sam: 'sito', path: 'OU=Finance,' + B },
+      { name: 'Tom Lee', sam: 'tlee', path: 'OU=IT,' + B }] },
+    tasks: [
+      { t: 'G-Finance exists, scope Global, security, in OU=Groups', c: function (e) { var g = e.group('G-Finance'); return g && g.scope === 'Global' && g.category === 'Security' && /OU=Groups,/i.test(g.dn); } },
+      { t: 'jdoe, rkim and sito are members of G-Finance', c: function (e) { return ['jdoe', 'rkim', 'sito'].every(function (s) { return e.isMember('G-Finance', s); }); } },
+      { t: 'No one outside Finance is in G-Finance (tlee is not)', c: function (e) { var g = e.group('G-Finance'); return g && g.members.indexOf('tlee') < 0 && g.members.length === 3; } },
+      { t: 'DL-FinanceShare-RW exists, scope DomainLocal, security, in OU=Groups', c: function (e) { var g = e.group('DL-FinanceShare-RW'); return g && g.scope === 'DomainLocal' && g.category === 'Security' && /OU=Groups,/i.test(g.dn); } },
+      { t: 'G-Finance is a member of DL-FinanceShare-RW (and no individual users are)', c: function (e) { var g = e.group('DL-FinanceShare-RW'); return g && g.members.length === 1 && g.members[0] === 'G-Finance'; } }
+    ],
+    hints: ['<code>New-ADGroup -Name "G-Finance" -GroupScope Global -Path "OU=Groups,DC=corp,DC=local"</code>', 'Select the right users first: <code>Get-ADUser -Filter * -SearchBase "OU=Finance,DC=corp,DC=local"</code>. Then <code>Add-ADGroupMember -Identity G-Finance -Members (Get-ADUser -Filter * -SearchBase "OU=Finance,DC=corp,DC=local")</code>.', 'The Domain Local group uses <code>-GroupScope DomainLocal</code>.', '<code>Add-ADGroupMember -Identity DL-FinanceShare-RW -Members G-Finance</code>'],
+    solution: ['New-ADGroup -Name "G-Finance" -GroupScope Global -Path "OU=Groups,DC=corp,DC=local"', 'Add-ADGroupMember -Identity G-Finance -Members (Get-ADUser -Filter * -SearchBase "OU=Finance,DC=corp,DC=local")', 'New-ADGroup -Name "DL-FinanceShare-RW" -GroupScope DomainLocal -Path "OU=Groups,DC=corp,DC=local"', 'Add-ADGroupMember -Identity "DL-FinanceShare-RW" -Members "G-Finance"', 'Get-ADGroupMember DL-FinanceShare-RW -Recursive'],
+    debrief: 'Now a new Finance hire needs exactly one change \u2014 add them to G-Finance \u2014 and every folder that DL-FinanceShare-RW protects follows. That is why AGDLP scales.'
+  });
+
+  /* ===================== 6. Group Policy ===================== */
+  S.push({
+    id: 'ad6', track: 'ad', tier: 'ad-p', title: 'Group Policy', code: 'New-GPLink', gateN: 12,
+    goal: 'Understand how GPOs are built, linked, ordered and filtered; troubleshoot with gpresult; and manage links with the GroupPolicy cmdlets.',
+    lesson: [
+      { h: 'What a GPO is', html: `<p>A <b>Group Policy Object</b> is a bundle of settings pushed to computers and users. It has two halves: the <b>Group Policy Container (GPC)</b> in AD (metadata) and the <b>Group Policy Template (GPT)</b> in <b>SYSVOL</b> (the actual files). Each GPO has a <b>Computer Configuration</b> (applies at boot to the machine, regardless of who logs on) and a <b>User Configuration</b> (applies at sign-in to that user, wherever they log on).</p><ul><li>Two default GPOs: <b>Default Domain Policy</b> (linked to the domain; holds the domain-wide <b>password, lockout and Kerberos</b> policy) and <b>Default Domain Controllers Policy</b>. Best practice: change only the account policy in the first one; create <b>new GPOs</b> for everything else.</li><li>Typical settings: password/lockout rules, mapped drives and printers (Group Policy Preferences), screen-lock timeout, Windows Update/WSUS, firewall rules, AppLocker, block USB storage, audit policy, PowerShell logging, LAPS.</li></ul>` },
+      { h: 'Order of processing: LSDOU', html: `<p>Policies apply in this order and <b>the last one applied wins</b> on a conflict:</p><p style="font-size:1.05em"><b>L</b>ocal \u2192 <b>S</b>ite \u2192 <b>D</b>omain \u2192 <b>O</b>U (parent OU first, then child OUs)</p><ul><li><b>Inheritance:</b> child OUs inherit the GPOs linked above them.</li><li><b>Link order:</b> several GPOs on one container \u2014 the one with the <b>lowest link-order number</b> has the <b>highest precedence</b> (it is applied last).</li><li><b>Block Inheritance</b> (set on an OU) stops parent GPOs from flowing down.</li><li><b>Enforced</b> (set on a GPO link; formerly \u201cNo Override\u201d) forces the GPO to apply <b>even through Block Inheritance</b> and wins conflicts against lower-level GPOs. <b>Enforced beats Block.</b></li><li><b>Security filtering:</b> a GPO applies only to principals with <b>Read + Apply group policy</b> on it (default: Authenticated Users). <b>WMI filters</b> add conditions (e.g. only Windows 11). <b>Loopback processing</b> applies the computer\u2019s user settings no matter who signs in (kiosks, labs).</li></ul>` },
+      { h: 'Refresh and troubleshooting', html: `<ul><li>Workstations/servers refresh every <b>90 minutes + a random 0\u201330 minute offset</b>; domain controllers every <b>5 minutes</b>. Also at boot (computer) and sign-in (user).</li><li><code>gpupdate /force</code> re-applies now. Some settings need a <b>reboot or logoff</b>.</li><li><code>gpresult /r</code> \u2014 which GPOs applied or were filtered out, and why. <code>gpresult /h report.html</code> \u2014 full HTML report. Run it <b>on the affected PC, as the affected user</b>.</li><li><b>Group Policy Modeling</b> predicts, <b>Results</b> reports what really happened.</li><li>Check: is the object in the right OU? Is the link enabled? Security filtering/WMI? Replication of SYSVOL? DNS? Time?</li><li><b>Test first:</b> link new GPOs to a test OU before production. A bad GPO linked to the domain can lock out every user.</li><li><b>Never store passwords in Group Policy Preferences</b> (the old \u201ccpassword\u201d is trivially decryptable \u2014 MS14-025).</li></ul>` },
+      { h: 'GroupPolicy cmdlets', html: `<pre>Get-GPO -All\nNew-GPO -Name "Workstation Lockdown"\nNew-GPLink -Name "Workstation Lockdown" -Target "OU=Workstations,DC=corp,DC=local"\nSet-GPLink -Name "Security Baseline" -Target "DC=corp,DC=local" -Enforced Yes\nSet-GPInheritance -Target "OU=Servers,DC=corp,DC=local" -IsBlocked Yes\nGet-GPInheritance -Target "OU=Servers,DC=corp,DC=local"   # what really reaches this OU?\nBackup-GPO -Name "Workstation Lockdown" -Path C:\\GPOBackup</pre><p><code>Get-GPInheritance</code> is your \u201cwhat applies here?\u201d answer. <b>-Target</b> is always the DN of the site, domain or OU.</p><p><b>Fine-Grained Password Policies</b> (Password Settings Objects, created in the Active Directory Administrative Center or <code>New-ADFineGrainedPasswordPolicy</code>) let different groups \u2014 e.g. admins \u2014 have stricter password rules than the domain default; they attach to users/groups, not OUs.</p>` }
+    ],
+    cards: [
+      ['GPO', 'Bundle of settings: GPC (in AD) + GPT (in SYSVOL).'], ['Computer vs User configuration', 'Computer = applies at boot to the machine. User = applies at sign-in to the person.'], ['LSDOU', 'Local, Site, Domain, OU \u2014 last applied wins.'], ['Default Domain Policy', 'Linked at the domain; holds domain password/lockout/Kerberos policy.'], ['Link order', 'Lowest number = highest precedence on a container.'],
+      ['Block Inheritance', 'Set on an OU; stops parent GPOs flowing in.'], ['Enforced', 'Set on a GPO link; applies through Block Inheritance and wins conflicts.'], ['Enforced beats Block', 'An enforced GPO still applies on an OU that blocks inheritance.'], ['Security filtering', 'GPO applies only to principals with Read + Apply (default Authenticated Users).'], ['WMI filter', 'Extra condition (e.g. OS version) that decides if a GPO applies.'], ['Loopback processing', 'Applies the computer\u2019s user settings regardless of who signs in.'],
+      ['Refresh interval', '90 min + 0-30 min random on clients; 5 min on DCs.'], ['gpupdate /force', 'Re-apply policy now.'], ['gpresult /r  |  /h file.html', 'Show applied GPOs (summary / HTML report).'], ['Get-GPInheritance -Target', 'Shows which GPOs actually reach an OU.'], ['Fine-Grained Password Policy', 'Stricter password rules for chosen users/groups (PSO).'], ['GPP cpassword', 'Never store passwords in GPP \u2014 decryptable (MS14-025).']
+    ],
+    qs: [
+      Q('In what order are Group Policies applied?', 'Local, Site, Domain, OU', ['OU, Domain, Site, Local', 'Domain, Local, OU, Site', 'Site, Local, OU, Domain'], 'LSDOU. The last policy applied wins on conflict.', 0),
+      Q('Two GPOs on the same OU conflict. Which wins?', 'The one with the lowest link order number', ['The one with the highest link order number', 'The oldest one', 'The larger one'], 'Link order 1 has the highest precedence.', 0),
+      Q('An OU has Block Inheritance set. A parent GPO link is Enforced. What happens?', 'The enforced GPO still applies', ['It is blocked', 'Both are ignored', 'Only the user part applies'], 'Enforced overrides Block Inheritance.', 0),
+      Q('Which default GPO is the normal place to set the domain-wide password policy?', 'Default Domain Policy', ['Default Domain Controllers Policy', 'Local Security Policy', 'A GPO linked to the Users container'], 'Domain account policy lives in the GPO linked at the domain root.', 0),
+      Q('You can link a GPO directly to which of these?', 'A site, the domain or an OU', ['A security group', 'A single user', 'A file share'], 'GPO links go on containers. Groups can only filter via security filtering.', 0),
+      Q('Where are the actual files of a GPO stored?', 'In SYSVOL (the Group Policy Template)', ['In the registry of each PC', 'In NTDS.dit only', 'On the helpdesk laptop'], 'The GPC is in AD; the GPT is in SYSVOL.', 0),
+      Q('Default background refresh interval for workstations?', 'Every 90 minutes plus a random offset up to 30 minutes', ['Every 5 minutes', 'Once per day', 'Only at reboot'], 'DCs refresh every 5 minutes.', 0),
+      Q('Which command forces Group Policy to re-apply immediately?', 'gpupdate /force', ['gpresult /r', 'gpfix /now', 'net policy /apply'], 'gpupdate /force.', 0),
+      Q('Which command shows which GPOs were applied and which were filtered out?', 'gpresult /r', ['gpupdate /show', 'whoami /gpo', 'secpol /list'], 'Run it on the affected machine as the affected user.', 0),
+      Q('A kiosk must always use the same user settings no matter who signs in. Use:', 'Loopback processing', ['Block Inheritance', 'WMI filter', 'Enforced'], 'Loopback applies the computer\u2019s user configuration to any user.', 0),
+      Q('To restrict a GPO to only Windows 11 machines, you add a:', 'WMI filter', ['Link order change', 'Loopback policy', 'Starter GPO'], 'WMI filters evaluate a query (e.g., OS version) before applying.', 0),
+      Q('Why is storing a password in Group Policy Preferences dangerous?', 'The stored cpassword can be decrypted by any domain user', ['It slows down logon', 'It disables the GPO', 'It only works once'], 'Microsoft published the AES key; MS14-025 removed the feature.', 0),
+      Q('Best practice before applying a new GPO to every user:', 'Link and test it on a test OU first', ['Link it to the domain immediately', 'Edit the Default Domain Policy', 'Disable Security filtering'], 'A bad domain-wide GPO can break everyone at once.', 0),
+      Q('Which cmdlet reveals which GPOs actually reach a specific OU?', 'Get-GPInheritance -Target', ['Get-GPO -Target', 'Show-GPLink', 'Find-GPOLink'], 'Get-GPInheritance shows linked and inherited GPOs, including block/enforced effects.', 0),
+      T('Type the cmdlet that links a GPO to an OU (Verb-Noun, GP prefix).', [/^\s*New-GPLink\s*$/i], 'New-GPLink', 0, 'New-GP...')
+    ],
+    labs: ['ad-gpo']
+  });
+
+  lab('ad-gpo', {
+    title: 'Link, enforce and block policies',
+    sum: 'Build a GPO, enforce the baseline, and block inheritance for servers',
+    brief: `Security wants three changes:<br><b>1.</b> Create a GPO named <b>Workstation Lockdown</b> and <b>link it to OU=Workstations</b>.<br><b>2.</b> The domain-level GPO <b>Security Baseline</b> must apply <b>everywhere</b>: make its link <b>Enforced</b>.<br><b>3.</b> The Servers team wants no user-oriented policies inherited: set <b>Block Inheritance</b> on <code>OU=Servers</code>.<br>Finally run <code>Get-GPInheritance</code> on the Servers OU and confirm the enforced baseline <b>still</b> reaches it.`,
+    domain: { ous: ['Workstations', 'Servers'], computers: [{ name: 'WS-001', path: 'OU=Workstations,' + B }, { name: 'SRV-APP1', path: 'OU=Servers,' + B, os: 'Windows Server 2022 Standard' }],
+      gpos: [{ name: 'Security Baseline', links: [B] }, { name: 'Servers - App Settings', links: ['OU=Servers,' + B] }] },
+    tasks: [
+      { t: 'GPO "Workstation Lockdown" exists', c: function (e) { return !!e.d.gpos['workstation lockdown']; } },
+      { t: '"Workstation Lockdown" is linked to OU=Workstations', c: function (e) { return e.d.links.some(function (l) { return l.gpo === 'Workstation Lockdown' && /^OU=Workstations,/i.test(l.target); }); } },
+      { t: '"Security Baseline" link on the domain is Enforced', c: function (e) { return e.d.links.some(function (l) { return l.gpo === 'Security Baseline' && /^DC=corp/i.test(l.target) && l.enforced; }); } },
+      { t: 'OU=Servers has Block Inheritance enabled', c: function (e) { return e.d.blocked['ou=servers,dc=corp,dc=local'] === true; } },
+      { t: 'You ran Get-GPInheritance on OU=Servers to verify', c: function (e) { return e.ran(/Get-GPInheritance\s+.*Servers/i); } }
+    ],
+    hints: ['<code>New-GPO -Name "Workstation Lockdown"</code> then <code>New-GPLink -Name "Workstation Lockdown" -Target "OU=Workstations,DC=corp,DC=local"</code>', '<code>Set-GPLink -Name "Security Baseline" -Target "DC=corp,DC=local" -Enforced Yes</code>', '<code>Set-GPInheritance -Target "OU=Servers,DC=corp,DC=local" -IsBlocked Yes</code>', '<code>Get-GPInheritance -Target "OU=Servers,DC=corp,DC=local"</code> \u2014 look for Security Baseline listed as inherited.'],
+    solution: ['New-GPO -Name "Workstation Lockdown"', 'New-GPLink -Name "Workstation Lockdown" -Target "OU=Workstations,DC=corp,DC=local"', 'Set-GPLink -Name "Security Baseline" -Target "DC=corp,DC=local" -Enforced Yes', 'Set-GPInheritance -Target "OU=Servers,DC=corp,DC=local" -IsBlocked Yes', 'Get-GPInheritance -Target "OU=Servers,DC=corp,DC=local"'],
+    debrief: 'Notice that Security Baseline still shows up for Servers even though inheritance is blocked \u2014 Enforced beats Block. That is exactly how you guarantee a security baseline that no OU admin can switch off.'
+  });
+
+  /* ===================== 7. Authentication & logging ===================== */
+  S.push({
+    id: 'ad7', track: 'ad', tier: 'ad-p', title: 'Authentication: Kerberos, NTLM & Event IDs', code: 'klist', gateN: 12,
+    goal: 'Follow a Kerberos logon end to end, know when NTLM is used, and read the Windows Security events a SOC analyst needs to investigate AD activity.',
+    lesson: [
+      { h: 'Kerberos in six steps', html: `<p>Kerberos proves identity with <b>tickets</b> issued by the <b>Key Distribution Center (KDC)</b> that runs on every DC. Your password never crosses the network.</p><ol><li><b>AS-REQ</b> \u2014 you ask the KDC for a Ticket Granting Ticket, proving you know your password by encrypting a <b>timestamp</b> with your key (<i>pre-authentication</i>).</li><li><b>AS-REP</b> \u2014 the KDC returns a <b>TGT</b>, encrypted with the <b><code>krbtgt</code> account\u2019s key</b> (only the KDC can read it).</li><li><b>TGS-REQ</b> \u2014 to reach a service (<code>cifs/fs01.corp.local</code>), you present the TGT and ask for a service ticket.</li><li><b>TGS-REP</b> \u2014 the KDC returns a <b>service ticket</b> encrypted with the <b>service account\u2019s key</b>, containing your group SIDs (the PAC).</li><li><b>AP-REQ</b> \u2014 you give the ticket to the file server.</li><li><b>AP-REP</b> \u2014 (optional) the server proves itself to you: <b>mutual authentication</b>.</li></ol><ul><li>Port <b>88</b>. Tickets default to <b>10 hours</b> (renewable 7 days). Clock skew limit: <b>5 minutes</b>.</li><li>Services are identified by <b>SPNs</b> (Service Principal Names), e.g. <code>MSSQLSvc/sql01.corp.local:1433</code>. Using a server\u2019s <b>IP address</b> instead of its name breaks Kerberos and falls back to NTLM.</li><li><code>klist</code> shows your tickets; <code>klist purge</code> clears them.</li></ul>` },
+      { h: 'NTLM', html: `<p><b>NTLM</b> is the older <b>challenge\u2013response</b> protocol: the server sends a challenge, the client answers with a response derived from the <b>NT hash</b> of the password. Used when Kerberos is unavailable (IP address, workgroup, no DC reachable). Weaknesses: the hash itself is the credential (<b>pass-the-hash</b>), responses can be <b>relayed</b>, and offline cracking is fast. Hardening: <b>require SMB signing</b>, disable LLMNR/NBT-NS, restrict or audit NTLM, put admins in <b>Protected Users</b>, and prefer Kerberos.</p>` },
+      { h: 'Security events you must know', html: `<table><tr><th>ID</th><th>Meaning</th></tr><tr><td><b>4624</b></td><td>Successful logon. <b>Logon Type</b>: 2 interactive, 3 network, 4 batch, 5 service, 7 unlock, 10 <b>RDP</b> (RemoteInteractive), 11 cached</td></tr><tr><td><b>4625</b></td><td>Failed logon (Status/SubStatus: 0xC000006A bad password, 0xC0000064 no such user, 0xC0000234 locked out, 0xC0000072 disabled)</td></tr><tr><td>4634 / 4647</td><td>Logoff</td></tr><tr><td><b>4648</b></td><td>Logon with explicit credentials (runas, lateral movement)</td></tr><tr><td><b>4672</b></td><td>Special privileges assigned to a new logon (an admin signed in)</td></tr><tr><td><b>4720 / 4722 / 4725 / 4726</b></td><td>User created / enabled / disabled / deleted</td></tr><tr><td>4723 / 4724</td><td>Password change (user) / reset (admin)</td></tr><tr><td><b>4728 / 4732 / 4756</b></td><td>Member added to a Global / Local / Universal security group</td></tr><tr><td><b>4740 / 4767</b></td><td>Account locked out / unlocked</td></tr><tr><td><b>4768</b></td><td>Kerberos TGT requested</td></tr><tr><td><b>4769</b></td><td>Kerberos service ticket requested</td></tr><tr><td>4771</td><td>Kerberos pre-authentication failed</td></tr><tr><td>4776</td><td>NTLM credential validation by a DC</td></tr><tr><td><b>1102</b></td><td>The Security log was <b>cleared</b> \u2014 an attacker hiding tracks</td></tr></table>` },
+      { h: 'Reading attacks in the logs', html: `<ul><li><b>Brute force:</b> many 4625s against <b>one account</b>, then maybe a 4740 lockout.</li><li><b>Password spray:</b> a <b>few</b> attempts each across <b>many accounts</b> from one source, staying under the lockout threshold \u2014 many 4625/4771 with different usernames, same IP.</li><li><b>Success after failures:</b> a 4625 burst followed by a 4624 for the same account = the guess worked.</li><li><b>Privilege creep / persistence:</b> 4720 (new account) then 4728/4732 (added to Domain Admins) within minutes.</li><li><b>Lateral movement:</b> 4624 type 3 (network) and type 10 (RDP) from unusual workstations, 4648 with explicit credentials.</li><li><b>Kerberoasting:</b> a burst of <b>4769</b> events from one account asking for many service tickets, often with ticket encryption type <b>0x17 (RC4)</b>.</li><li><b>AS-REP roasting:</b> 4768 requests with <b>pre-authentication type 0</b> (none).</li><li><b>Log tampering:</b> 1102.</li></ul>` }
+    ],
+    cards: [
+      ['KDC', 'Key Distribution Center \u2014 the Kerberos service on each DC.'], ['TGT', 'Ticket Granting Ticket \u2014 proves who you are for ~10 hours. Encrypted with the krbtgt key.'], ['Service ticket (TGS)', 'Lets you use one service; encrypted with the service account\u2019s key.'], ['Pre-authentication', 'Client proves knowledge of the password by encrypting a timestamp in the AS-REQ.'], ['SPN', 'Service Principal Name \u2014 how Kerberos identifies a service (e.g. MSSQLSvc/sql01:1433).'], ['Kerberos fails on IP address', 'Kerberos needs the SPN/DNS name; IP access falls back to NTLM.'],
+      ['NTLM', 'Challenge-response using the NT hash. Vulnerable to pass-the-hash and relay.'], ['Event 4624 / 4625', 'Logon success / failure.'], ['Logon type 3 / 10', 'Network logon / Remote Desktop (RemoteInteractive).'], ['Event 4672', 'Special privileges assigned \u2014 an admin-level logon.'], ['Event 4720', 'User account created.'], ['Event 4728 / 4732 / 4756', 'Member added to Global / Local / Universal group.'], ['Event 4740', 'Account locked out.'], ['Event 4768 / 4769', 'Kerberos TGT / service ticket requested.'], ['Event 1102', 'Security log cleared \u2014 suspicious.'],
+      ['Password spray', 'Few guesses across many accounts to dodge lockout.'], ['Kerberoasting signal', 'Many 4769 from one user, RC4 (0x17) encryption.']
+    ],
+    qs: [
+      Q('What does Kerberos send across the network to prove your identity?', 'Tickets \u2014 never the password itself', ['The password in clear text', 'The NT hash', 'A cookie'], 'Pre-authentication uses a timestamp encrypted with your key.', 0),
+      Q('The TGT you receive after logging on is encrypted with the key of which account?', 'krbtgt', ['Administrator', 'Your own account', 'The file server'], 'Only the KDC can read a TGT.', 0),
+      Q('A Kerberos service ticket is encrypted with the key of:', 'The service account that runs the service', ['The user', 'krbtgt', 'The DNS server'], 'This is why weak service-account passwords are crackable (Kerberoasting).', 0),
+      Q('Which protocol is used when you access a server by its IP address instead of its name?', 'NTLM (Kerberos needs the SPN/DNS name)', ['Kerberos', 'LDAPS', 'SAML'], 'Without a name there is no SPN match, so Windows falls back to NTLM.', 0),
+      Q('Which Event ID is a SUCCESSFUL logon?', '4624', ['4625', '4740', '1102'], '4625 is failure. 4740 is lockout.', 0),
+      Q('Which logon type indicates a Remote Desktop session?', '10', ['2', '3', '5'], 'Type 10 = RemoteInteractive (RDP). Type 3 = network, 2 = interactive console.', 0),
+      Q('Event 4672 means:', 'Special (administrative) privileges were assigned to a new logon', ['A password was reset', 'A GPO applied', 'The Security log was cleared'], 'Seeing 4672 for an unexpected account is worth investigating.', 0),
+      Q('Which Event ID shows the Security log was cleared?', '1102', ['4688', '4720', '4768'], 'Clearing the log is a classic way to hide activity.', 0),
+      Q('Hundreds of 4625 events: one source IP, a different username each time, 1\u20132 attempts per name. This is:', 'A password spray', ['A DCSync', 'A normal helpdesk day', 'A golden ticket'], 'Spraying stays under the lockout threshold by spreading guesses across accounts.', 0),
+      Q('Which events signal a new account being added to a privileged group?', '4728 / 4732 / 4756', ['4624 / 4634', '4768 / 4769', '4740 / 4767'], 'Alert on membership changes to Domain Admins, Enterprise Admins and Administrators.', 0),
+      Q('A burst of 4769 events with encryption type 0x17 from one account suggests:', 'Kerberoasting', ['Password expiry', 'RDP brute force', 'A GPO refresh'], 'The attacker requests service tickets (often RC4) to crack offline.', 0),
+      Q('Which event records an account lockout?', '4740', ['4720', '4726', '4648'], '4740 includes the Caller Computer that caused the lockout.', 0),
+      Q('Which control makes NTLM relay attacks harder against file servers?', 'Requiring SMB signing', ['Opening port 445', 'Disabling DNS', 'Using longer usernames'], 'Signed SMB can\u2019t be relayed by a man-in-the-middle.', 0),
+      Q('Which command shows the Kerberos tickets in your session?', 'klist', ['ipconfig /tickets', 'net view', 'whoami /kerb'], 'klist purge clears them.', 0),
+      T('Type the Security Event ID for "an account was locked out".', [/^\s*4740\s*$/], '4740', 0, 'Event ID')
+    ],
+    labs: []
+  });
+
+  /* ===================== 8. Roles, replication, recovery ===================== */
+  S.push({
+    id: 'ad8', track: 'ad', tier: 'ad-x', title: 'FSMO roles, replication & recovery', code: 'Restore-ADObject', gateN: 12,
+    goal: 'Know the five FSMO roles, how DCs replicate, what sites and the Global Catalog do, how trusts work, and how to recover deleted objects.',
+    lesson: [
+      { h: 'The five FSMO roles', html: `<p>AD is <b>multi-master</b> (any DC accepts changes), but a few jobs must be done by exactly one DC \u2014 <b>Flexible Single Master Operations</b> roles:</p><table><tr><th>Role</th><th>Scope</th><th>Job</th></tr><tr><td><b>Schema Master</b></td><td>Forest</td><td>Only DC allowed to change the schema</td></tr><tr><td><b>Domain Naming Master</b></td><td>Forest</td><td>Adds/removes domains and application partitions</td></tr><tr><td><b>PDC Emulator</b></td><td>Domain</td><td>Authoritative <b>time source</b>, handles <b>password changes/lockouts</b> urgently, preferred GPO editing target, legacy NT compatibility. The busiest role.</td></tr><tr><td><b>RID Master</b></td><td>Domain</td><td>Hands out pools of <b>RIDs</b> so every DC can create unique SIDs</td></tr><tr><td><b>Infrastructure Master</b></td><td>Domain</td><td>Updates cross-domain object references</td></tr></table><pre>netdom query fsmo\nGet-ADDomain | Select-Object PDCEmulator, RIDMaster, InfrastructureMaster</pre><ul><li><b>Transfer</b> = planned, graceful (old DC alive). <b>Seize</b> = emergency when the holder is dead for good; the old DC must <b>never</b> be brought back online.</li></ul>` },
+      { h: 'Replication, sites and the Global Catalog', html: `<ul><li><b>Sites</b> map IP subnets to physical locations. Replication <b>inside a site</b> is fast (changes notify within about 15 seconds; password changes and lockouts replicate urgently). <b>Between sites</b> it follows a schedule (default every <b>180 minutes</b>, minimum 15) over site links. Clients also use sites to pick the <b>closest DC</b>.</li><li>The <b>KCC</b> (Knowledge Consistency Checker) builds the replication topology automatically. Conflicts resolve by version number, timestamp, GUID (last writer wins).</li><li>Check health: <code>repadmin /replsummary</code>, <code>repadmin /showrepl</code>, <code>dcdiag /v</code>.</li><li><b>Global Catalog (GC):</b> a DC that also holds a read-only partial copy of <b>every object in the forest</b>. Needed for UPN logons, searching the whole forest and expanding <b>Universal group</b> membership at logon. Every site should have a GC (ports 3268/3269).</li><li><b>RODC</b> (Read-Only DC) for branch offices: holds no password hashes by default (a Password Replication Policy chooses what is cached), so a stolen RODC is a smaller disaster.</li><li><b>SYSVOL</b> replicates with <b>DFSR</b>, separately from AD replication.</li></ul>` },
+      { h: 'Backup and recovery', html: `<ul><li>Back up <b>System State</b> on at least two DCs regularly (it includes NTDS.dit, SYSVOL, registry). Test restores.</li><li><b>AD Recycle Bin</b> (must be enabled once per forest; cannot be turned off) keeps deleted objects with <b>all attributes and group memberships</b> for the <b>deleted object lifetime</b> (default 180 days), then they sit as recycled objects until the tombstone lifetime ends. Without it, a deleted user comes back as an empty shell (tombstone) and loses memberships.</li></ul><pre># Find, then restore ONLY what you mean to\nGet-ADObject -Filter "samAccountName -eq 'pnair'" -IncludeDeletedObjects\nGet-ADObject -Filter "samAccountName -eq 'pnair'" -IncludeDeletedObjects | Restore-ADObject</pre><ul><li><b>Authoritative restore</b> (in DSRM with <code>ntdsutil</code>) forces a restored older version to overwrite newer replicas; <b>non-authoritative</b> restore gets overwritten by replication.</li><li>Never roll back a DC with a plain VM snapshot \u2014 <b>USN rollback</b> corrupts replication. Use VM-GenerationID\u2013aware platforms and AD-aware backups.</li><li>Prevent disaster: <b>Protect from accidental deletion</b> on OUs, restricted delete rights, change alerts.</li></ul>` },
+      { h: 'Trusts and DNS', html: `<table><tr><th>Trust</th><th>Notes</th></tr><tr><td>Parent\u2013child, Tree-root</td><td>Automatic, <b>two-way, transitive</b> inside a forest</td></tr><tr><td>Shortcut</td><td>Manual, speeds authentication between two domains in a big forest</td></tr><tr><td>Forest</td><td>Manual, <b>transitive</b> between two forest roots</td></tr><tr><td>External</td><td>Manual, <b>non-transitive</b>, to a single domain outside the forest</td></tr><tr><td>Realm</td><td>To a non-Windows Kerberos realm</td></tr></table><p><b>Direction:</b> if A trusts B, then B\u2019s users can be given access to A\u2019s resources (the arrow of trust points opposite to access). <b>SID filtering</b> blocks SID-history abuse across trusts. Always use <b>AD-integrated DNS</b> zones with secure dynamic updates, and point DCs at themselves/each other for DNS \u2014 not at ISP resolvers.</p>` }
+    ],
+    cards: [
+      ['FSMO roles', 'Schema, Domain Naming (forest); PDC Emulator, RID, Infrastructure (domain).'], ['PDC Emulator', 'Time source, urgent password/lockout handling, GPO editing target. Busiest role.'], ['RID Master', 'Allocates RID pools so SIDs stay unique.'], ['Schema Master', 'Only DC that can change the schema.'], ['Transfer vs Seize', 'Transfer = graceful. Seize = emergency; never reconnect the old holder.'], ['netdom query fsmo', 'Shows who holds the five roles.'],
+      ['Site', 'IP subnets treated as well-connected; controls replication and DC selection.'], ['Inter-site replication default', 'Every 180 minutes (schedule-based).'], ['KCC', 'Builds the replication topology automatically.'], ['repadmin /replsummary', 'Quick replication health report.'], ['dcdiag', 'Diagnostic test suite for a domain controller.'], ['Global Catalog', 'Partial copy of every forest object; needed for UPN logon and universal groups. Ports 3268/3269.'], ['RODC', 'Read-only DC for branches; caches only allowed passwords.'],
+      ['AD Recycle Bin', 'Restores deleted objects with attributes and groups. Enable once; irreversible.'], ['Restore-ADObject', 'Restores a deleted object found with Get-ADObject -IncludeDeletedObjects.'], ['Authoritative restore', 'Restored data wins over replicas (ntdsutil, DSRM).'], ['USN rollback', 'Caused by snapshot/restore of a DC the wrong way; breaks replication.'], ['Forest trust', 'Transitive trust between two forests.'], ['External trust', 'Non-transitive trust to one domain outside the forest.']
+    ],
+    qs: [
+      Q('Which FSMO role is the authoritative time source and handles urgent password/lockout changes?', 'PDC Emulator', ['RID Master', 'Schema Master', 'Infrastructure Master'], 'The PDC emulator is the busiest role and the domain time source.', 0),
+      Q('Which role ensures every DC can create objects with unique SIDs?', 'RID Master', ['PDC Emulator', 'Domain Naming Master', 'Infrastructure Master'], 'It allocates relative-ID pools to DCs.', 0),
+      Q('How many FSMO roles exist, and which are forest-wide?', 'Five; Schema Master and Domain Naming Master are forest-wide', ['Three; all domain-wide', 'Five; all forest-wide', 'Seven; PDC and RID are forest-wide'], 'Forest-wide: Schema + Domain Naming. Per domain: PDC, RID, Infrastructure.', 0),
+      Q('The DC holding the RID Master role has failed permanently. You should:', 'Seize the role on another DC and never bring the old DC back online', ['Transfer the role from the dead DC', 'Wait 180 days', 'Reinstall Windows on a client'], 'Transfer needs both DCs alive; seizing is for permanent loss.', 0),
+      Q('By default, how often does replication occur between SITES?', 'Every 180 minutes', ['Every 15 seconds', 'Once a week', 'Only at logon'], 'Intra-site is near-immediate; inter-site is scheduled (default 180 min).', 0),
+      Q('Which tool gives a quick summary of replication health?', 'repadmin /replsummary', ['gpresult /r', 'nltest /sc_query', 'ipconfig /all'], 'dcdiag also runs many health tests.', 0),
+      Q('What does the Global Catalog provide?', 'A partial, searchable copy of every object in the forest', ['A backup of SYSVOL', 'DHCP leases', 'GPO links'], 'Used for UPN logon, forest-wide search and universal group expansion.', 0),
+      Q('Which DC type holds no password hashes by default and suits branch offices?', 'Read-Only Domain Controller (RODC)', ['Global Catalog server', 'PDC Emulator', 'Schema Master'], 'A Password Replication Policy controls what an RODC may cache.', 0),
+      Q('An admin deleted a user by mistake and the AD Recycle Bin is ON. Best way to recover with groups intact?', 'Get-ADObject -IncludeDeletedObjects | Restore-ADObject', ['Create a new user with the same name', 'Restore a snapshot of the DC', 'Reset the krbtgt password'], 'A new user gets a new SID. Recycle Bin restore keeps SID, attributes and memberships.', 0),
+      Q('Before running Restore-ADObject you should:', 'Filter to the exact object(s) you mean to restore', ['Restore everything that is deleted', 'Disable replication', 'Seize all roles'], 'Pipe only the intended object; bulk restoring brings back deletions that were intentional.', 0),
+      Q('What is a USN rollback?', 'Replication corruption after a DC is restored from an old snapshot in an unsupported way', ['A GPO rollback', 'A failed password reset', 'DNS scavenging'], 'Never revert a DC VM with a plain snapshot.', 0),
+      Q('Which trust type is non-transitive and connects to a single domain outside your forest?', 'External trust', ['Forest trust', 'Parent-child trust', 'Shortcut trust'], 'Forest trusts are transitive between forests; external trusts are not.', 0),
+      Q('Parent\u2013child trusts inside a forest are:', 'Automatic, two-way and transitive', ['Manual and one-way', 'Non-transitive', 'Only for DNS'], 'Created automatically when a child domain is added.', 0),
+      Q('Which setting on an OU helps prevent accidental deletion of the whole OU?', 'Protect object from accidental deletion', ['Block Inheritance', 'Enforced', 'Loopback processing'], 'It adds an explicit Deny delete ACE.', 0),
+      T('Type the cmdlet that restores a deleted AD object (Verb-Noun).', [/^\s*Restore-ADObject\s*$/i], 'Restore-ADObject', 0, 'Restore-...')
+    ],
+    labs: ['ad-recycle']
+  });
+
+  lab('ad-recycle', {
+    title: 'Restore a deleted account',
+    sum: 'Recover the right user from the AD Recycle Bin',
+    brief: `Priya Nair (<code>pnair</code>) was deleted by mistake this morning \u2014 she is a current employee in Marketing. A contractor, <code>oldcontractor</code>, was <i>correctly</i> deleted last week.<br><b>1.</b> Search the <b>deleted objects</b> (<code>Get-ADObject ... -IncludeDeletedObjects</code>) to see what is in the bin.<br><b>2.</b> Restore <b>only</b> <code>pnair</code>.<br><b>3.</b> Confirm she is back in the <b>Marketing</b> group. Do <b>not</b> restore <code>oldcontractor</code>.`,
+    domain: { ous: ['Marketing'], groups: [{ name: 'Marketing', scope: 'Global', path: 'OU=Marketing,' + B }],
+      users: [{ name: 'Mia Cole', sam: 'mcole', path: 'OU=Marketing,' + B, member: ['Domain Users', 'Marketing'] }],
+      deleted: [{ kind: 'user', name: 'Priya Nair', sam: 'pnair', upn: 'pnair@corp.local', dn: 'CN=Priya Nair,OU=Marketing,' + B, dept: 'Marketing', title: 'Designer', groups: ['CN=Marketing,OU=Marketing,' + B], when: '2026-10-27',
+        u: { name: 'Priya Nair', sam: 'pnair', given: 'Priya', sur: 'Nair', dn: 'CN=Priya Nair,OU=Marketing,' + B, upn: 'pnair@corp.local', enabled: true, locked: false, desc: '', dept: 'Marketing', title: 'Designer', email: '', pwNeverExpires: false, noPreAuth: false, spn: [], lastLogon: '2026-10-26', pwLastSet: '2026-09-01', mustChange: false, expires: null, sid: 'S-1-5-21-3623811015-3361044348-30300820-1190', builtin: false, pw: 'Passw0rd!' } },
+        { kind: 'user', name: 'Old Contractor', sam: 'oldcontractor', upn: 'oldcontractor@corp.local', dn: 'CN=Old Contractor,OU=Marketing,' + B, dept: 'Marketing', title: 'Contractor', groups: [], when: '2026-10-20',
+        u: { name: 'Old Contractor', sam: 'oldcontractor', given: 'Old', sur: 'Contractor', dn: 'CN=Old Contractor,OU=Marketing,' + B, upn: 'oldcontractor@corp.local', enabled: false, locked: false, desc: 'Contract ended', dept: 'Marketing', title: 'Contractor', email: '', pwNeverExpires: false, noPreAuth: false, spn: [], lastLogon: '2026-08-01', pwLastSet: '2026-06-01', mustChange: false, expires: null, sid: 'S-1-5-21-3623811015-3361044348-30300820-1191', builtin: false, pw: 'x' } }] },
+    tasks: [
+      { t: 'You listed deleted objects with -IncludeDeletedObjects', c: function (e) { return e.ran(/Get-ADObject\s+.*-IncludeDeletedObjects/i); } },
+      { t: 'pnair is restored (exists in the directory)', c: function (e) { return !!e.user('pnair'); } },
+      { t: 'pnair is a member of Marketing again', c: function (e) { return e.isMember('Marketing', 'pnair'); } },
+      { t: 'oldcontractor is still deleted (not restored)', c: function (e) { return !e.user('oldcontractor'); } }
+    ],
+    hints: ['<code>Get-ADObject -Filter * -IncludeDeletedObjects</code> shows everything in the bin.', 'Narrow to one object: <code>-Filter "samAccountName -eq \'pnair\'"</code>', 'Pipe only that result: <code>... -IncludeDeletedObjects | Restore-ADObject</code>', 'Verify: <code>Get-ADPrincipalGroupMembership pnair</code>'],
+    solution: ['Get-ADObject -Filter * -IncludeDeletedObjects', 'Get-ADObject -Filter "samAccountName -eq \'pnair\'" -IncludeDeletedObjects | Restore-ADObject', 'Get-ADUser pnair', 'Get-ADPrincipalGroupMembership pnair'],
+    debrief: 'The Recycle Bin restored the same SID and her group membership, so file permissions came back automatically. Re-creating the user would have produced a new SID and orphaned all of her access.'
+  });
+
+  /* ===================== 9. Security: attack and defense ===================== */
+  S.push({
+    id: 'ad9', track: 'ad', tier: 'ad-x', title: 'Securing AD: attacks & defenses', code: 'Search-ADAccount -AccountInactive', gateN: 12,
+    goal: 'Recognize how attackers abuse Active Directory, and apply (and detect) the defenses \u2014 tiering, least privilege, strong service-account passwords, and account hygiene.',
+    lesson: [
+      { h: 'Why AD is the crown jewel', html: `<p>If an attacker controls AD, they control <b>every domain-joined system and every identity</b>. Most ransomware incidents end with domain admin. A typical intrusion chain (conceptual, for defenders):</p><ol><li><b>Recon:</b> enumerate users, groups, trusts and attack paths (tools like <b>BloodHound</b> map \u201cwho can become Domain Admin\u201d).</li><li><b>Initial access:</b> phishing, exposed RDP/VPN, <b>password spraying</b>.</li><li><b>Privilege escalation:</b> <b>Kerberoasting</b>, <b>AS-REP roasting</b>, weak ACLs/delegation, passwords in scripts or GPP, vulnerable certificate templates (AD CS).</li><li><b>Credential theft:</b> dumping <b>LSASS</b> memory, <b>pass-the-hash</b>, <b>pass-the-ticket</b>.</li><li><b>Lateral movement:</b> SMB/RDP/WinRM/PsExec using stolen credentials.</li><li><b>Domain dominance:</b> <b>DCSync</b> (abusing replication rights to pull every hash), copying NTDS.dit, <b>Golden Ticket</b> (forged TGT using the <code>krbtgt</code> hash).</li><li><b>Persistence:</b> hidden admin accounts, AdminSDHolder ACL changes, SID history, rogue GPOs.</li></ol>` },
+      { h: 'Kerberoasting and AS-REP roasting', html: `<p><b>Kerberoasting:</b> any authenticated domain user can ask the KDC for a <b>service ticket</b> for any account that has an <b>SPN</b>. That ticket is encrypted with the service account\u2019s password hash, so the attacker takes it <b>offline</b> and cracks it with no lockouts and no alerts. Service accounts often have weak, never-expiring passwords and excess privilege.</p><ul><li><b>Defend:</b> use <b>gMSA</b> (group Managed Service Accounts \u2014 120-character auto-rotated passwords) where possible; otherwise <b>25+ character random passwords</b>; least privilege; disable RC4 so tickets use AES; monitor bursts of <b>4769</b>.</li><li><b>Hunt:</b> <code>Get-ADUser -Filter "ServicePrincipalName -like '*'" -Properties ServicePrincipalName</code></li></ul><p><b>AS-REP roasting:</b> an account flagged <b>\u201cDo not require Kerberos preauthentication\u201d</b> lets anyone request an encrypted blob for it without knowing the password \u2014 also crackable offline. <b>Defend:</b> never set that flag; find and fix: <code>Get-ADUser -Filter "DoesNotRequirePreAuth -eq $true"</code> and <code>Set-ADAccountControl &lt;user&gt; -DoesNotRequirePreAuth $false</code>.</p>` },
+      { h: 'Privilege hygiene (the defender\u2019s checklist)', html: `<ul><li><b>Least privilege:</b> Domain Admins should contain only a handful of dedicated admin accounts \u2014 never a person\u2019s everyday account. Keep Enterprise/Schema Admins empty. Review privileged groups monthly.</li><li><b>Separate admin accounts</b> (<code>jsmith</code> vs <code>jsmith-adm</code>) and <b>Privileged Access Workstations</b>.</li><li><b>Tiered model:</b> <b>Tier 0</b> = DCs, AD, identity systems; <b>Tier 1</b> = servers/apps; <b>Tier 2</b> = workstations/users. An account from a higher tier must <b>never log on</b> to a lower tier (stolen credentials on a laptop must not reach a DC).</li><li><b>LAPS</b> (Local Administrator Password Solution) gives every PC a unique, rotating local admin password so one stolen hash does not unlock them all.</li><li><b>Protected Users</b> group; <b>Credential Guard</b> (protects secrets in LSASS); disable <b>LLMNR/NBT-NS</b> and legacy <b>NTLM/SMBv1</b>; <b>require SMB and LDAP signing</b>.</li><li><b>Account hygiene:</b> disable or delete <b>stale accounts</b> (no sign-in for 90+ days), reduce <b>PasswordNeverExpires</b> exceptions, remove unused SPNs, ban weak/breached passwords, enforce <b>MFA</b>.</li><li><b>krbtgt:</b> after a suspected compromise, reset its password <b>twice</b> (12+ hours apart) to invalidate Golden Tickets.</li><li><b>AdminSDHolder:</b> protects accounts with <code>adminCount=1</code>; attackers modify it for persistence \u2014 audit it.</li></ul>` },
+      { h: 'Detect, respond, and audit with PowerShell', html: `<pre>Search-ADAccount -AccountInactive -TimeSpan 90.00:00:00 -UsersOnly   # stale accounts\nGet-ADGroupMember "Domain Admins" -Recursive                          # who is really admin?\nGet-ADUser -Filter "PasswordNeverExpires -eq $true" -Properties PasswordNeverExpires\nGet-ADUser -Filter "ServicePrincipalName -like '*'" -Properties ServicePrincipalName\nGet-ADUser -Filter "DoesNotRequirePreAuth -eq $true"</pre><ul><li><b>Alert on:</b> membership changes to privileged groups (4728/4732/4756), new accounts (4720), log cleared (1102), DCSync-style replication from non-DCs (4662 with the replication GUIDs), spikes in 4769/4625/4771.</li><li><b>Incident steps:</b> contain (isolate hosts, disable suspect accounts), identify scope, <b>rotate credentials</b> (privileged accounts, service accounts, krbtgt twice), review GPOs/ACLs/AdminSDHolder/scheduled tasks for backdoors, rebuild compromised DCs from known-good media, then monitor.</li><li>Use <b>Microsoft Defender for Identity</b> (or equivalent) for behavioral detection.</li></ul>` }
+    ],
+    cards: [
+      ['BloodHound', 'Maps AD attack paths (who can reach Domain Admin). Defenders use it too.'], ['Password spraying', 'One or two guesses per account across many accounts; evades lockout.'], ['Kerberoasting', 'Request service tickets for SPN accounts and crack offline. Defend: long random / gMSA.'], ['gMSA', 'Group Managed Service Account \u2014 120-char auto-rotated password.'], ['AS-REP roasting', 'Accounts with "no preauthentication" yield crackable data. Defend: clear the flag.'], ['Pass-the-hash', 'Authenticate with the NT hash itself. Defend: Credential Guard, LAPS, Protected Users, SMB signing.'], ['Pass-the-ticket', 'Reuse a stolen Kerberos ticket.'],
+      ['DCSync', 'Abuses replication rights to pull password hashes; needs Replicating Directory Changes rights.'], ['Golden Ticket', 'Forged TGT made with the krbtgt hash. Fix: reset krbtgt twice.'], ['Tiered admin model', 'Tier 0 DCs/AD, Tier 1 servers, Tier 2 workstations. Never log on downward with higher-tier creds.'], ['LAPS', 'Unique rotating local admin password per computer.'], ['Protected Users', 'No NTLM, no delegation, no cached creds, short TGTs.'], ['Stale account', 'Enabled account with no logon for 90+ days \u2014 disable it.'], ['AdminSDHolder', 'Template ACL for protected accounts (adminCount=1); attackers abuse it for persistence.'], ['Event 4662', 'Directory service object access \u2014 DCSync detection.'], ['Disable LLMNR / NBT-NS', 'Stops name-poisoning credential capture.']
+    ],
+    qs: [
+      Q('Why is Kerberoasting possible for any domain user?', 'Any authenticated user can request service tickets for accounts with an SPN, then crack them offline', ['It needs a Domain Admin password', 'It exploits an unpatched LDAP bug only', 'It requires physical access to a DC'], 'The service ticket is encrypted with the service account\u2019s password hash.', 0),
+      Q('Best defense against Kerberoasting?', 'Long random passwords or gMSAs for service accounts', ['Shorter ticket lifetimes only', 'Blocking port 80', 'Disabling Group Policy'], 'Make the offline crack infeasible; also monitor 4769.', 0),
+      Q('An account has "Do not require Kerberos preauthentication" set. The risk is:', 'AS-REP roasting \u2014 offline password cracking without credentials', ['Password expiry is skipped', 'It can log on as SYSTEM', 'It bypasses MFA only'], 'Clear the flag with Set-ADAccountControl -DoesNotRequirePreAuth $false.', 0),
+      Q('Which attack uses a forged TGT built from the krbtgt hash?', 'Golden Ticket', ['Kerberoasting', 'Password spray', 'LLMNR poisoning'], 'Reset the krbtgt password twice to invalidate forged tickets.', 0),
+      Q('DCSync works by abusing:', 'Directory replication rights to request password hashes', ['An open RDP port', 'Weak Wi-Fi', 'A browser zero-day'], 'Detect via 4662 and non-DC sources requesting replication.', 0),
+      Q('What does LAPS do?', 'Gives each computer a unique, rotating local administrator password', ['Locks the domain after attacks', 'Encrypts SYSVOL', 'Replaces Kerberos'], 'It stops one stolen local admin hash from working everywhere.', 0),
+      Q('In the tiered admin model, a Tier 0 (Domain Admin) account should:', 'Never log on to Tier 1 or Tier 2 systems', ['Be used for email', 'Log on to every workstation to patch', 'Share its password with helpdesk'], 'Stolen credentials on a lower tier would reach the domain.', 0),
+      Q('A regular employee\u2019s everyday account is a member of Domain Admins. The correct fix is:', 'Remove them; give admins a separate dedicated admin account', ['Rename the group', 'Add MFA only', 'Do nothing; they are trusted'], 'Everyday accounts get phished; privileged access needs separation.', 0),
+      Q('An enabled account with no logon for 6 months is called:', 'A stale account \u2014 disable it', ['A service account', 'A tombstone', 'A trust account'], 'Search-ADAccount -AccountInactive finds them.', 0),
+      Q('Password spraying is best countered by:', 'MFA, banned-password lists and alerting on many failures across accounts', ['Longer lockout durations only', 'Removing DNS', 'More Domain Admins'], 'Spraying avoids per-account lockout, so detect the pattern and add MFA.', 0),
+      Q('After a suspected domain compromise, the krbtgt password should be reset:', 'Twice, with time between resets', ['Never', 'Once, immediately', 'Every hour permanently'], 'Two resets purge both the current and the previous key used to sign tickets.', 0),
+      Q('Which setting reduces NTLM relay and name-poisoning risk?', 'Disable LLMNR/NBT-NS and require SMB signing', ['Enable SMBv1', 'Turn on guest access', 'Use the same local admin password everywhere'], 'Those legacy features let attackers capture and relay credentials.', 0),
+      Q('Which event suggests DCSync-style replication activity?', '4662 with replication rights from a non-DC account', ['4624 type 2', '4723', '1100'], 'Alert when anything other than a DC requests directory replication.', 0),
+      Q('Which command finds accounts vulnerable to AS-REP roasting?', 'Get-ADUser -Filter "DoesNotRequirePreAuth -eq $true"', ['Get-ADUser -Filter "Locked -eq $true"', 'Get-ADComputer -Filter *', 'Get-GPO -All'], 'Then remediate with Set-ADAccountControl.', 0),
+      T('Type the PowerShell AD cmdlet that lists accounts that have not logged on recently (Verb-Noun).', [/^\s*Search-ADAccount\s*$/i], 'Search-ADAccount', 0, 'Search-...')
+    ],
+    labs: ['ad-audit']
+  });
+
+  lab('ad-audit', {
+    title: 'AD security audit',
+    sum: 'Find and fix risky accounts: stale, over-privileged, roastable',
+    brief: `You are the new security admin. Audit <b>corp.local</b> and remediate:<br><b>1.</b> <b>Stale accounts:</b> disable every <i>enabled</i> user with <b>no logon in 90+ days</b> (find them with <code>Search-ADAccount -AccountInactive</code>). Do not touch active users.<br><b>2.</b> <b>Over-privilege:</b> list <b>Domain Admins</b>. A regular employee (<code>jsmith</code>) is in it \u2014 remove them. Leave the legitimate admin accounts.<br><b>3.</b> <b>AS-REP roasting:</b> find accounts with <b>DoesNotRequirePreAuth</b> and clear the flag.<br><b>4.</b> <b>Kerberoasting:</b> find accounts with an <b>SPN</b>. Reset the service account <code>svc_sql</code> to a <b>25+ character</b> password.`,
+    domain: { ous: ['Staff', 'Service Accounts', 'Admins'], groups: [],
+      users: [
+        { name: 'Jane Smith', sam: 'jsmith', path: 'OU=Staff,' + B, member: ['Domain Users', 'Domain Admins'], lastLogon: '2026-10-26' },
+        { name: 'Alice Admin', sam: 'adm-alice', path: 'OU=Admins,' + B, member: ['Domain Users', 'Domain Admins'], lastLogon: '2026-10-27' },
+        { name: 'Old User One', sam: 'olduser1', path: 'OU=Staff,' + B, lastLogon: '2026-04-02' },
+        { name: 'Contractor Two', sam: 'contractor2', path: 'OU=Staff,' + B, lastLogon: '2026-05-14' },
+        { name: 'Dana Fox', sam: 'dfox', path: 'OU=Staff,' + B, lastLogon: '2026-10-25' },
+        { name: 'Eli Ross', sam: 'eross', path: 'OU=Staff,' + B, lastLogon: '2026-10-20' },
+        { name: 'Legacy App', sam: 'legacy_app', path: 'OU=Service Accounts,' + B, noPreAuth: true, pwNeverExpires: true, lastLogon: '2026-10-26' },
+        { name: 'SQL Service', sam: 'svc_sql', path: 'OU=Service Accounts,' + B, spn: ['MSSQLSvc/sql01.corp.local:1433'], pwNeverExpires: true, lastLogon: '2026-10-27', pw: 'Summer2020!' },
+        { name: 'Disabled Old', sam: 'disabled_old', path: 'OU=Staff,' + B, enabled: false, lastLogon: '2026-01-10' }] },
+    tasks: [
+      { t: 'olduser1 and contractor2 (stale) are disabled', c: function (e) { return !e.user('olduser1').enabled && !e.user('contractor2').enabled; } },
+      { t: 'Active users are untouched (dfox, eross, jsmith, adm-alice still enabled)', c: function (e) { return ['dfox', 'eross', 'jsmith', 'adm-alice', 'svc_sql', 'legacy_app'].every(function (s) { return e.user(s).enabled; }); } },
+      { t: 'jsmith is no longer a Domain Admin', c: function (e) { return !e.isMember('Domain Admins', 'jsmith'); } },
+      { t: 'adm-alice and Administrator are still Domain Admins', c: function (e) { return e.isMember('Domain Admins', 'adm-alice') && e.isMember('Domain Admins', 'Administrator'); } },
+      { t: 'legacy_app no longer allows AS-REP roasting (DoesNotRequirePreAuth cleared)', c: function (e) { return e.user('legacy_app').noPreAuth === false; } },
+      { t: 'You searched for accounts with an SPN', c: function (e) { return e.ran(/ServicePrincipalName/i); } },
+      { t: 'svc_sql has a new password of 25+ characters', c: function (e) { var u = e.user('svc_sql'); return u && u.pw.length >= 25 && u.pw !== 'Summer2020!'; } }
+    ],
+    hints: ['<code>Search-ADAccount -AccountInactive -TimeSpan 90.00:00:00 -UsersOnly</code> lists the stale ones. Pipe to <code>Disable-ADAccount</code> after you have reviewed the list.', '<code>Get-ADGroupMember "Domain Admins"</code> then <code>Remove-ADGroupMember -Identity "Domain Admins" -Members jsmith -Confirm:$false</code>', '<code>Get-ADUser -Filter "DoesNotRequirePreAuth -eq $true"</code> then <code>Set-ADAccountControl legacy_app -DoesNotRequirePreAuth $false</code>', '<code>Get-ADUser -Filter "ServicePrincipalName -like \'*\'" -Properties ServicePrincipalName</code>, then <code>Set-ADAccountPassword svc_sql -Reset -NewPassword (ConvertTo-SecureString "Xk9#vT2!mQ7pL4@wR8zN5^hBq3" -AsPlainText -Force)</code>'],
+    solution: ['Search-ADAccount -AccountInactive -TimeSpan 90.00:00:00 -UsersOnly', 'Search-ADAccount -AccountInactive -TimeSpan 90.00:00:00 -UsersOnly | Disable-ADAccount', 'Get-ADGroupMember "Domain Admins"', 'Remove-ADGroupMember -Identity "Domain Admins" -Members jsmith -Confirm:$false', 'Get-ADUser -Filter "DoesNotRequirePreAuth -eq $true"', 'Set-ADAccountControl legacy_app -DoesNotRequirePreAuth $false', 'Get-ADUser -Filter "ServicePrincipalName -like \'*\'" -Properties ServicePrincipalName', 'Set-ADAccountPassword svc_sql -Reset -NewPassword (ConvertTo-SecureString "Xk9#vT2!mQ7pL4@wR8zN5^hBq3" -AsPlainText -Force)'],
+    debrief: 'Four of the most common real-world AD weaknesses, found and fixed in a few lines. In production, next steps would be a gMSA for svc_sql, a separate admin account for jsmith if needed, and alerts on 4728/4732/4756 so privileged-group changes never go unnoticed.'
+  });
+})();
+
 
 ;
 /* C++ track */
