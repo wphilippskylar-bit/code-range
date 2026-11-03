@@ -9174,7 +9174,7 @@ COURSE.tools = [];
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
   var shuffle = function (a) { a = a.slice(); for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
-  var PASS = C.passPct || 90; // must score OVER this
+  var PASS = C.passPct || 90; // must score AT LEAST this (90% or better passes)
 
   // ---------- storage (localStorage, guarded) ----------
   function load(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
@@ -9525,7 +9525,7 @@ COURSE.tools = [];
       if (timerId) clearInterval(timerId);
       while (answers.length < set.length) answers.push({ ok: false, picked: null, timeout: true });
       var right = answers.filter(function (a) { return a.ok; }).length, pct = Math.round(1000 * right / set.length) / 10;
-      var x = st(s.id), passed = pct > PASS, first = passed && !x.passed;
+      var x = st(s.id), passed = pct >= PASS, first = passed && !x.passed;
       x.attempts++; x.best = Math.max(x.best || 0, pct);
       if (passed) x.passed = true;
       S.history.push({ stage: s.id, pct: pct, at: Date.now() });
@@ -9540,7 +9540,7 @@ COURSE.tools = [];
         '<div class="row" style="justify-content:center;margin-top:10px"><button class="btn" id="cpy">Copy phrase</button>' + (next ? '<button class="btn pri" data-go="#stage/' + next.id + '">Unlocked: ' + esc(next.title) + ' →</button>' : '') + '</div>';
       else h += '<p class="muted">Review every miss below, drill the cards, and use Practice → Missed only. Then retake — the questions reshuffle.</p>';
       h += '</div>';
-      if (cap && byD) h += '<div class="panel" style="margin-top:12px"><h3>By domain</h3>' + Object.keys(byD).map(function (d) { var v = byD[d], pc = Math.round(100 * v[0] / v[1]); return '<div class="row small" style="margin:6px 0"><span style="flex:0 0 52%">' + esc(((cap && cap.domains) || C.domains || {})[d] || 'Other') + '</span><div class="bar grow"><i style="width:' + pc + '%;background:' + (pc > PASS ? 'var(--ok)' : pc >= 75 ? 'var(--lock)' : 'var(--bad)') + '"></i></div><span class="mono">' + pc + '%</span></div>'; }).join('') + '</div>';
+      if (cap && byD) h += '<div class="panel" style="margin-top:12px"><h3>By domain</h3>' + Object.keys(byD).map(function (d) { var v = byD[d], pc = Math.round(100 * v[0] / v[1]); return '<div class="row small" style="margin:6px 0"><span style="flex:0 0 52%">' + esc(((cap && cap.domains) || C.domains || {})[d] || 'Other') + '</span><div class="bar grow"><i style="width:' + pc + '%;background:' + (pc >= PASS ? 'var(--ok)' : pc >= 75 ? 'var(--lock)' : 'var(--bad)') + '"></i></div><span class="mono">' + pc + '%</span></div>'; }).join('') + '</div>';
       h += '<h3 style="margin-top:18px">Review</h3><div class="stack">';
       set.forEach(function (q, k) {
         var a = answers[k];
@@ -9643,7 +9643,7 @@ COURSE.tools = [];
       '<div class="panel" style="margin-top:12px"><h3>Backup file</h3><p class="muted small">Exports everything — card schedules, missed questions, lab configs. Use it to move between iPhone and laptop with full detail.</p>' +
       '<div class="row"><button class="btn" id="ex">Export backup</button><label class="btn">Import backup<input type="file" id="im" accept=".json,application/json" hidden></label></div></div>' +
       '<div class="panel" style="margin-top:12px"><h3>Device mode</h3><p class="muted small">Currently: <b>' + (S.device === 'phone' ? 'Phone (lite)' : 'Laptop (full)') + '</b></p><button class="btn" id="dev">Switch device mode</button></div>' +
-      (hist.length ? '<div class="panel" style="margin-top:12px"><h3>Recent tests</h3>' + hist.map(function (h) { var s = stageById(h.stage); return '<div class="row small" style="margin:4px 0"><span class="grow">' + esc(s ? s.title : h.stage) + '</span><span class="mono" style="color:' + (h.pct > PASS ? 'var(--ok)' : 'var(--bad)') + '">' + h.pct + '%</span><span class="dim">' + new Date(h.at).toLocaleDateString() + '</span></div>'; }).join('') + '</div>' : '') +
+      (hist.length ? '<div class="panel" style="margin-top:12px"><h3>Recent tests</h3>' + hist.map(function (h) { var s = stageById(h.stage); return '<div class="row small" style="margin:4px 0"><span class="grow">' + esc(s ? s.title : h.stage) + '</span><span class="mono" style="color:' + (h.pct >= PASS ? 'var(--ok)' : 'var(--bad)') + '">' + h.pct + '%</span><span class="dim">' + new Date(h.at).toLocaleDateString() + '</span></div>'; }).join('') + '</div>' : '') +
       '<div class="panel" style="margin-top:12px"><h3>Danger zone</h3><button class="btn warn" id="rs">Reset all progress</button></div>';
     $('#rb', m).onclick = function () {
       var v = normCode($('#rc', m).value);
