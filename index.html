@@ -9270,14 +9270,14 @@ COURSE.tools = [];
   }
 
   // ---------- router ----------
-  var view = { tab: {} }, cleanup = null;
+  var view = { tab: {}, part: {} }, cleanup = null;
   function route() {
     if (cleanup) { try { cleanup(); } catch (e) { } cleanup = null; }
     var h = location.hash || '#path', parts = h.slice(1).split('/');
     var main = $('#main'); main.innerHTML = '';
     document.querySelectorAll('#nav button').forEach(function (b) { b.classList.toggle('on', b.dataset.nav === parts[0] || (parts[0] === 'stage' && b.dataset.nav === 'path') || (parts[0] === 'lab' && b.dataset.nav === 'labs')); });
     topbar();
-    var R = { path: vPath, stage: vStage, lab: vLab, cards: vCards, labs: vLabs, tools: vTools, tool: vTool, codes: vCodes };
+    var R = { path: vPath, stage: vStage, lab: vLab, cards: vCards, labs: vLabs, tools: vTools, tool: vTool, exam: vExam, codes: vCodes };
     (R[parts[0]] || vPath)(main, parts.slice(1));
     window.scrollTo(0, 0);
   }
@@ -9300,6 +9300,10 @@ COURSE.tools = [];
         '<span class="chip lock">Pass = over ' + PASS + '% on the gate test</span></div>';
     } else html += '<h2 style="margin:6px 0">Path complete. You are the senior engineer now.</h2>';
     html += '</div>';
+    var coreS = STAGES.filter(function (s) { return s.track === T && s.tier !== 'pro' && !s.capstone; });
+    var hasExam = STAGES.some(function (s) { return s.capstone && s.track === T; });
+    var examReady = coreS.length && coreS.every(function (s) { return st(s.id).passed; });
+    if (examReady && hasExam) html += '<div class="panel" style="border-color:var(--ok);margin-bottom:8px"><div style="line-height:1.4">🎓 <b>Exam-ready</b> — you have cleared every graded section in ' + esc(trackOf(T).name || 'this track') + '. Try the full timed exam.</div><div class="row" style="margin-top:8px"><button class="btn pri" data-go="#exam">Take a full practice exam →</button></div></div>';
     C.tiers.forEach(function (t) {
       if (t.track && t.track !== T) return;
       var list = STAGES.filter(function (s) { return s.tier === t.id && s.track === T; });
@@ -9308,8 +9312,19 @@ COURSE.tools = [];
       list.forEach(function (s) {
         var x = st(s.id), un = unlocked(s), cls = x.passed ? 'done' : (cur && cur.id === s.id ? 'cur' : (un ? '' : 'locked'));
         var sub = x.passed ? 'Passed · best ' + x.best + '%' : (un ? (s.goal || '') : 'Locked — pass step ' + s.tidx + ' first');
+        var doms = stageDomains(s);
+        var domHtml = doms.length ? '<span class="s" style="margin-top:4px;display:block">' + doms.map(function (d) { return '<span class="chip" title="' + esc((C.domains && C.domains[d]) || '') + '" style="padding:0 6px;font-size:10px;margin:0 4px 2px 0">' + esc(domLabel(d)) + '</span>'; }).join('') + '</span>' : '';
         html += '<button class="node ' + cls + '" ' + (un ? 'data-go="#stage/' + s.id + '"' : 'data-locked="1"') + '>' +
-          '<span class="num">' + (x.passed ? '✓' : (un ? (s.tidx + 1) : '🔒')) + '</span><span class="grow"><span class="t">' + (s.tidx + 1) + '. ' + esc(s.title) + '</span><br><span class="s">' + esc(sub) + '</span></span></button>';
+          '<span class="num">' + (x.passed ? '✓' : (un ? (s.tidx + 1) : '🔒')) + '</span><span class="grow"><span class="t">' + (s.tidx + 1) + '. ' + esc(s.title) + '</span><br><span class="s">' + esc(sub) + '</span>' + domHtml + '</span></button>';
+        var parts = s.lesson || [], rd = x.lesson ? parts.length : (x.pread || 0);
+        if (un && parts.length) {
+          html += '<div style="margin:1px 0 12px 22px;border-left:2px solid var(--line);padding-left:12px;display:flex;flex-direction:column;gap:5px">' +
+            parts.map(function (sec, i) {
+              var done = i < rd, sg = segsOf(s)[i];
+              var tg = sg && sg.lab ? '🧪 lab' : (sg && sg.quiz ? '✎ check' : '');
+              return '<button data-go="#stage/' + s.id + '/learn/' + i + '" style="display:flex;align-items:center;gap:8px;background:none;border:0;padding:3px 2px;cursor:pointer;text-align:left;font:inherit;color:' + (done ? 'var(--ok)' : 'var(--muted)') + '"><span style="flex:0 0 18px;height:18px;border-radius:50%;border:1px solid currentColor;display:inline-flex;align-items:center;justify-content:center;font-size:11px">' + (done ? '✓' : (i + 1)) + '</span><span style="flex:1;min-width:0">' + esc(sec.h || ('Part ' + (i + 1))) + '</span>' + (tg ? '<span class="chip" style="padding:0 6px;font-size:10px">' + tg + '</span>' : '') + '</button>';
+            }).join('') + '</div>';
+        }
       });
       html += '</div>';
     });
@@ -9324,11 +9339,13 @@ COURSE.tools = [];
     if (!unlocked(s)) { location.hash = '#path'; return; }
     var tab = args[1] || view.tab[s.id] || 'learn';
     view.tab[s.id] = tab;
+    if (tab === 'learn' && args[2] != null && args[2] !== '') view.part[s.id] = Math.max(0, parseInt(args[2], 10) || 0);
     var x = st(s.id);
     var tabs = [['learn', 'Learn'], ['cards', 'Cards (' + s.cards.length + ')'], ['practice', 'Practice'], ['labs', 'Labs (' + labsDone(s) + '/' + (s.labs || []).length + ')'], ['gate', x.passed ? 'Gate ✓' : 'Gate 🔒']];
     if (!(s.labs || []).length) tabs.splice(3, 1);
     m.innerHTML = '<div class="tag">' + esc((C.tiers.filter(function (t) { return t.id === s.tier; })[0] || {}).name) + ' · ' + stepLabel(s) + ' of ' + inTrack(s.track).length + '</div>' +
       '<h1 style="margin:4px 0 6px">' + esc(s.title) + '</h1><p class="muted" style="margin:0 0 8px">' + esc(s.goal || '') + '</p>' +
+      (stageDomains(s).length ? '<div style="margin:0 0 8px">' + stageDomains(s).map(function (d) { return '<span class="chip" title="' + esc((C.domains && C.domains[d]) || '') + '" style="margin:0 6px 4px 0">Domain ' + esc(domLabel(d)) + '</span>'; }).join('') + '</div>' : '') +
       '<div class="req">' + reqChips(s) + '</div>' +
       '<div class="tabs">' + tabs.map(function (t) { return '<button class="' + (t[0] === tab ? 'on' : '') + '" data-go="#stage/' + s.id + '/' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div><div id="pane"></div>';
     var pane = $('#pane', m);
@@ -9341,12 +9358,81 @@ COURSE.tools = [];
       '<span class="chip ' + (x.passed ? 'ok' : 'lock') + '">' + (x.passed ? '✓ Gate ' + x.best + '%' : '🔒 Gate >' + PASS + '%' + (x.best ? ' · best ' + x.best + '%' : '')) + '</span>';
   }
 
+  var SEG_STOP = {}; 'the a an and or of to in on for with is are be by as at from this that your you it its into over under not but can will each any all via per use used uses using which what when where does'.split(' ').forEach(function (w) { SEG_STOP[w] = 1; });
+  function segWords(t) { return ('' + (t || '')).toLowerCase().replace(/<[^>]+>/g, ' ').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(function (w) { return w.length > 3 && !SEG_STOP[w]; }); }
+  function autoSegs(s) {
+    var secs = s.lesson || [], qs = s.qs || [], labs = (s.labs || []).slice(), n = secs.length;
+    if (!n) return [];
+    var bags = secs.map(function (sec) { var b = {}; segWords(sec.h).forEach(function (w) { b[w] = (b[w] || 0) + 3; }); segWords(sec.html).forEach(function (w) { b[w] = (b[w] || 0) + 1; }); return b; });
+    var handsLabs = labs.slice(0, Math.max(0, labs.length - 1)), segLab = {};
+    handsLabs.forEach(function (lid) {
+      var L = (C.labs || {})[lid] || {}, lw = segWords((L.title || '') + ' ' + (L.sum || '')), best = -1, bi = 0;
+      for (var i = 0; i < n; i++) { if (segLab[i] != null) continue; var sc = 0; lw.forEach(function (w) { if (bags[i][w]) sc += bags[i][w]; }); if (sc > best) { best = sc; bi = i; } }
+      segLab[bi] = lid;
+    });
+    var secQs = {};
+    qs.forEach(function (q, qi) {
+      var qt = segWords(Array.isArray(q) ? q[0] : q.q), best = 0, bi = -1;
+      for (var i = 0; i < n; i++) { if (segLab[i] != null) continue; var sc = 0; qt.forEach(function (w) { if (bags[i][w]) sc += bags[i][w]; }); if (sc > best) { best = sc; bi = i; } }
+      if (bi >= 0) { (secQs[bi] = secQs[bi] || []).push(qi); }
+    });
+    var out = [];
+    for (var i = 0; i < n; i++) { if (segLab[i] != null) out.push({ lab: segLab[i] }); else if (secQs[i] && secQs[i].length) out.push({ quiz: secQs[i].slice(0, 4) }); else out.push(null); }
+    return out;
+  }
+  function segsOf(s) { if (!s._segs) s._segs = s.segs || autoSegs(s); return s._segs; }
+  function lessonParts(s) { return (s.lesson || []).map(function (sec) { return [sec]; }); }
+  function partCode(s, i) { return (s.code || 'STEP').split('-')[0] + '-P' + (i + 1); }
+  function stageDomains(s) { var ds = {}; (s.qs || []).forEach(function (q) { var d = Array.isArray(q) ? q[4] : q.d; if (d) ds[d] = 1; }); return Object.keys(ds).sort(function (a, b) { return a - b; }); }
+  function domLabel(d) { return d + '.0'; }
   function pLearn(p, s) {
-    var x = st(s.id);
-    p.innerHTML = '<div class="panel lesson">' + (s.lesson || []).map(function (sec) { return (sec.h ? '<h3>' + esc(sec.h) + '</h3>' : '') + sec.html; }).join('') + '</div>' +
-      '<div class="row" style="margin-top:12px">' + (x.lesson ? '<span class="chip ok">✓ Lesson complete</span>' : '<button class="btn pri" id="mark">I read it — mark lesson complete</button>') +
-      '<button class="btn" data-go="#stage/' + s.id + '/cards">Drill the cards →</button></div>';
-    var b = $('#mark', p); if (b) b.onclick = function () { x.lesson = true; persist(); route(); };
+    var x = st(s.id), parts = lessonParts(s), N = parts.length;
+    if (!N) { p.innerHTML = '<div class="panel">No lesson for this step.</div>'; return; }
+    var read = x.lesson ? N : (x.pread || 0);
+    var idx = view.part[s.id]; if (idx == null) idx = Math.min(read, N - 1);
+    idx = Math.max(0, Math.min(idx, N - 1)); view.part[s.id] = idx;
+    var isLast = idx === N - 1, pctRead = Math.round(100 * read / N);
+    var SG = segsOf(s), seg = SG[idx], segHtml = '';
+    if (seg && seg.lab && C.labs[seg.lab]) {
+      var ld = st(s.id).labs[seg.lab], L = C.labs[seg.lab];
+      segHtml += '<div class="panel" style="border-color:var(--acc2);margin-top:12px"><div class="tag">🧪 Hands-on for this segment</div><b style="display:block;margin:4px 0">' + esc(L.title) + '</b><div class="muted small">' + esc(L.sum || '') + '</div><div class="row" style="margin-top:8px;gap:8px"><button class="btn pri" data-go="#lab/' + seg.lab + '">' + (ld ? 'Revisit lab' : 'Open the lab →') + '</button>' + (ld ? '<span class="chip ok">✓ Done</span>' : '') + '</div></div>';
+    } else if (seg && seg.quiz && seg.quiz.length) {
+      segHtml += '<div class="panel" style="border-color:var(--acc2);margin-top:12px"><div class="tag">✎ Quick check</div><div id="sq"></div></div>';
+    }
+    if (isLast) {
+      var used = SG.filter(function (g) { return g && g.lab; }).map(function (g) { return g.lab; });
+      var wrap = (s.labs || []).filter(function (id) { return used.indexOf(id) < 0 && C.labs[id]; });
+      if (wrap.length) segHtml += '<div class="panel" style="border-color:var(--lock);margin-top:12px"><div class="tag">🏁 Stage wrap-up — put it together</div>' + wrap.map(function (id) { var wd = st(s.id).labs[id], W = C.labs[id]; return '<div class="row" style="margin-top:8px;gap:8px"><span class="grow"><b>' + esc(W.title) + '</b><div class="muted small">' + esc(W.sum || '') + '</div></span><button class="btn ' + (wd ? '' : 'pri') + '" data-go="#lab/' + id + '">' + (wd ? 'Done ✓' : 'Open →') + '</button></div>'; }).join('') + '</div>';
+    }
+    var html = '<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px"><span class="tag">Part ' + (idx + 1) + ' of ' + N + '</span><span class="chip ' + (read >= N ? 'ok' : '') + '">' + read + '/' + N + ' parts read</span></div>' +
+      '<div class="bar" style="margin-bottom:12px"><i style="width:' + pctRead + '%"></i></div>' +
+      '<div class="panel lesson">' + parts[idx].map(function (sec) { return (sec.h ? '<h3>' + esc(sec.h) + '</h3>' : '') + sec.html; }).join('') + '</div>' +
+      '<div class="row small" style="margin-top:8px;align-items:center;gap:8px"><span class="muted">Switching devices? Resume code for this part:</span><span class="mono" style="color:var(--acc)">' + esc(partCode(s, idx)) + '</span><button class="btn sm ghost" data-cp="' + esc(partCode(s, idx)) + '">Copy</button></div>' +
+      segHtml +
+      '<div class="row" style="margin-top:12px;justify-content:space-between"><button class="btn" id="pv"' + (idx === 0 ? ' disabled' : '') + '>← Back</button>' +
+      (!isLast ? '<button class="btn pri" id="nx">' + (idx < read ? 'Next part →' : 'I read it — next part →') + '</button>'
+        : (read >= N ? '<button class="btn" data-go="#stage/' + s.id + '/gate">Go to the Gate test →</button>' : '<button class="btn pri" id="fin">I read it — finish lesson ✓</button>')) +
+      '</div>';
+    if (read >= N) html += '<div class="row" style="margin-top:10px;gap:8px"><span class="chip ok">✓ Lesson complete</span><button class="btn" data-go="#stage/' + s.id + '/cards">Drill the cards →</button></div>';
+    p.innerHTML = html;
+    p.querySelectorAll('[data-cp]').forEach(function (b) { b.onclick = function () { copy(b.dataset.cp); }; });
+    var pv = $('#pv', p); if (pv) pv.onclick = function () { view.part[s.id] = idx - 1; route(); };
+    var nx = $('#nx', p); if (nx) nx.onclick = function () { if (!x.lesson && idx + 1 > (x.pread || 0)) x.pread = idx + 1; if ((x.pread || 0) >= N) x.lesson = true; view.part[s.id] = idx + 1; persist(); route(); };
+    var fin = $('#fin', p); if (fin) fin.onclick = function () { x.pread = N; x.lesson = true; persist(); route(); };
+    if (seg && seg.quiz && seg.quiz.length) {
+      var sq = $('#sq', p), qi = 0;
+      var draw = function () {
+        if ((x.seg && x.seg[idx]) || qi >= seg.quiz.length) { sq.innerHTML = '<span class="chip ok">✓ Check complete</span>'; if (!x.seg) x.seg = {}; x.seg[idx] = true; persist(); return; }
+        var q = prep(s.qs[seg.quiz[qi]]);
+        sq.innerHTML = '<div class="small muted" style="margin-bottom:6px">Q' + (qi + 1) + ' / ' + seg.quiz.length + '</div><div id="sqp">' + renderQ(q) + '</div>';
+        wire($('#sqp', sq), q, function () {
+          var r = document.createElement('div'); r.className = 'row'; r.style.marginTop = '8px';
+          r.innerHTML = '<button class="btn pri" id="sqn">' + (qi + 1 >= seg.quiz.length ? 'Finish check ✓' : 'Next →') + '</button>';
+          $('#sqp', sq).appendChild(r); $('#sqn', sq).onclick = function () { qi++; draw(); };
+        }, true);
+      };
+      draw();
+    }
   }
 
   // ---------- flashcards (Leitner) ----------
@@ -9476,6 +9562,17 @@ COURSE.tools = [];
       '<button class="btn pri" id="go">Start ' + (cap ? 'exam' : 'gate test') + '</button></div>' +
       (x.passed ? '<div class="panel" style="margin-top:12px"><div class="tag">Checkpoint phrase for this step</div><div class="code" style="margin-top:8px">' + esc(s.code) + '</div></div>' : '');
     $('#go', p).onclick = function () { runTest(p, s, buildSet(s, n), cap); };
+  }
+  function vExam(m) {
+    var T = activeTrack();
+    var s = STAGES.filter(function (x) { return x.capstone && x.track === T; })[0] || STAGES.filter(function (x) { return x.capstone; })[0];
+    if (!s) { m.innerHTML = '<div class="panel">No practice exam in this track yet.</div>'; return; }
+    var cap = s.capstone, x = st(s.id);
+    m.innerHTML = '<div class="tag">Practice exam · ' + esc(trackOf(T).name || '') + '</div><h1 style="margin:4px 0 6px">' + esc(s.title) + '</h1>' +
+      '<div class="panel"><p>A full <b>' + cap.n + '-question</b> exam weighted across the sections, on a <b>' + cap.minutes + '-minute</b> timer. Retake as often as you want; it reshuffles each attempt.</p>' +
+      '<p class="muted small">Best so far: ' + (x.best ? x.best + '%' : '—') + ' · attempts: ' + (x.attempts || 0) + '. You need over ' + PASS + '% here.</p>' +
+      '<div class="row"><button class="btn pri" id="go">Start practice exam</button><button class="btn" data-go="#path">Back to path</button></div></div><div id="pane"></div>';
+    $('#go', m).onclick = function () { runTest($('#pane', m), s, buildSet(s, cap.n), cap); };
   }
   function buildSet(s, n) {
     if (s.capstone) {
@@ -9635,7 +9732,7 @@ COURSE.tools = [];
     var earned = STAGES.filter(function (s) { return st(s.id).passed; });
     var hist = S.history.slice(-8).reverse();
     m.innerHTML = '<h1>Save & restore</h1>' +
-      '<div class="panel"><h3>Restore from a checkpoint phrase</h3><p class="muted small">Lost your progress or switched devices? Type the phrase from the last step you passed. Every step up to it unlocks.</p>' +
+      '<div class="panel"><h3>Restore from a checkpoint phrase</h3><p class="muted small">Lost your progress or switched devices? Type the phrase from the last step you passed — every step up to it unlocks. Mid-lesson on another device? Enter the part code shown on each lesson part to jump back to where you were reading.</p>' +
       '<div class="row"><input class="answer-in grow" id="rc" placeholder="e.g. ' + esc(C.codeExample || 'PHRASE-HERE') + '" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false"><button class="btn pri" id="rb">Restore</button></div></div>' +
       '<div class="panel" style="margin-top:12px"><h3>Your checkpoint phrases</h3>' +
       (earned.length ? '<div class="list">' + earned.map(function (s) { return '<div class="li" style="cursor:default"><span class="chip ok">' + esc(stepLabel(s).replace('Step ', '')) + '</span><span class="grow"><b>' + esc(s.title) + '</b><div class="mono small" style="color:var(--acc);margin-top:2px">' + esc(s.code) + '</div></span><button class="btn sm" data-cp="' + esc(s.code) + '">Copy</button></div>'; }).join('') + '</div>' +
@@ -9646,7 +9743,21 @@ COURSE.tools = [];
       (hist.length ? '<div class="panel" style="margin-top:12px"><h3>Recent tests</h3>' + hist.map(function (h) { var s = stageById(h.stage); return '<div class="row small" style="margin:4px 0"><span class="grow">' + esc(s ? s.title : h.stage) + '</span><span class="mono" style="color:' + (h.pct >= PASS ? 'var(--ok)' : 'var(--bad)') + '">' + h.pct + '%</span><span class="dim">' + new Date(h.at).toLocaleDateString() + '</span></div>'; }).join('') + '</div>' : '') +
       '<div class="panel" style="margin-top:12px"><h3>Danger zone</h3><button class="btn warn" id="rs">Reset all progress</button></div>';
     $('#rb', m).onclick = function () {
-      var v = normCode($('#rc', m).value);
+      var raw = ($('#rc', m).value || '').trim().toUpperCase();
+      var pm = raw.match(/^([A-Z0-9]+)-P(\d+)$/);
+      if (pm) {
+        var base = pm[1], pn = +pm[2];
+        var ps = STAGES.filter(function (x) { return (x.code || '').split('-')[0].toUpperCase() === base; })[0];
+        if (ps) {
+          var prev = STAGES.filter(function (o) { return o.track === ps.track && o.tidx === ps.tidx - 1; })[0]; if (prev) restoreTo(prev);
+          var px = st(ps.id), tot = (ps.lesson || []).length;
+          px.pread = Math.max(px.pread || 0, Math.min(pn, tot)); if (px.pread >= tot) px.lesson = true;
+          view.part[ps.id] = Math.max(0, Math.min(pn - 1, tot - 1)); S.track = ps.track;
+          persist(); toast('✓ Resumed at ' + esc(stepLabel(ps)) + ', part ' + pn, 3000);
+          location.hash = '#stage/' + ps.id + '/learn'; route(); return;
+        }
+      }
+      var v = normCode(raw);
       var s = STAGES.filter(function (x) { return normCode(x.code) === v; })[0];
       if (!s) { toast('That phrase does not match any step. Check spelling.'); return; }
       restoreTo(s); S.track = s.track; toast('✓ Restored through ' + esc(stepLabel(s)) + ': ' + esc(s.title), 3000); route();
