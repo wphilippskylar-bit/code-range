@@ -1,6 +1,11 @@
 /* Code Range — RangeKit build table. New tracks are created here; existing tracks are converted by listing their old stage ids in `old`. */
 (function () {
   var RK = window.RK;
+  RK.build({ track: 'win', pfx: 'win', unit: 'Module',
+    domains: [
+      { d: 1, tier: 'win-f', name: 'Command Prompt', old: ['win1'], wrapLab: 'win-m1-wrap', next: 'Module 2 · PowerShell' },
+      { d: 2, tier: 'win-c', name: 'PowerShell', old: ['win2'], wrapLab: 'win-m2-wrap', next: 'the Active Directory track' }
+    ] });
   RK.build({ track: 'remote', pfx: 'rem', unit: 'Module',
     trackDef: { name: 'Remote Access & Support', short: 'REM', subtitle: 'SSH, Remote Desktop, PowerShell remoting and secure remote support — all hands-on', after: 'ad' },
     domains: [
