@@ -67,7 +67,9 @@ Honesty rules for the grader:
 | A+ Range — Core 1, all 5 domains (rebuilt 17 Nov) | 19 | 17 | 18 | 19 | 17 | **90** | 3.6 PSU and 3.8 printer maintenance have calc/order labs, not command tickets (nothing to type for them); hand-review the keyword-sorted old bank |
 | Security+ Range (SY0-701) | 16 | 9 | 8 | 12 | 18 | **63** | Parts, callouts, paired labs on all 28 objectives |
 | Cloud Range (15 cert tracks) | 10 | 10 | 10 | 9 | 12 | **51** | One ladder rebuilt by official domain → objective |
-| Code Range (11 skill tracks) | 16 | 14 | 18 | 10 | 12 | **70** | Part format; Windows and Remote Access tracks |
+| Code Range — Remote Access track (new, 17 Nov) | 18 | 17 | 19 | 19 | 17 | **90** | 7 lessons, 16 terminal labs (SSH/scp/tunnels/jump hosts/sshd hardening, RDP sessions + enabling, WinRM, support audit, troubleshooting ladders). Assessment 17: bank is new and hand-written but only 15–16 per lesson |
+| Code Range — Windows track (rebuilt, 17 Nov) | 18 | 17 | 19 | 19 | 17 | **90** | 6 lessons, 14 terminal labs (CMD navigation/files/network/admin/redirection, PowerShell help/pipeline/admin/scripts) |
+| Code Range — other 9 tracks | 16 | 14 | 18 | 10 | 12 | **70** | AD and Linux next (convert to parts with their real simulators); then SQL, Python, JS, C++, Git, AI, Fix |
 
 Net+ evidence (from `rk-check.js` and `coverage-check.js`): 25 objectives, 101 parts, avg 158 words/part, 88% of parts with a paired lab,
 100% with callouts, 29 simulator/terminal labs, 15+ test questions on every objective, every official bullet found in its objective's lessons.
@@ -96,10 +98,10 @@ Each item is one sitting. Finish, run the checker, push, tick it off here.
 - [x] Core 1 Domain 5 — Troubleshooting (5.1–5.6), 17 Nov: every objective has a multi-step ticket (event IDs/temps/CMOS, degraded array + offline disk, projector path, adb phone, pathping/jitter + switch port flapping, frozen print queue). **A+ complete: 36 Core 2 + 27 Core 1 objectives, 438/438 Core 1 and 722/722 Core 2 bullets.**
 
 **Code Range** (`code-range`) — see section 6 for what exists.
-- [ ] **New track: Remote Access & Support** (track id `remote`, `unit: 'Module'`, added with `trackDef`/`tierDef` in `RK.build`). All terminal labs.
+- [x] **New track: Remote Access & Support** (track id `remote`, `unit: 'Module'`), 17 Nov — source in `code-range/source/rk-remote.js`.
   - Module 1 · Foundations: 1.1 the remote-access map (RDP 3389, SSH 22, WinRM 5985/5986, VNC 5900, VPN, RMM — which to use when) · 1.2 SSH from the command line (ssh user@host, -p, ssh-keygen, ssh-copy-id, known_hosts, scp) · 1.3 Remote Desktop (mstsc /v, enabling RDP, NLA, Remote Desktop Users group, firewall, qwinsta/logoff).
   - Module 2 · Remote administration: 2.1 PowerShell remoting (Enable-PSRemoting, Test-WSMan, Enter-PSSession, Invoke-Command, TrustedHosts) · 2.2 remote support workflow (verify identity, consent, attended vs unattended, document) · 2.3 troubleshooting ("can't RDP": ping → Test-NetConnection -Port 3389 → service → firewall → group → NLA; "can't SSH": same ladder) · 2.4 secure remote access (VPN first, MFA, jump host, least privilege, keys over passwords, never expose RDP to the Internet).
-- [ ] **Rebuild the Windows track** (`win1`, `win2` → two modules, old stages listed in `old` so their questions carry over).
+- [x] **Rebuild the Windows track** (`win1`, `win2` → two modules), 17 Nov — source in `code-range/source/rk-win.js`.
   - Module 1 · Command Prompt: 1.1 files and navigation (cd, dir, md, rd, copy, move, del, ren, type, wildcards) · 1.2 network and system (ipconfig, ping, tracert, nslookup, netstat, tasklist/taskkill, systeminfo, shutdown) · 1.3 admin (net user/localgroup, net use, sfc, chkdsk, robocopy, gpupdate/gpresult, redirection and findstr).
   - Module 2 · PowerShell: 2.1 cmdlets and help (Verb-Noun, Get-Help, Get-Command, aliases) · 2.2 objects and the pipeline (Where-Object, Sort-Object, Select-Object, Get-Member, Export-Csv) · 2.3 managing a PC (Get-Service/Restart-Service, Get-WinEvent, Test-NetConnection, Get-NetIPAddress, execution policy, .ps1 scripts).
 - [ ] Convert the Active Directory track (ad1–ad9) to parts, pairing each part with an `ad` simulator lab or a PowerShell terminal lab.
@@ -139,7 +141,9 @@ cd .. && git add -A && git commit -m "…" && git push
 - The checker fails on: page errors, a learn part over 5 min, part + lab over 15 min, a part without a quick check or objective line, an objective with under 12 test questions (add `RK.extra`), a wrap with under 4 recap lines, match answers missing from their options, a terminal `show` command its own `accept` rejects, or a broken flip/lab/test flow.
 - Progress: if the learner had passed the old domain stage, the new objectives start passed ("carried over"). Nothing to do.
 
-For apps **without** a source folder (Cloud, Code): copy `source/rangekit/` from the A+ repo, then
+**Code Range now has `source/`** (RangeKit, content files, `BUILD.md`): `python3 source/rangekit/rk-inject.py index.html source/rangekit/rk-base.js source/rk-win.js source/rk-remote.js source/rk-build-code.js` then `node source/rangekit/rk-check.js index.html`. Add AD/Linux content files before `rk-build-code.js` and add their domains (with `old: [...]`) to it. `partsify.py` now also labels Module-unit chips "Module N".
+
+For apps **without** a source folder (Cloud): copy `source/rangekit/` from the A+ repo, then
 `python3 source/rangekit/rk-inject.py index.html source/rangekit/rk-base.js source/content1.js … source/rk-build.js`.
 It patches the engine and inserts the files before it; re-running replaces the earlier block. Keep the content files in `source/` in that repo.
 The engine patch has been trial-run on all four track-based consoles (A+, Sec+, Cloud, Code) and loads cleanly.
