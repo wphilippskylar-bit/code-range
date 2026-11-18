@@ -70,6 +70,12 @@
       var oldQ = [], oldC = [];
       (D.old || []).forEach(function (id) { var s = byId[id]; if (!s) return; (s.qs || []).forEach(function (q) { if (!D.strictDom || qDom(q) === D.d) oldQ.push(q); }); (s.cards || []).forEach(function (c) { oldC.push(c); }); });
       var qFor = objs.map(function () { return []; }), cFor = objs.map(function () { return []; }), looseQ = [], looseC = [];
+      if (D.oldByObj) { // exact carry-over: objective id -> old stage id (questions, cards and labs keep their hand-assigned objective)
+        oldQ = []; oldC = [];
+        objs.forEach(function (o, oi) { var s = byId[D.oldByObj[o.id]]; if (!s) return;
+          (s.qs || []).forEach(function (q) { qFor[oi].push(setD(q, D.d)); }); (s.cards || []).forEach(function (c) { cFor[oi].push(c); });
+          o.moreLabs = (o.moreLabs || []).slice(); (s.labs || []).forEach(function (l) { if (o.moreLabs.indexOf(l) < 0) o.moreLabs.push(l); }); });
+      }
       oldQ.forEach(function (q) { var i = best(objs, qText(q)); if (i < 0) looseQ.push(setD(q, D.d)); else qFor[i].push(setD(q, D.d)); });
       oldC.forEach(function (c) { var i = best(objs, String(c[0]) + ' ' + String(c[1])); if (i < 0) looseC.push(c); else cFor[i].push(c); });
       var out = [], domQs = [], recapParts = [], ids = [];

@@ -11,6 +11,8 @@ const shotIdx = process.argv.indexOf('--shots'); const shots = shotIdx > 0 ? pro
 (async () => {
   const opts = { args: ['--no-sandbox'] }; if (require('fs').existsSync('/opt/pw-browsers/chromium')) opts.executablePath = '/opt/pw-browsers/chromium';
   const b = await chromium.launch(opts); const p = await b.newPage({ viewport: { width: 420, height: 900 } });
+  // game-layer consoles (Sec+) pop level-up/badge modals; clear them so they never block the flow test
+  await p.addInitScript(() => { setInterval(() => { document.querySelectorAll('.modal').forEach(m => m.remove()); }, 40); });
   const errs = []; p.on('pageerror', e => errs.push(e.message));
   await p.goto('file://' + path.resolve(file)); await p.waitForTimeout(1200);
   await p.evaluate(() => { localStorage.clear(); }); await p.reload(); await p.waitForTimeout(900);

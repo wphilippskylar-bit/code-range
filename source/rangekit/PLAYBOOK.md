@@ -65,7 +65,7 @@ Honesty rules for the grader:
 | A+ Range — Core 2 Domain 2 (rebuilt) | 19 | 17 | 18 | 19 | 17 | **90** | 2.10 has no terminal ticket (router config sim would lift it); hand-review the sorted bank |
 | A+ Range — Core 2 Domain 3 (rebuilt) | 19 | 17 | 18 | 19 | 17 | **90** | 3.2 is pick-labs only (mobile); 3.3 has 15 questions (minimum) — add 3–5 more scenario questions |
 | A+ Range — Core 1, all 5 domains (rebuilt 17 Nov) | 19 | 17 | 18 | 19 | 17 | **90** | 3.6 PSU and 3.8 printer maintenance have calc/order labs, not command tickets (nothing to type for them); hand-review the keyword-sorted old bank |
-| Security+ Range (SY0-701) | 16 | 9 | 8 | 12 | 18 | **63** | Parts, callouts, paired labs on all 28 objectives |
+| Security+ Range (SY0-701) — rebuilt 18 Nov | 19 | 18 | 18 | 19 | 18 | **92** | 28 objectives / 61 parts (avg 221 words), 100% paired labs and callouts, 28 new terminal labs + calc/order/match labs, 694/694 official terms (incl. an Exam-wording glossary per objective). Assessment 18: bank is hand-tagged per objective at source (not keyword-sorted), 20–38 per objective + bosses + final. Hands-on 18: governance objectives (5.1, 5.3, 5.6) use scenario/calc labs, not command tickets |
 | Cloud Range (15 cert tracks) | 10 | 10 | 10 | 9 | 12 | **51** | One ladder rebuilt by official domain → objective |
 | Code Range — Remote Access track (new, 17 Nov) | 18 | 17 | 19 | 19 | 17 | **90** | 7 lessons, 16 terminal labs (SSH/scp/tunnels/jump hosts/sshd hardening, RDP sessions + enabling, WinRM, support audit, troubleshooting ladders). Assessment 17: bank is new and hand-written but only 15–16 per lesson |
 | Code Range — Windows track (rebuilt, 17 Nov) | 18 | 17 | 19 | 19 | 17 | **90** | 6 lessons, 14 terminal labs (CMD navigation/files/network/admin/redirection, PowerShell help/pipeline/admin/scripts) |
@@ -111,7 +111,7 @@ Each item is one sitting. Finish, run the checker, push, tick it off here.
 - [ ] (added) Convert the remaining Code Range tracks the same way: keep the lesson text via SEC() + `build-sec.py`, add callouts/quick checks, pair parts with the existing `code`/`sh`/`git` labs.
 
 **Security+ Range** (`sec-training`) — stages are already one per objective.
-- [ ] For each of the 28 objectives: split the lesson into parts, write quick checks, add paired labs (13 objectives have none), add wrap recaps. Keep the XP/level game layer and the 80% gate that app uses.
+- [x] All 28 objectives in parts, 18 Nov. Engine partsified; stage ids kept (o1_1…) so progress carries; `oldByObj` keeps each objective's own questions/cards/labs; domain wrap-ups sit before each boss; XP layer and 80% gate unchanged. Build: `python3 rk/build-sec.py && python3 build.py` (see sec-training/source/README.md).
 
 **Net+ Range** (`netplus-range`) — at 90. Build: `python3 source/n10-009/patch.py`, then `node source/tools/rk-check.js index.html` and `node source/tools/coverage-check.js`.
 - [x] Terminal labs and an On-the-job + Exam-trap callout on every part; official-bullet coverage audit.
@@ -139,7 +139,9 @@ cd .. && git add -A && git commit -m "…" && git push
 - **Coverage audit (required for criterion 1):** list the official bullets per objective (see `source/tools/coverage-check.js` in the Net+ repo for the pattern) and confirm each appears in that objective's lesson text. Explain every miss.
 - The checker prints a `scorecard inputs` line — paste it with your grade.
 - An objective can list extra labs with `moreLabs: ['id']` (shown in its Labs tab, not paired to a part).
-- `rk-check.js` also types every terminal lab's own answers and fails if any lab does not complete.
+- `rk-check.js` also types every terminal lab's own answers and fails if any lab does not complete, and clears game-layer modals (Sec+).
+- `RK.build` domains may set `oldByObj: { '1.1': 'o1_1', … }` to carry an old stage's questions, cards and labs onto exactly one objective (no keyword sorting).
+- Never put a literal `<script` in lesson or task text — write `&lt;script&gt;` (the checker catches it as a page error).
 - `node rangekit/rk-coverage.js dist/index.html objectives/core2-bullets.json` (and `objectives/core1-bullets.json`) is the coverage audit. Write the JSON with `ensure_ascii=False` or the en-dash terms will not match. Add each new domain's official bullets to that JSON (one `;`-separated line per objective) **before** writing the content, and write until it reports every bullet found.
 - The checker fails on: page errors, a learn part over 5 min, part + lab over 15 min, a part without a quick check or objective line, an objective with under 12 test questions (add `RK.extra`), a wrap with under 4 recap lines, match answers missing from their options, a terminal `show` command its own `accept` rejects, or a broken flip/lab/test flow.
 - Progress: if the learner had passed the old domain stage, the new objectives start passed ("carried over"). Nothing to do.
@@ -202,7 +204,7 @@ Use **Core 2 objectives 1.5 and 1.9** (`src/rk-c2d1a.js`, `rk-c2d1b.js`) as the 
 |---|---|---|---|---|
 | netplus-range | /netplus-range/ | single-track, patched by `source/n10-009/patch.py` | `source/n10-009/` (content + `index.orig.html`) | storage key `netplus:v2`; official order is 3.3 DR · 3.4 services · 3.5 access |
 | aplus-exams-practice | /aplus-exams-practice/ | track-based, RangeKit | `source/src`, `build.py` | tracks `core1`, `core2`; 90% gate |
-| sec-training | /sec-training/ | track-based + XP game layer | `source/src`, `build.py` | 80% gate; engine not yet patched — run `partsify.py source/src/app.js` first |
+| sec-training | /sec-training/ | track-based + XP game layer, RangeKit-patched | `source/src`, `source/rk/*.src.js`, `build.py` | 80% gate; rk-check clears level-up modals automatically |
 | cloud-range | /cloud-range/ | track-based | index.html only | use `rk-inject.py`; has `cloud` console-sim lab kind |
 | code-range | /code-range/ | track-based | index.html only (+ `source/` for RangeKit files) | lab kinds `code`, `sh`, `git`, `ad` are real simulators — prefer them over `term` where they fit |
 
