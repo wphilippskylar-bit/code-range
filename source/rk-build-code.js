@@ -6,6 +6,13 @@
       { d: 1, tier: 'win-f', name: 'Command Prompt', old: ['win1'], wrapLab: 'win-m1-wrap', next: 'Module 2 · PowerShell' },
       { d: 2, tier: 'win-c', name: 'PowerShell', old: ['win2'], wrapLab: 'win-m2-wrap', next: 'the Active Directory track' }
     ] });
+  RK.build({ track: 'linux', pfx: 'lnx', unit: 'Module',
+    domains: [
+      { d: 1, tier: 'lnx-f', name: 'Foundations', old: ['lnx1'], wrapLab: 'lxx-m1-wrap', next: 'Module 2 · Text and pipes' },
+      { d: 2, tier: 'lnx-c', name: 'Text and pipes', old: ['lnx2'], wrapLab: 'lxx-m2-wrap', next: 'Module 3 · Permissions and scripts' },
+      { d: 3, tier: 'lnx-p', name: 'Permissions and scripts', old: ['lnx3'], wrapLab: 'lxx-m3-wrap', next: 'Module 4 · Pro' },
+      { d: 4, tier: 'lnx-x', name: 'Pro', old: ['lnx4', 'lnx5', 'lnx6', 'lnx7'], wrapLab: 'lxx-m4-wrap', next: 'the Windows track' }
+    ] });
   RK.build({ track: 'ad', pfx: 'ad', unit: 'Module',
     domains: [
       { d: 1, tier: 'ad-f', name: 'Foundations', old: ['ad1', 'ad2'], wrapLab: 'adx-m1-wrap', next: 'Module 2 · Everyday administration' },

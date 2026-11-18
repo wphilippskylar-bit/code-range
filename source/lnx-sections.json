@@ -1,0 +1,144 @@
+{
+ "lnx1": [
+  {
+   "h": "What the shell is",
+   "html": "<p>The <b>shell</b> (bash) is a program that reads commands you type and runs them. Every command is <code>name [options] [arguments]</code>. Options start with <code>-</code> (<code>-l</code>) or <code>--</code> (<code>--all</code>). The prompt ends in <code>$</code> for a normal user.</p>"
+  },
+  {
+   "h": "The filesystem is a tree",
+   "html": "<p>Everything hangs off the root <code>/</code>. Your files live in your <b>home directory</b>, <code>/home/phil</code>, which the shell abbreviates as <code>~</code>.</p><ul><li><b>Absolute path</b> starts at <code>/</code>: <code>/home/phil/notes.md</code>.</li><li><b>Relative path</b> starts from where you are: <code>notes.md</code>, <code>projects/app.py</code>.</li><li><code>.</code> = here, <code>..</code> = one level up, <code>~</code> = home.</li></ul>"
+  },
+  {
+   "h": "The core commands",
+   "html": "<table><tr><th>Command</th><th>Does</th></tr><tr><td><code>pwd</code></td><td>Print working directory (where am I?)</td></tr><tr><td><code>ls</code></td><td>List files. <code>ls -l</code> long/details, <code>ls -a</code> include hidden (dotfiles), <code>ls -la</code> both</td></tr><tr><td><code>cd DIR</code></td><td>Change directory. <code>cd</code> alone → home, <code>cd ..</code> → up, <code>cd -</code> → previous</td></tr><tr><td><code>cat FILE</code></td><td>Print a file's contents</td></tr><tr><td><code>less FILE</code></td><td>Page through a long file (q to quit)</td></tr><tr><td><code>head -n 5</code> / <code>tail -n 5</code></td><td>First / last 5 lines</td></tr><tr><td><code>tree</code></td><td>Show the directory as a tree</td></tr><tr><td><code>man CMD</code></td><td>The manual for any command</td></tr></table><div class=\"callout pro\"><b class=\"k\">Pro habit</b>When lost: <code>pwd</code> to see where you are, <code>ls</code> to see what's here, <code>cd</code> to move. That loop never fails.</div>"
+  },
+  {
+   "h": "Hidden files and tab completion",
+   "html": "<p>Files starting with <code>.</code> (like <code>.bashrc</code>) are hidden; <code>ls -a</code> shows them. In a real terminal, press <b>Tab</b> to auto-complete a name — type <code>cd Doc</code> then Tab. The lab terminal supports Tab too.</p>"
+  },
+  {
+   "h": "Deep dive: moving around like you live here",
+   "html": "<pre>/home/phil/projects/app.py     # absolute: starts at /\nprojects/app.py                # relative: from where you are now\n../Documents                   # .. = parent, . = here, ~ = your home\n\nmkdir -p work/2026/reports     # -p creates missing parents, no error if it exists\ncp -r projects projects-copy   # -r copies a directory tree\nmv draft.txt final.txt         # mv renames…\nmv final.txt ~/Documents/      # …and moves\nrm -r old-folder               # recursive delete — there is no recycle bin\nls -la                         # long listing including hidden .dotfiles\ntree                           # the whole tree at a glance</pre><ul><li><b>Globs</b> are expanded by the shell <i>before</i> the command runs: <code>*.pdf</code>, <code>report-?.txt</code>, <code>[ab]*</code>. Run <code>echo *.pdf</code> to preview what a glob matches before handing it to <code>rm</code>.</li><li>Linux is <b>case-sensitive</b>: <code>Notes.txt</code> and <code>notes.txt</code> are different files.</li><li>Key places: <code>/etc</code> (config), <code>/var/log</code> (logs), <code>/home</code> (users), <code>/tmp</code> (scratch), <code>/usr/bin</code> (programs), <code>/root</code> (the admin's home).</li><li><code>file x</code> says what a file is; <code>stat x</code> shows size, permissions and times.</li></ul>"
+  }
+ ],
+ "lnx2": [
+  {
+   "h": "Standard streams",
+   "html": "<p>Every command has <b>stdin</b> (input), <b>stdout</b> (output) and <b>stderr</b> (errors). Three operators rewire them:</p><ul><li><code>|</code> <b>pipe</b>: send one command's stdout into the next command's stdin. <code>cat log | grep ERROR</code>.</li><li><code>&gt;</code> redirect stdout to a file (overwrite); <code>&gt;&gt;</code> append. <code>ls &gt; files.txt</code>.</li><li><code>&lt;</code> read stdin from a file.</li></ul><div class=\"callout pro\"><b class=\"k\">The Unix philosophy</b>Each tool does one thing well. Power comes from piping them together. A pro builds a pipeline left to right, checking the output at each <code>|</code>.</div>"
+  },
+  {
+   "h": "grep — find lines",
+   "html": "<pre>grep ERROR app.log           # lines containing ERROR\ngrep -i error app.log        # case-insensitive\ngrep -v INFO app.log         # lines WITHOUT INFO\ngrep -c ERROR app.log        # count matching lines\ngrep -n ERROR app.log        # show line numbers\ngrep -r TODO projects/       # recurse into a directory</pre>"
+  },
+  {
+   "h": "cut / sort / uniq / wc",
+   "html": "<ul><li><code>cut -d, -f3 sales.csv</code> — field 3 of a comma-delimited file.</li><li><code>sort</code> (alphabetical), <code>sort -n</code> (numeric), <code>sort -r</code> (reverse).</li><li><code>uniq -c</code> — collapse <b>adjacent</b> duplicates and count. Always <code>sort | uniq</code>.</li><li><code>wc -l</code> count lines, <code>-w</code> words, <code>-c</code> chars.</li></ul><p>The classic \"top values\" one-liner:</p><pre>cut -d, -f2 sales.csv | sort | uniq -c | sort -rn | head</pre>"
+  },
+  {
+   "h": "sed & awk (the power tools)",
+   "html": "<ul><li><b>sed</b> edits a stream. <code>sed 's/old/new/g'</code> replaces all <code>old</code> with <code>new</code> on each line. <code>sed -n '2,5p'</code> prints lines 2–5. <code>sed '/DEBUG/d'</code> deletes matching lines.</li><li><b>awk</b> works with columns. Fields are <code>$1 $2 …</code>, whole line is <code>$0</code>, line number is <code>NR</code>. <code>awk -F, '$2==\"West\" {print $3}'</code> prints column 3 where column 2 is West. <code>awk -F, 'NR>1 {s+=$4} END {print s}'</code> sums column 4.</li></ul><div class=\"callout trap\"><b class=\"k\">Quote trap</b>Wrap awk/sed programs in <b>single quotes</b> so the shell doesn't expand <code>$4</code> before awk sees it.</div>"
+  },
+  {
+   "h": "Deep dive: the three streams and composing tools",
+   "html": "<p>Every program has <b>stdin</b> (0), <b>stdout</b> (1) and <b>stderr</b> (2). Pipes connect stdout to the next stdin; errors go to the screen unless you redirect them.</p><pre>cmd &gt; out.txt          # stdout to a file (overwrite)\ncmd &gt;&gt; out.txt         # append\ncmd 2&gt; errors.txt      # stderr only\ncmd &gt; all.txt 2&gt;&amp;1     # both streams into one file\ncmd 2&gt;/dev/null        # discard errors\ncmd | tee copy.txt | wc -l   # save a copy AND keep piping\nls *.log | xargs wc -l       # turn lines of input into arguments\n\n# CSV columns: skip the header, pick a column, count unique values\ntail -n +2 sales.csv | cut -d, -f2 | sort | uniq -c | sort -rn</pre><ul><li><code>sort -t, -k4 -n</code> sorts a CSV by its 4th column numerically.</li><li><code>uniq</code> only collapses <b>adjacent</b> duplicates — always <code>sort</code> first.</li><li><code>tr 'a-z' 'A-Z'</code> translates characters; <code>tr -d '\\r'</code> strips Windows line endings.</li><li>Exit codes: 0 = success. <code>a &amp;&amp; b</code> runs b only if a succeeded; <code>a || b</code> only if it failed.</li></ul>"
+  }
+ ],
+ "lnx3": [
+  {
+   "h": "Variables & environment",
+   "html": "<pre>name=\"Phil\"          # no spaces around =\necho \"Hi $name\"      # $ expands it → Hi Phil\nexport PATH=\"$PATH:~/bin\"   # export makes it available to child programs</pre><p><code>$HOME</code>, <code>$USER</code>, <code>$PATH</code> (where the shell looks for commands), <code>$PWD</code>, <code>$?</code> (exit status of the last command: 0 = success). See all with <code>env</code>.</p>"
+  },
+  {
+   "h": "Permissions",
+   "html": "<p><code>ls -l</code> shows <code>-rwxr-xr--</code>: type, then <b>owner</b>/<b>group</b>/<b>others</b> each with read(4) write(2) execute(1).</p><pre>chmod 755 file    # rwx r-x r-x  (owner all, others read+exec)\nchmod 644 file    # rw- r-- r--  (typical file)\nchmod u+x file    # add execute for the owner\nchmod go-w file   # remove write from group & others</pre><p>Octal: add the numbers — rwx = 4+2+1 = 7, r-x = 5, r-- = 4. A script needs <b>execute</b> (<code>chmod +x</code>) to run as <code>./script.sh</code>.</p>"
+  },
+  {
+   "h": "Writing scripts",
+   "html": "<pre>#!/bin/bash           # \"shebang\": run this file with bash\necho \"Backing up...\"\nfor f in *.txt; do    # loop over matching files\n  echo \"Found $f\"\ndone\n\nif [ -f config.ini ]; then   # test: does the file exist?\n  echo \"config present\"\nfi</pre><p><code>$1 $2 …</code> are command-line arguments, <code>$#</code> is how many, <code>$@</code> is all of them. Make it executable (<code>chmod +x run.sh</code>) and run <code>./run.sh</code>.</p>"
+  },
+  {
+   "h": "find & useful extras",
+   "html": "<ul><li><code>find . -name \"*.log\" -type f</code> — search recursively by name/type.</li><li><code>find . -name \"*.tmp\" -delete</code> — find and act.</li><li>Globs: <code>*</code> any chars, <code>?</code> one char, <code>[abc]</code> a set. <code>ls *.py</code>, <code>ls app?.js</code>.</li><li><code>alias ll=\"ls -la\"</code> — shortcuts (put in <code>~/.bashrc</code>).</li><li><code>&amp;&amp;</code> run next only if the last succeeded; <code>;</code> run regardless.</li></ul>"
+  },
+  {
+   "h": "Try it for real: your first script",
+   "html": "<p>The lab terminal has a built-in editor. Type <code>nano hello.sh</code>, write the script, tap <b>Save</b>, then run it.</p><pre>#!/bin/bash\n# hello.sh — greet the current user\nname=\"$USER\"\necho \"Hello, $name\"\necho \"You are in $(pwd)\"</pre><pre>bash hello.sh        # run it with bash (no permission needed)\nchmod +x hello.sh    # or make it executable…\n./hello.sh           # …and run it directly (./ = \"in this folder\")</pre><ul><li><code>$(command)</code> inserts a command's output: <code>today=$(date)</code>.</li><li><code>$((2 + 3))</code> does integer math.</li><li><b>Quote your variables</b>: <code>\"$file\"</code> keeps names with spaces in one piece.</li><li>Single quotes are literal: <code>echo '$HOME'</code> prints <code>$HOME</code>; double quotes expand: <code>echo \"$HOME\"</code> prints <code>/home/phil</code>.</li></ul>"
+  }
+ ],
+ "lnx4": [
+  {
+   "h": "The awk model: pattern { action }",
+   "html": "<p>awk reads input <b>one line (record) at a time</b>, splits it into <b>fields</b>, and runs every rule whose pattern matches.</p><pre>awk 'PATTERN { ACTION }' file\n\nawk '$4 == 404' access.log            # pattern only → print matching lines\nawk '{ print $1 }' access.log          # action only → runs on every line\nawk '$4 >= 400 { print $1, $3 }' access.log</pre><ul><li><code>$0</code> is the whole line; <code>$1</code>…<code>$NF</code> are fields; <code>NF</code> = number of fields, so <code>$NF</code> is the last one.</li><li><code>NR</code> = current line number (record number) across all input.</li><li>Fields split on runs of whitespace by default. <code>-F,</code> (or <code>BEGIN{FS=\",\"}</code>) splits on commas.</li><li>In <code>print a, b</code> the comma inserts <code>OFS</code> (a space by default). <code>print a b</code> with no comma <b>concatenates</b>.</li></ul><div class=\"callout pro\"><b class=\"k\">Always single-quote</b>the program. Inside double quotes the shell would expand <code>$1</code> before awk ever saw it.</div>"
+  },
+  {
+   "h": "Variables, BEGIN and END",
+   "html": "<p>Variables need no declaration; they start as 0 / empty string. <code>BEGIN</code> runs before any input, <code>END</code> after the last line — the place to print totals.</p><pre>awk '{ bytes += $5 } END { print bytes }' access.log\n\nawk 'BEGIN { print \"ip,status\" } { print $1 \",\" $4 }' access.log\n\nawk -F, 'NR > 1 { units += $4 } END { print \"units:\", units }' sales.csv</pre><p><code>NR &gt; 1</code> is the standard trick to <b>skip a CSV header</b>. Forget it and the header row sneaks into your report.</p><p>Averages: <code>END { print total / NR }</code> — or divide by your own counter when a pattern filtered lines.</p>"
+  },
+  {
+   "h": "Associative arrays = group-by",
+   "html": "<p>awk arrays are keyed by strings. That makes \"count per X\" and \"sum per X\" one-liners — the shell equivalent of SQL <code>GROUP BY</code>.</p><pre># requests per status code\nawk '{ c[$4]++ } END { for (s in c) print s, c[s] }' access.log\n\n# bytes per client IP\nawk '{ b[$1] += $5 } END { for (ip in b) print ip, b[ip] }' access.log\n\n# revenue per region (units × price), skipping the header\nawk -F, 'NR>1 { r[$2] += $4 * $5 } END { for (k in r) print k, r[k] }' sales.csv</pre><p><code>for (k in arr)</code> visits keys in <b>no guaranteed order</b> — pipe into <code>sort</code> when order matters. <code>if (k in arr)</code> tests membership without creating the key.</p>"
+  },
+  {
+   "h": "Conditions, logic and printf",
+   "html": "<pre>awk '$2 == \"POST\" &amp;&amp; $4 == 401 { fails[$1]++ }\n     END { for (ip in fails) if (fails[ip] &gt;= 2) print ip, fails[ip] }' access.log\n\nawk '{ if ($4 &gt;= 500) err++; else if ($4 &gt;= 400) warn++ }\n     END { print \"5xx:\", err+0, \"4xx:\", warn+0 }' access.log\n\nawk -F, 'NR>1 { printf \"%-8s %8.2f\\n\", $2, $4*$5 }' sales.csv</pre><ul><li>Operators: <code>== != &lt; &lt;= &gt; &gt;=</code>, <code>&amp;&amp; || !</code>, regex match <code>$3 ~ /login/</code> and <code>!~</code>.</li><li><code>printf</code> does not add a newline — write <code>\\n</code> yourself. <code>%s</code> string, <code>%d</code> integer, <code>%.2f</code> two decimals, <code>%-8s</code> left-pad to width 8.</li><li><code>err+0</code> forces a number, so an unset counter prints <code>0</code> instead of an empty string.</li><li>Built-ins: <code>length($0)</code>, <code>substr(s, start, len)</code>, <code>index(s, t)</code>, <code>split(s, arr, sep)</code>, <code>toupper()</code>, <code>tolower()</code>, <code>int()</code>, <code>sprintf()</code>.</li><li><code>next</code> skips to the next line; <code>exit</code> stops reading (END still runs).</li></ul>"
+  },
+  {
+   "h": "Reading the logs like a defender",
+   "html": "<p>These one-liners are how you answer incident questions fast, on any Linux box, with no extra tools installed:</p><table><tr><th>Question</th><th>Pipeline</th></tr><tr><td>Who is hitting us most?</td><td><code>awk '{print $1}' access.log | sort | uniq -c | sort -rn | head</code></td></tr><tr><td>Which IPs keep failing login?</td><td><code>awk '$3==\"/login\" &amp;&amp; $4==401 {f[$1]++} END{for(i in f) print f[i], i}' access.log | sort -rn</code></td></tr><tr><td>How much traffic did we serve?</td><td><code>awk '{s+=$5} END{print s}' access.log</code></td></tr><tr><td>Any server errors?</td><td><code>awk '$4 &gt;= 500' access.log</code></td></tr></table><div class=\"callout pro\"><b class=\"k\">Defender mindset</b>A burst of 401s from one IP is the signature of password guessing. Spotting it in your <b>own</b> logs is exactly the skill a SOC analyst uses; acting on it (block, alert, report) is the job.</div>"
+  }
+ ],
+ "lnx5": [
+  {
+   "h": "sed: a stream editor",
+   "html": "<p><code>sed</code> reads lines, applies commands, and prints the result. Each command can have an <b>address</b> that limits which lines it touches.</p><pre>sed 's/old/new/'   file     # first match on each line\nsed 's/old/new/g'  file     # every match on each line\nsed 's/error/ERR/gi' file    # g = global, i = ignore case\nsed '3d'           file     # delete line 3\nsed '/^#/d'        file     # delete comment lines\nsed -n '5,10p'     file     # print only lines 5–10\nsed -n '/ERROR/p'  file     # grep-like\nsed '2,/end/d'     file     # range: line 2 through the first line matching end\nsed '/keep/!d'     file     # ! negates: delete everything EXCEPT keep\nsed '10q'          file     # print the first 10 lines then quit (like head)</pre><p>Join several commands with <code>;</code> or repeat <code>-e</code>: <code>sed -e '/^#/d' -e 's/a/b/'</code>.</p>"
+  },
+  {
+   "h": "Groups, & and in-place editing",
+   "html": "<pre>sed 's/web/&amp;-server/'                  # &amp; = whatever matched → web-server01\nsed 's/^\\([a-z]*\\)\\([0-9]*\\)/\\2-\\1/'    # BRE groups \\( \\) → 01-web\nsed -E 's/^([a-z]+)([0-9]+)/\\2-\\1/'      # -E: extended regex, plain ( ) +\nsed -E 's/(up|down)/[\\1]/'</pre><p><code>-i</code> rewrites the file <b>in place</b> — no output, the file just changes.</p><pre>cp app.conf app.conf.bak                 # ALWAYS back up first\nsed -i 's/^port=8080$/port=9090/' app.conf\nsed -i '/^#/d' app.conf\ndiff app.conf.bak app.conf               # review exactly what changed</pre><div class=\"callout pro\"><b class=\"k\">Pro habit</b>Run the sed <b>without</b> <code>-i</code> first and read the output. Anchor patterns (<code>^port=</code>) so you change only the line you mean — <code>s/8080/9090/</code> would also hit <code>proxy_port=18080</code>.</div>"
+  },
+  {
+   "h": "find: locate files by anything",
+   "html": "<pre>find /var/log -type f -name \"*.log\"       # files by name (quote the glob!)\nfind . -iname \"readme*\"                  # case-insensitive\nfind . -maxdepth 1 -type d               # only the top level\nfind /tmp -type f -empty                 # zero-byte files\nfind . -size +100M                       # bigger than 100 MB (k, M, G)\nfind . -type f ! -name \"*.txt\"           # ! negates a test\nfind . -perm 777                         # world-writable — a security red flag\nfind . -name \"*.log\" -exec grep -c ERROR {} \\;   # run a command per file\nfind /tmp -type f -empty -delete         # act on the results</pre><p>Tests are ANDed left to right. <code>{}</code> is replaced by each path; <code>\\;</code> ends the <code>-exec</code> command (the backslash stops the shell eating the <code>;</code>).</p><div class=\"callout pro\"><b class=\"k\">-delete safely</b>Run the exact find without <code>-delete</code> first, read the list, then add <code>-delete</code> at the <b>end</b>. Put it earlier and it deletes before your filters apply.</div>"
+  },
+  {
+   "h": "grep power flags & exit codes",
+   "html": "<pre>grep -r ERROR srv/            # search a whole tree (prefixes file names)\ngrep -rh ERROR srv/           # -h: hide file names (for piping)\ngrep -rl ERROR srv/           # -l: only list which files match\ngrep -c ERROR a.log b.log     # count per file\ngrep -w timeout log           # whole word only\ngrep -E \"401|403\" access.log  # extended regex alternation\ngrep -v INFO app.log          # invert: everything except INFO</pre><p>Every command returns an <b>exit status</b>: 0 = success, non-zero = failure (grep returns 1 when nothing matched). Chain on it:</p><pre>grep -q ERROR app.log &amp;&amp; echo \"errors found\"\ncd /srv/app || echo \"missing dir\"\ncommand 2&gt;/dev/null           # throw away error messages\ncommand &gt; out.txt 2&gt;&amp;1        # stdout AND stderr into one file</pre>"
+  },
+  {
+   "h": "Triage pipelines: put it together",
+   "html": "<p>Real questions, answered in one line each:</p><pre># Which log files exist under /srv?\nfind /srv -type f -name \"*.log\"\n\n# How many ERROR lines across all of them?\ngrep -rh ERROR /srv | wc -l\n\n# What is the most common error message?\ngrep -rh ERROR /srv | cut -d\" \" -f3- | sort | uniq -c | sort -rn | head -1\n\n# Skip a header, then the top 3 values of column 4\ntail -n +2 sales.csv | sort -t, -k4 -nr | head -3</pre><p>Read them left to right: <b>find</b> the data → <b>filter</b> (grep/awk) → <b>shape</b> (cut/sed) → <b>aggregate</b> (sort/uniq -c/awk arrays) → <b>rank &amp; trim</b> (sort -rn, head). That pattern covers most log questions you will ever be asked.</p>"
+  }
+ ],
+ "lnx6": [
+  {
+   "h": "Arguments, tests and exit codes",
+   "html": "<pre>#!/bin/bash\n# count.sh PATTERN FILE\nif [ $# -lt 2 ]; then            # $# = number of arguments\n  echo \"usage: $0 PATTERN FILE\"   # $0 = script name\n  exit 1                         # non-zero = failure\nfi\npattern=$1; file=$2\nif [ ! -f \"$file\" ]; then\n  echo \"no such file: $file\"; exit 2\nfi\necho \"$(grep -c \"$pattern\" \"$file\") matches\"</pre><table><tr><th>Test</th><th>True when</th></tr><tr><td><code>-f F</code> / <code>-d D</code> / <code>-e P</code></td><td>file / directory / anything exists</td></tr><tr><td><code>-z \"$s\"</code> / <code>-n \"$s\"</code></td><td>string empty / not empty</td></tr><tr><td><code>\"$a\" = \"$b\"</code> / <code>!=</code></td><td>strings equal / differ</td></tr><tr><td><code>$x -eq 5</code> <code>-ne -lt -le -gt -ge</code></td><td>numeric comparisons</td></tr></table><p><code>$@</code> is all arguments (quote it: <code>\"$@\"</code>). Every command returns an <b>exit code</b> — <code>if</code> just checks it, so <code>if grep -q ERROR log; then</code> works with no brackets.</p>"
+  },
+  {
+   "h": "Loops and reading files",
+   "html": "<pre>for f in logs/*.log; do         # over files\n  echo \"$(wc -l &lt; \"$f\") $f\"\ndone\n\nfor i in {1..5}; do echo $i; done   # over a range\n\nwhile read -r name status load; do  # over lines, split into fields\n  if [ \"$status\" = \"down\" ]; then echo \"DOWN $name\"; fi\ndone &lt; servers.txt\n\ncount=0\ncount=$((count + 1))            # arithmetic\n(( count &gt; 3 )) &amp;&amp; echo \"many\"</pre><p><code>break</code> leaves a loop, <code>continue</code> skips to the next item. Redirect a whole loop: <code>done &gt; report.txt</code>.</p>"
+  },
+  {
+   "h": "Functions and robust habits",
+   "html": "<pre>log() { echo \"[$(date +%H:%M)] $*\"; }    # define\nbackup() {\n  local src=$1                           # local to the function\n  cp \"$src\" \"$src.bak\" || return 1        # return an exit code\n}\nbackup app.conf &amp;&amp; log \"backed up\"</pre><ul><li><code>set -euo pipefail</code> at the top of real scripts: stop on errors (<code>-e</code>), on unset variables (<code>-u</code>), and on failures inside pipes (<code>pipefail</code>).</li><li><b>Quote every variable</b> (<code>\"$file\"</code>) — unquoted variables split on spaces and expand globs.</li><li>Default values: <code>${1:-servers.txt}</code>. String length: <code>${#name}</code>.</li><li><code>trap 'rm -f \"$tmp\"' EXIT</code> cleans up temp files even on failure; <code>getopts</code> parses <code>-v -o file</code> style options.</li><li>Run <b>ShellCheck</b> on scripts — it catches most quoting and logic bugs automatically.</li><li>Never put passwords in scripts; read secrets from protected files or environment, and keep scripts writable only by their owner.</li></ul>"
+  }
+ ],
+ "lnx7": [
+  {
+   "h": "Processes and services",
+   "html": "<pre>ps aux | grep nginx          # every process; find one\ntop   /   htop               # live CPU / memory view\nkill 1234                    # polite stop (SIGTERM, 15)\nkill -9 1234                 # force kill (SIGKILL) — last resort, no cleanup\n\nsystemctl status sshd        # is the service running? recent log lines\nsudo systemctl restart nginx\nsudo systemctl enable --now nginx   # start now AND at boot\njournalctl -u nginx --since \"1 hour ago\"   # that service's logs\njournalctl -p err -b         # errors since this boot</pre>"
+  },
+  {
+   "h": "Users, groups and sudo",
+   "html": "<pre>id                       # your uid, gid and groups\nsudo useradd -m -s /bin/bash ana    # create a user with a home\nsudo passwd ana\nsudo usermod -aG developers ana      # -a append! without it you REPLACE groups\nsudo chown ana:developers report.txt\nsudo -l                  # what am I allowed to run with sudo?</pre><ul><li><code>/etc/passwd</code>: accounts (readable by all). <code>/etc/shadow</code>: password hashes (root only). <code>/etc/group</code>: groups. <code>/etc/sudoers</code> (edit only with <code>visudo</code>).</li><li>Least privilege: give people the groups and sudo rules they need, nothing more; disable direct root login over SSH.</li></ul>"
+  },
+  {
+   "h": "Packages, disks and networking",
+   "html": "<pre>sudo apt update &amp;&amp; sudo apt upgrade     # Debian/Ubuntu\nsudo dnf install httpd                   # RHEL/Fedora\ndf -h                 # free space per filesystem\ndu -sh /var/log/*     # what is using it\nip a                  # interfaces and IP addresses\nip route              # default gateway\nss -tulpn             # listening ports and which process owns them\nping -c 3 8.8.8.8     # basic reachability\ncurl -I https://example.com   # HTTP headers\ndig example.com       # DNS lookup</pre>"
+  },
+  {
+   "h": "SSH keys and cron",
+   "html": "<pre>ssh-keygen -t ed25519            # create a key pair (~/.ssh/id_ed25519 + .pub)\nssh-copy-id ana@server           # install the PUBLIC key in ~/.ssh/authorized_keys\nssh ana@server                   # log in with the key\nscp report.txt ana@server:/tmp/  # copy a file over SSH\n\ncrontab -e       # edit your scheduled jobs\n# ┌ minute (0-59)  ┌ hour (0-23)  ┌ day of month  ┌ month  ┌ day of week (0-7, Sun=0 or 7)\n  30            2              *               *        *      /home/ana/backup.sh\n  */15          *              *               *        *      /home/ana/check.sh\n  0             9              *               *        1-5    /home/ana/report.sh</pre><p>Private keys never leave your machine (<code>chmod 600</code>); only the <code>.pub</code> file is shared. Harden SSH with key-only login (<code>PasswordAuthentication no</code>) and <code>PermitRootLogin no</code>.</p>"
+  }
+ ]
+}
